@@ -164,6 +164,9 @@ Troubleshooting
 - `Audio separation requires GPU, but CUDA/MPS is not available` (Windows + NVIDIA, e.g. RTX 5080):
   - 원인: 앱이 다른 Python을 쓰거나, 현재 venv에 CPU용 torch가 설치된 경우가 대부분입니다.
   - 참고: 상단 런타임의 GPU 표시는 FFmpeg/OpenCV 기준입니다. 오디오 분리는 `오디오 분리 GPU(torch)` 상태를 별도로 봐야 합니다.
+  - 특히 `backend/.venv`에 CPU 빌드 torch가 설치된 경우:
+    - `torch.version.cuda`가 `None`으로 나옵니다.
+    - 이 경우 GPU가 달려 있어도 오디오 분리는 CUDA를 못 씁니다.
   - `torch_gpu_reason` 해석:
     - `cuda_build_missing`: CUDA wheel이 아닌 torch(CPU 빌드) 설치
     - `cuda_no_visible_device`: torch가 CUDA 장치를 읽지 못함
@@ -171,7 +174,10 @@ Troubleshooting
     - `torch_missing`: torch 미설치/로드 실패
   - PowerShell에서 아래를 순서대로 실행하세요.
   - `cd C:\path\to\score_capture_program\backend`
-  - `.\.venv\Scripts\python.exe -c "import sys,torch;print('py=',sys.executable);print('torch=',torch.__version__);print('cuda=',torch.cuda.is_available());print('torch_cuda=',torch.version.cuda);print('gpu_count=',torch.cuda.device_count())"`
+  - `.\.venv\Scripts\python.exe -c "import sys,torch;print('py=',sys.executable);print('torch=',torch.__version__);print('torch_cuda=',torch.version.cuda);print('cuda=',torch.cuda.is_available());print('gpu_count=',torch.cuda.device_count())"`
+  - 판정:
+    - `torch_cuda=None` -> CPU 빌드 torch
+    - `torch_cuda` 값이 있는데 `cuda=False` -> 드라이버/런타임/환경 이슈
   - `cuda=False`라면 GPU torch 재설치:
     - `.\.venv\Scripts\python.exe -m pip uninstall -y torch torchaudio torchvision`
     - `.\.venv\Scripts\python.exe -m pip install -U pip`
@@ -179,6 +185,9 @@ Troubleshooting
     - `.\.venv\Scripts\python.exe -m pip install torchcodec`
     - `.\.venv\Scripts\python.exe -m pip install -r requirements-uvr.txt`
     - `.\.venv\Scripts\python.exe scripts\doctor.py`
+  - 추가 확인(권장):
+    - `nvidia-smi`가 정상 출력되는지 확인
+    - `scripts\doctor.py`에서 `audio_gpu_mode(torch)=cuda`, `audio_gpu_ready(torch)=True` 확인
   - 데스크톱 앱 실행 시 같은 Python 강제:
     - `cd ..\desktop`
     - `$env:DRUMSHEET_PYTHON_BIN = (Resolve-Path ..\backend\.venv\Scripts\python.exe).Path`
