@@ -29,6 +29,8 @@ Optional: Beat tracking (Beat This!)
 cd score_capture_program/backend
 source .venv/bin/activate
 python -m pip install -r requirements-beat-this.txt
+# Optional (higher DBN precision on supported env)
+python -m pip install madmom
 ```
 
 2. Install desktop dependencies
@@ -63,6 +65,8 @@ py -3.11 -m venv .venv
 
 # Beat tracking
 .\.venv\Scripts\python.exe -m pip install -r requirements-beat-this.txt
+# Optional (DBN precision on supported env)
+.\.venv\Scripts\python.exe -m pip install madmom
 ```
 
 3. Move to desktop and install Node packages
@@ -89,6 +93,19 @@ Windows Notes
   - `py -3.11` → `py -3` → `py` → `python`
 - If you see `python 9009`, Python is not discoverable by Windows shell. Install Python 3.11 (x64) and enable PATH.
 - Always run `npm start` inside `score_capture_program\\desktop`.
+
+운영 영향 변경사항 (최근)
+- 2026-02-23: 오디오 분리 완료 후 `비트 분석`이 자동으로 시작됩니다.
+- 2026-02-23: 비트 분석 기본 모델이 `final0`로 변경되었습니다.
+- 2026-02-23: DBN 모드 요청 시 `madmom`이 없어도 작업이 실패하지 않도록 fallback(non-DBN) 처리됩니다.
+- 2026-02-23: `Torchaudio + Demucs` 조합 사용 시 `torchcodec`가 없으면 저장 단계에서 실패할 수 있어, UVR 사용 시 `torchcodec` 설치를 필수 권장합니다.
+
+실행/운영 체크리스트 (변경 시 반드시 확인)
+- Python은 `3.11` 기준으로 운영하세요. (3.13 환경은 일부 패키지 호환 이슈가 보고됨)
+- 오디오 분리 기능을 쓰려면 같은 venv(`backend/.venv`)에 `requirements-uvr.txt` + `torch/torchaudio/torchcodec`가 설치되어 있어야 합니다.
+- DBN 정밀 모드를 반드시 쓰고 싶다면 `madmom` 설치 상태를 확인하세요. 미설치 시에도 앱은 fallback으로 진행됩니다.
+- 의존성 설치/업데이트 후에는 `npm start`로 띄운 앱(백엔드 포함)을 완전히 재시작하세요.
+- 배포/운영 전 `python scripts/doctor.py`로 런타임(GPU/FFmpeg/torch 디바이스) 점검을 먼저 수행하세요.
 
 Quick environment check (recommended)
 ```bash
