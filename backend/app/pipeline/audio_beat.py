@@ -42,7 +42,13 @@ def track_beats_for_audio(
     workspace: Path,
     logger,
 ) -> Dict[str, object]:
-    _ensure_beat_stack_installed(use_dbn=options.use_dbn)
+    requested_dbn = bool(options.use_dbn)
+    dbn_enabled = requested_dbn
+    if requested_dbn and importlib.util.find_spec("madmom") is None:
+        dbn_enabled = False
+        logger("beat tracking fallback: madmom is not installed, DBN disabled (continuing with non-DBN mode)")
+
+    _ensure_beat_stack_installed(use_dbn=dbn_enabled)
 
     workspace.mkdir(parents=True, exist_ok=True)
     prepared_audio = workspace / "beat_input.wav"
@@ -53,7 +59,7 @@ def track_beats_for_audio(
     device = _resolve_beat_device()
     if options.gpu_only and device == "cpu":
         raise RuntimeError("Beat tracking requires GPU, but CUDA/MPS is not available.")
-    logger(f"beat tracking model={options.model}, device={device}, dbn={options.use_dbn}, float16={options.float16}")
+    logger(f"beat tracking model={options.model}, device={device}, dbn={dbn_enabled}, float16={options.float16}")
 
     logger("beat tracking stage: run model inference")
     infer_start = time.perf_counter()
@@ -61,7 +67,7 @@ def track_beats_for_audio(
         audio_path=prepared_audio,
         model=options.model,
         device=device,
-        use_dbn=options.use_dbn,
+        use_dbn=dbn_enabled,
         float16=options.float16,
     )
     infer_elapsed = time.perf_counter() - infer_start
@@ -87,6 +93,7 @@ def track_beats_for_audio(
         "bpm": bpm,
         "model": options.model,
         "device": device,
+        "dbn_used": dbn_enabled,
         "beat_tsv": str(beat_tsv) if beat_tsv else None,
     }
 
