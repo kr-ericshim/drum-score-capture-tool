@@ -7,6 +7,7 @@ from typing import Dict, List, Optional
 import cv2
 from PIL import Image
 
+from app.pipeline.sheet_finalize import finalize_sheet_pages
 from app.schemas import ExportOptions
 
 
@@ -36,20 +37,29 @@ def export_frames(
     pdf_images: List[Image.Image] = []
     wants_png = "png" in options.formats
     wants_jpg = "jpg" in options.formats or "jpeg" in options.formats
+    export_idx = 1
     for idx, page_path in enumerate(frame_paths, start=1):
         image = cv2.imread(str(page_path))
         if image is None:
             continue
-        pdf_images.append(Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB)))
-        if wants_png:
-            out = image_dir / f"page_{idx:04d}.png"
-            if cv2.imwrite(str(out), image):
+        finalized_pages = finalize_sheet_pages(image)
+        if not finalized_pages:
+            finalized_pages = [image]
+        if len(finalized_pages) > 1:
+            logger(f"export page split: input#{idx} -> {len(finalized_pages)} pages")
+
+        for finalized in finalized_pages:
+            pdf_images.append(Image.fromarray(cv2.cvtColor(finalized, cv2.COLOR_BGR2RGB)))
+            if wants_png:
+                out = image_dir / f"page_{export_idx:04d}.png"
+                if cv2.imwrite(str(out), finalized):
+                    image_paths.append(out)
+            if wants_jpg:
+                out = image_dir / f"page_{export_idx:04d}.jpg"
+                rgb = cv2.cvtColor(finalized, cv2.COLOR_BGR2RGB)
+                Image.fromarray(rgb).save(out, quality=95)
                 image_paths.append(out)
-        if wants_jpg:
-            out = image_dir / f"page_{idx:04d}.jpg"
-            rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            Image.fromarray(rgb).save(out, quality=95)
-            image_paths.append(out)
+            export_idx += 1
 
     if not image_paths and "pdf" not in options.formats and not options.include_raw_frames:
         raise RuntimeError("no images could be exported")
