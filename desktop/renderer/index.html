@@ -167,7 +167,7 @@
         <details id="stepRoiDetails" class="step-details">
           <summary>
             <span class="step-title"><span class="step-dot">3</span>악보 영역 선택</span>
-            <span id="stepRoiSummary" class="step-summary-badge">자동 감지</span>
+            <span id="stepRoiSummary" class="step-summary-badge">영역 지정 필요</span>
           </summary>
           <div class="step-body">
             <label class="field field-full">
@@ -179,18 +179,14 @@
                 <option value="page_turn">전체 악보 + 페이지 넘김</option>
               </select>
             </label>
-            <p id="layoutHintText" class="helper-text">자동 추천: 유튜브는 하단 악보 바를, 그 외는 전체 악보 형태를 우선으로 찾습니다.</p>
-            <div class="choice-row">
-              <label class="choice-chip"><input id="detectAuto" type="radio" name="detectMode" value="auto" checked /> 자동으로 찾기</label>
-              <label class="choice-chip"><input id="detectManual" type="radio" name="detectMode" value="manual" /> 직접 영역 지정</label>
-            </div>
-            <div class="result-actions" id="manualRoiTools" style="display: none">
+            <p id="layoutHintText" class="helper-text">자동 추천: 입력 유형에 맞춰 스티칭/정리 기본값을 자동으로 맞춥니다.</p>
+            <div class="result-actions" id="manualRoiTools">
               <button id="loadPreviewForRoi" type="button" class="secondary">현재 프레임 불러오기</button>
               <button id="lockRoiFrame" type="button" class="secondary">현재 프레임에서 ROI 고정</button>
               <span class="helper-text">프리뷰 위에서 박스를 직접 드래그하세요. 방향키는 1px, Shift+방향키는 10px 이동입니다.</span>
             </div>
             <div id="roiEditorWrap" style="display: none">
-              <div class="roi-help">자동으로 못 찾으면, 악보가 보이는 부분을 드래그해서 네모 박스를 그려주세요. 자동 감지 결과가 뜨면 모서리 핸들로 미세 조정할 수 있습니다.</div>
+              <div class="roi-help">악보가 보이는 부분을 드래그해서 네모 박스를 그려주세요. 모서리 핸들로 미세 조정할 수 있습니다.</div>
               <div class="preview-stage">
                 <img id="roiImage" alt="preview image" />
                 <canvas id="roiCanvas"></canvas>
@@ -290,7 +286,7 @@
           <div class="pipeline-track" aria-label="pipeline">
             <span id="pipeDownload" class="pipe-step">다운로드</span>
             <span id="pipeExtract" class="pipe-step">프레임 추출</span>
-            <span id="pipeDetect" class="pipe-step">악보 감지</span>
+            <span id="pipeDetect" class="pipe-step">영역 적용</span>
             <span id="pipeRectify" class="pipe-step">보정</span>
             <span id="pipeExport" class="pipe-step">내보내기</span>
           </div>

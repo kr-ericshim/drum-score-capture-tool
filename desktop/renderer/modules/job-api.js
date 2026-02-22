@@ -6,11 +6,6 @@ export function sourceType() {
   return checked ? checked.value : "file";
 }
 
-export function detectMode() {
-  const checked = document.querySelector('input[name="detectMode"]:checked');
-  return checked ? checked.value : "auto";
-}
-
 export function layoutHint() {
   const node = el("layoutHint");
   return node ? node.value : "auto";
@@ -79,7 +74,6 @@ export function buildPayload() {
         end_sec: numberOrNull("endSec"),
       },
       detect: {
-        mode: detectMode(),
         roi: null,
         layout_hint: layoutHint(),
       },
@@ -124,13 +118,11 @@ export function buildPayload() {
     }
   }
 
-  if (detectMode() === "manual") {
-    const parsed = parseJsonOrNull(textValue("roiInput", ""));
-    if (!parsed) {
-      throw new Error("직접 영역 지정을 켠 경우, 좌표를 입력해 주세요. 예: [[0,0],[100,0],[100,100],[0,100]]");
-    }
-    body.options.detect.roi = parsed;
+  const parsed = parseJsonOrNull(textValue("roiInput", ""));
+  if (!parsed) {
+    throw new Error("악보 영역 좌표가 필요합니다. 3단계에서 미리보기 화면을 불러와 드래그로 지정해 주세요.");
   }
+  body.options.detect.roi = parsed;
 
   const formats = getFormats();
   if (!formats.length) {

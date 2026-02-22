@@ -1,5 +1,5 @@
 import { el, fileUrl, parseJsonOrNull } from "./modules/dom.js";
-import { createJob, detectMode, getFormats, getJob, getRuntimeStatus, requestPreviewFrame, requestPreviewSource, sourceType } from "./modules/job-api.js";
+import { createJob, getFormats, getJob, getRuntimeStatus, requestPreviewFrame, requestPreviewSource, sourceType } from "./modules/job-api.js";
 import { createAudioSeparationUi } from "./modules/audio-separation-ui.js";
 import { friendlyLayoutLabel, selectedLayoutHint, updateLayoutHintUi } from "./modules/layout-presets.js";
 import { friendlyMessage, friendlyStatusText, friendlyStepName } from "./modules/messages.js";
@@ -133,9 +133,6 @@ function isRangeValid() {
 }
 
 function isRoiReady() {
-  if (detectMode() === "auto") {
-    return true;
-  }
   const parsed = parseJsonOrNull(String(el("roiInput")?.value || ""));
   if (!Array.isArray(parsed) || parsed.length !== 4) {
     return false;
@@ -170,10 +167,7 @@ function rangeSummaryText() {
 }
 
 function roiSummaryText() {
-  if (detectMode() === "auto") {
-    return "자동 감지";
-  }
-  return isRoiReady() ? "수동 영역 지정" : "수동 좌표 입력 필요";
+  return isRoiReady() ? "영역 지정 완료" : "영역 지정 필요";
 }
 
 function presetLabel(name = currentPreset) {
@@ -296,7 +290,7 @@ function updateRunCta() {
   if (!isRoiReady()) {
     runButton.textContent = "악보 영역을 지정해 주세요";
     runButton.disabled = true;
-    hint.textContent = "수동 모드에서는 영역을 드래그하거나 좌표를 입력해야 합니다.";
+    hint.textContent = "3단계에서 미리보기 화면을 불러와 드래그로 악보 영역을 지정해 주세요.";
     return;
   }
 
@@ -392,7 +386,7 @@ function updateSourceRows() {
 function updateManualTools() {
   const tools = el("manualRoiTools");
   if (tools) {
-    tools.style.display = detectMode() === "manual" ? "flex" : "none";
+    tools.style.display = "flex";
   }
   refreshCaptureWorkflowUi();
 }
@@ -604,7 +598,6 @@ async function copyTextToClipboard(value) {
 }
 
 const roiController = createRoiController({
-  detectMode,
   onPreviewLoadError: () => {
     appendLog("오류: 미리보기 이미지를 불러오지 못했습니다.");
     setStatus("영역 지정 화면 표시 실패");
@@ -675,7 +668,7 @@ function appendRecoveryHint(job) {
     return;
   }
   if (detail.includes("sheet detection") || detail.includes("detect")) {
-    appendLog("안내: 자동 감지가 어렵다면 3단계에서 직접 영역 지정으로 전환해 보세요.");
+    appendLog("안내: 3단계에서 미리보기 화면을 다시 불러오고 악보 영역을 다시 드래그해 보세요.");
     return;
   }
   if (detail.includes("ffmpeg")) {
@@ -720,7 +713,7 @@ function renderResult(job) {
     applyUpscaleAvailability(latestRuntime);
   }
 
-  const canEditRoi = detectMode() === "manual" && meta.hasResultImage;
+  const canEditRoi = meta.hasResultImage;
   if (canEditRoi && meta.firstImagePath) {
     roiController.showPreviewWithRoi(meta.firstImagePath);
   }
@@ -855,10 +848,6 @@ async function onLoadPreviewForRoi() {
       appendLog(`영역 지정 시점: ${previewStartSec.toFixed(1)}초`);
     }
     const previewImagePath = await requestPreviewFrame(API_BASE, { startSecOverride: previewStartSec });
-    const detectManual = el("detectManual");
-    if (detectManual) {
-      detectManual.checked = true;
-    }
     manualOpenStep = "roi";
     updateManualTools();
     roiController.showPreviewWithRoi(previewImagePath);
@@ -947,14 +936,6 @@ document.querySelectorAll('input[name="sourceType"]').forEach((node) => {
   node.addEventListener("change", () => {
     manualOpenStep = null;
     updateSourceRows();
-  });
-});
-
-document.querySelectorAll('input[name="detectMode"]').forEach((node) => {
-  node.addEventListener("change", () => {
-    manualOpenStep = "roi";
-    updateManualTools();
-    roiController.onDetectModeChange();
   });
 });
 

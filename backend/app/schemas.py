@@ -26,28 +26,18 @@ class ExtractOptions(BaseModel):
 
 
 class DetectOptions(BaseModel):
-    mode: Literal["auto", "manual"] = "auto"
-    roi: Optional[List[List[float]]] = None
+    roi: List[List[float]]
     layout_hint: LayoutHint = "auto"
-    prefer_bottom: Optional[bool] = None
 
     @field_validator("roi")
     @classmethod
-    def validate_roi(cls, value: Optional[List[List[float]]]):
-        if value is None:
-            return value
+    def validate_roi(cls, value: List[List[float]]):
         if len(value) != 4:
             raise ValueError("roi must be 4 points: [[x,y], ...]")
         for point in value:
             if len(point) != 2:
                 raise ValueError("each roi point must be [x, y]")
         return value
-
-    @model_validator(mode="after")
-    def validate_manual_roi(self):
-        if self.mode == "manual" and not self.roi:
-            raise ValueError("roi is required when detect mode is manual")
-        return self
 
 
 class RectifyOptions(BaseModel):

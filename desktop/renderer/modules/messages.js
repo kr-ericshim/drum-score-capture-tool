@@ -5,7 +5,7 @@ export function friendlyStepName(step) {
     done: "완료",
     error: "오류",
     initializing: "준비 중",
-    detecting: "악보 위치 찾는 중",
+    detecting: "영역 적용 중",
     rectifying: "화면 보정 중",
     stitching: "페이지 정리 중",
     separating_audio: "드럼 음원 분리 중",
@@ -128,7 +128,7 @@ export function friendlyMessage(message) {
     .replace("hat_unavailable(cpu_only_disallowed)", "HAT 미사용: CUDA 없음 (CPU 허용 꺼짐)")
     .replace("hat_cpu_disallowed", "HAT 미사용: GPU 전용 모드에서 CPU 실행 불가")
     .replace("upscaling produced no output pages", "업스케일 결과 이미지를 만들지 못했어요")
-    .replace("sheet detection completed", "악보 위치 찾기 완료")
+    .replace("sheet detection completed", "영역 적용 완료")
     .replace("rectification completed", "화면 보정 완료")
     .replace("stitching completed", "페이지 정리 완료")
     .replace("export finished", "파일 저장 완료")
@@ -164,11 +164,48 @@ export function friendlyApiError(detail) {
     return "요청 처리 중 오류가 발생했어요.";
   }
 
+  if (Array.isArray(detail)) {
+    const locTokens = detail
+      .map((item) => {
+        if (item && typeof item === "object" && Array.isArray(item.loc)) {
+          return item.loc.join(".");
+        }
+        return "";
+      })
+      .join(" ");
+    if (locTokens.includes("options.detect.roi")) {
+      return "악보 영역 좌표가 필요합니다. 3단계에서 미리보기 화면을 불러와 드래그로 지정해 주세요.";
+    }
+    const joined = detail
+      .map((item) => {
+        if (typeof item === "string") {
+          return item;
+        }
+        if (item && typeof item === "object" && typeof item.msg === "string") {
+          return item.msg;
+        }
+        return String(item || "");
+      })
+      .filter(Boolean)
+      .join(" / ");
+    return joined || "요청 처리 중 오류가 발생했어요.";
+  }
+
+  if (detail && typeof detail === "object") {
+    if (typeof detail.detail === "string") {
+      return friendlyApiError(detail.detail);
+    }
+    if (typeof detail.message === "string") {
+      return friendlyApiError(detail.message);
+    }
+    return "요청 처리 중 오류가 발생했어요.";
+  }
+
   const map = {
     "file_path is required when source_type is file": "로컬 파일을 먼저 선택해 주세요.",
     "file_path does not exist": "선택한 파일을 찾을 수 없어요. 경로를 다시 확인해 주세요.",
     "youtube_url is required when source_type is youtube": "유튜브 주소를 입력해 주세요.",
-    "roi is required when detect mode is manual": "직접 영역 지정을 선택했다면 좌표를 입력해 주세요.",
+    "roi is too small. drag a larger sheet region.": "영역이 너무 작아요. 악보가 충분히 들어오도록 더 크게 드래그해 주세요.",
     "preview image failed to load": "영역 지정 화면을 표시하지 못했어요. 앱을 재시작 후 다시 시도해 주세요.",
     "preview source preparation failed": "유튜브 영상을 준비하지 못했어요. 잠시 뒤 다시 시도해 주세요.",
     "GPU-only upscaling requires OpenCV GPU mode (cuda/opencl).": "GPU 업스케일을 켰지만 OpenCV GPU 가속(CUDA/OpenCL)을 찾지 못했어요. 업스케일을 끄거나 GPU 환경을 확인해 주세요.",

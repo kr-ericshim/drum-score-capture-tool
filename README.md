@@ -118,6 +118,7 @@ python scripts/doctor.py
 
 Capture Behavior
 - UI now uses `캡처 민감도` instead of direct FPS input.
+- 악보 영역 선택은 `수동 지정(드래그)` 전용입니다. 자동 영역 탐지는 제거되었습니다.
 - `낮음`: fewer captures, strongest duplicate suppression.
 - `보통`: balanced default.
 - `높음`: more detailed capture, may produce more pages.

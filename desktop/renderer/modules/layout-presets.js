@@ -5,7 +5,7 @@ const PRESETS = {
     label: "자동 추천",
     stitch: null,
     overlap: null,
-    description: "자동 추천: 유튜브는 하단 악보 바를, 그 외는 전체 악보 형태를 우선으로 찾습니다.",
+    description: "자동 추천: 입력 유형에 맞춰 스티칭/정리 기본값을 자동으로 맞춥니다.",
   },
   bottom_bar: {
     label: "하단 악보 바",

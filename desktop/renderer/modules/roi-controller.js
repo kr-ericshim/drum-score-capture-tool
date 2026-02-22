@@ -1,6 +1,6 @@
 import { clamp, el, fileUrl, parseJsonOrNull } from "./dom.js";
 
-export function createRoiController({ detectMode, onPreviewLoadError }) {
+export function createRoiController({ onPreviewLoadError }) {
   const HANDLE_SIZE = 10;
   let roiCanvas = null;
   let roiContext = null;
@@ -138,15 +138,11 @@ export function createRoiController({ detectMode, onPreviewLoadError }) {
     if (applyRoi) {
       applyRoi.addEventListener("click", () => {
         applyCurrentRoi();
-        const manual = el("detectManual");
-        if (manual) {
-          manual.checked = true;
-        }
       });
     }
 
     window.addEventListener("keydown", (event) => {
-      if (!roiRect || detectMode() !== "manual" || !hasResultImage() || !isImageReady()) {
+      if (!roiRect || !hasResultImage() || !isImageReady()) {
         return;
       }
       const target = event.target;
@@ -361,7 +357,7 @@ export function createRoiController({ detectMode, onPreviewLoadError }) {
   }
 
   function renderManualRoiFromInput() {
-    if (detectMode() !== "manual" || !roiCanvas) {
+    if (!roiCanvas) {
       return false;
     }
     const roiInput = el("roiInput");
@@ -457,9 +453,8 @@ export function createRoiController({ detectMode, onPreviewLoadError }) {
       return;
     }
 
-    const manualMode = detectMode() === "manual";
     setRoiEditorVisibility(true);
-    setRoiEditMode(manualMode);
+    setRoiEditMode(true);
 
     clearRoiState();
     clearRoiCanvas();
@@ -474,7 +469,7 @@ export function createRoiController({ detectMode, onPreviewLoadError }) {
         clearRoiCanvas();
       }
 
-      const applied = detectMode() === "manual" && renderManualRoiFromInput();
+      const applied = renderManualRoiFromInput();
       if (!applied) {
         applyFallbackRoi();
         return;
@@ -510,22 +505,9 @@ export function createRoiController({ detectMode, onPreviewLoadError }) {
     setRoiEditMode(false);
   }
 
-  function onDetectModeChange() {
-    const isManual = detectMode() === "manual";
-    const hasImage = hasResultImage();
-    setRoiEditMode(isManual && hasImage);
-    if (isManual && hasImage && isImageReady()) {
-      const applied = renderManualRoiFromInput();
-      if (!applied) {
-        applyFallbackRoi();
-      }
-    }
-  }
-
   function onRoiInputChange() {
-    const isManual = detectMode() === "manual";
     const hasImage = hasResultImage();
-    if (!isManual || !hasImage || !isImageReady()) {
+    if (!hasImage || !isImageReady()) {
       return;
     }
     const applied = renderManualRoiFromInput();
@@ -540,7 +522,6 @@ export function createRoiController({ detectMode, onPreviewLoadError }) {
     setRoiEditMode,
     clearPreview,
     applyCurrentRoi,
-    onDetectModeChange,
     onRoiInputChange,
     hasResultImage,
   };
