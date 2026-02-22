@@ -7,6 +7,7 @@ from typing import Dict, List, Optional
 from yt_dlp import YoutubeDL
 
 from app.pipeline.acceleration import get_runtime_acceleration
+from app.pipeline.ffmpeg_runtime import resolve_ffmpeg_bin
 from app.schemas import ExtractOptions
 
 
@@ -150,7 +151,7 @@ def _extract_with_ffmpeg(
     runtime_info: Optional[Dict[str, str]],
     logger,
 ) -> List[Path]:
-    ffmpeg = "ffmpeg"
+    ffmpeg = resolve_ffmpeg_bin()
     accel = get_runtime_acceleration(logger=logger, ffmpeg_bin=ffmpeg)
     hwaccel_flag_sets = accel.ffmpeg_hwaccel_flags or [[]]
     out_pattern = out_dir / "frame_%06d.png"
@@ -198,7 +199,7 @@ def _extract_single_frame_with_ffmpeg(
     sec: float,
     logger,
 ) -> None:
-    ffmpeg = "ffmpeg"
+    ffmpeg = resolve_ffmpeg_bin()
     accel = get_runtime_acceleration(logger=logger, ffmpeg_bin=ffmpeg)
     hwaccel_flag_sets = accel.ffmpeg_hwaccel_flags or [[]]
     seek_candidates = [max(0.0, sec), max(0.0, sec + 0.8), max(0.0, sec + 1.8)]

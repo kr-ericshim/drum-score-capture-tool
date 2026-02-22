@@ -224,3 +224,13 @@ class RuntimeStatusResponse(BaseModel):
     upscale_engine_hint: str = "none"
     hat_available: bool = False
     hat_device: str = "none"
+    audio_gpu_mode: str = "cpu"
+    audio_gpu_ready: bool = False
+    torch_version: Optional[str] = None
+    torch_cuda_available: bool = False
+    torch_cuda_version: Optional[str] = None
+    torch_cuda_device_count: int = 0
+    torch_cuda_device_name: Optional[str] = None
+    torch_mps_available: bool = False
+    torch_python: Optional[str] = None
+    torch_gpu_reason: str = "unknown"

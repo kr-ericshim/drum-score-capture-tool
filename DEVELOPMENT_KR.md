@@ -78,7 +78,9 @@
 - 오디오 분리는 `torchcodec`도 필요하다.
 - 비트 분석은 `beat_this`, `soxr`, `rotary-embedding-torch` 설치가 필요하다.
 - `GPU 전용` 옵션 사용 시 CUDA/MPS 미감지 환경에서 작업 실패가 정상이다.
+- 상단 런타임의 GPU 감지(FFmpeg/OpenCV)와 오디오 분리 GPU(torch CUDA/MPS)는 기준이 다를 수 있다.
 - macOS 환경에서도 `scale_vt`가 시스템/ffmpeg 빌드 상태에 따라 비활성일 수 있다.
+- Windows 환경에서는 ffmpeg/ffprobe 경로가 상대 경로로 해석되면 실행 실패할 수 있어, 절대 경로 resolver를 우선 사용한다.
 - 유튜브 입력은 정책/네트워크/코덱 이슈로 실패 가능성이 있다.
 
 ## 5. 필수 설치 체크
@@ -113,6 +115,8 @@
 | 2026-02-22 | AI | 초기 문서 생성, 현재 기능/백로그/결정 사항 반영 |
 | 2026-02-22 | AI | 내장 stem 플레이어(속도/볼륨) 및 Beat This! 비트 분석 API/UI 반영 |
 | 2026-02-22 | AI | null.value 방어 패치, 환경 점검 스크립트(`doctor.py`) 및 오류 대응 가이드 추가 |
+| 2026-02-22 | AI | ffmpeg/ffprobe 절대 경로 resolver 추가(Windows 상대 경로 오류 대응), 오디오/추출/업스케일 호출부 공통 적용 |
+| 2026-02-22 | AI | torch 런타임 진단 추가(오디오 GPU 분리 표기), CUDA 미탐지 원인 코드(`torch_gpu_reason`) 노출 |
 
 ## 9. 다음 액션
 - 1) 비트 마커 기반 A-B 반복 연습 기능 추가
@@ -136,9 +140,16 @@
   - 조치:
     - GPU 전용 옵션 해제 후 실행
     - `python scripts/doctor.py`에서 `torch.mps.is_available` 또는 `torch.cuda.is_available` 확인
+- `ffmpeg` 실행 경로 오류 (`WinError 2`, 상대 경로 실행 실패)
+  - 조치:
+    - 앱이 자동으로 절대 경로 탐색(`DRUMSHEET_FFMPEG_BIN` → backend 번들 경로 → PATH)하도록 반영됨
+    - 수동 지정이 필요하면:
+      - `DRUMSHEET_FFMPEG_BIN=<절대경로>\ffmpeg.exe`
+      - `DRUMSHEET_FFPROBE_BIN=<절대경로>\ffprobe.exe`
+    - `python scripts/doctor.py`에서 `ffmpeg_resolved`, `ffprobe_resolved` 값 확인
 
 ## 11. 점검 스크립트
 - 경로: `backend/scripts/doctor.py`
-- 목적: 명령어(ffmpeg/yt-dlp), 필수/옵션 모듈, torch 장치, 앱 런타임 가속 상태를 한 번에 점검
+- 목적: 명령어(ffmpeg/ffprobe/yt-dlp), 필수/옵션 모듈, torch 장치, 앱 런타임 가속 상태를 한 번에 점검
 - 실행:
   - `cd backend && source .venv/bin/activate && python scripts/doctor.py`

@@ -19,12 +19,33 @@ def has_module(name: str) -> bool:
     return importlib.util.find_spec(name) is not None
 
 
+def resolve_command_path(command: str) -> str | None:
+    value = str(command or "").strip()
+    if not value:
+        return None
+
+    candidate = Path(value).expanduser()
+    if candidate.is_file():
+        return str(candidate.resolve())
+    if candidate.is_absolute():
+        if candidate.suffix.lower() != ".exe":
+            win_candidate = candidate.with_suffix(".exe")
+            if win_candidate.is_file():
+                return str(win_candidate.resolve())
+        return None
+
+    located = shutil.which(value)
+    if located:
+        return str(Path(located).resolve())
+    return None
+
+
 def command_version(command: str, args: tuple[str, ...] = ("-version",)) -> tuple[str, str] | tuple[None, None]:
-    path = shutil.which(command)
+    path = resolve_command_path(command)
     if not path:
         return None, None
     try:
-        output = subprocess.check_output([command, *args], stderr=subprocess.STDOUT, text=True, timeout=5)
+        output = subprocess.check_output([path, *args], stderr=subprocess.STDOUT, text=True, timeout=5)
         first_line = output.strip().splitlines()[0] if output else "version output not found"
         return path, first_line
     except Exception as exc:
@@ -41,9 +62,13 @@ def print_item(name: str, value: str) -> None:
 
 def check_runtime() -> None:
     try:
+        from app.pipeline.ffmpeg_runtime import resolve_ffmpeg_bin
         from app.pipeline.acceleration import get_runtime_acceleration, runtime_public_info
+        from app.pipeline.torch_runtime import inspect_torch_runtime, select_torch_device, torch_runtime_summary
 
-        info = runtime_public_info(get_runtime_acceleration())
+        ffmpeg_bin = resolve_ffmpeg_bin()
+        info = runtime_public_info(get_runtime_acceleration(ffmpeg_bin=ffmpeg_bin))
+        torch_info = inspect_torch_runtime()
         print_item("overall_mode", str(info.get("overall_mode")))
         print_item("ffmpeg_mode", str(info.get("ffmpeg_mode")))
         print_item("opencv_mode", str(info.get("opencv_mode")))
@@ -51,6 +76,9 @@ def check_runtime() -> None:
         print_item("cpu_name", str(info.get("cpu_name")))
         print_item("upscale_available", str(info.get("upscale_available")))
         print_item("upscale_engine_hint", str(info.get("upscale_engine_hint")))
+        print_item("audio_gpu_mode(torch)", select_torch_device(torch_info))
+        print_item("audio_gpu_ready(torch)", str(bool(torch_info.get("gpu_ready", False))))
+        print_item("audio_torch_summary", torch_runtime_summary(torch_info))
     except Exception as exc:
         print_item("runtime", f"확인 실패: {exc}")
 
@@ -63,7 +91,19 @@ def check_torch() -> None:
         import torch  # type: ignore
 
         print_item("torch", f"{torch.__version__}")
+        print_item("python.executable", sys.executable)
+        print_item("torch.version.cuda", str(getattr(torch.version, "cuda", None)))
         print_item("torch.cuda.is_available", str(torch.cuda.is_available()))
+        try:
+            gpu_count = int(torch.cuda.device_count())
+        except Exception:
+            gpu_count = 0
+        print_item("torch.cuda.device_count", str(gpu_count))
+        if gpu_count > 0:
+            try:
+                print_item("torch.cuda.device_name[0]", str(torch.cuda.get_device_name(0)))
+            except Exception as exc:
+                print_item("torch.cuda.device_name[0]", f"확인 실패: {exc}")
         has_mps = hasattr(torch.backends, "mps")
         print_item("torch.mps.backend", str(has_mps))
         if has_mps:
@@ -80,9 +120,17 @@ def main() -> int:
     print_item("backend_root", str(BACKEND_ROOT))
 
     print_section("명령어")
-    ffmpeg_path, ffmpeg_ver = command_version("ffmpeg", ("-version",))
+    from app.pipeline.ffmpeg_runtime import resolve_ffmpeg_bin, resolve_ffprobe_bin
+
+    ffmpeg_cmd = resolve_ffmpeg_bin()
+    ffprobe_cmd = resolve_ffprobe_bin()
+    ffmpeg_path, ffmpeg_ver = command_version(ffmpeg_cmd, ("-version",))
+    ffprobe_path, ffprobe_ver = command_version(ffprobe_cmd, ("-version",))
     ytdlp_path, ytdlp_ver = command_version("yt-dlp", ("--version",))
+    print_item("ffmpeg_resolved", ffmpeg_cmd)
     print_item("ffmpeg", f"{ffmpeg_path} | {ffmpeg_ver}" if ffmpeg_path else "없음")
+    print_item("ffprobe_resolved", ffprobe_cmd)
+    print_item("ffprobe", f"{ffprobe_path} | {ffprobe_ver}" if ffprobe_path else "없음")
     print_item("yt-dlp", f"{ytdlp_path} | {ytdlp_ver}" if ytdlp_path else "없음")
 
     print_section("필수 파이썬 모듈")

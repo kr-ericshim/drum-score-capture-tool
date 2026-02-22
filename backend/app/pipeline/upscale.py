@@ -12,6 +12,7 @@ import cv2
 import yaml
 
 from app.pipeline.acceleration import RuntimeAcceleration
+from app.pipeline.ffmpeg_runtime import resolve_ffmpeg_bin
 from app.pipeline.hat_runtime import HatRuntime, get_hat_runtime
 from app.schemas import UpscaleOptions
 
@@ -300,6 +301,7 @@ def _upscale_with_ffmpeg_scale_vt(
     scale: float,
     workspace: Path,
 ) -> List[Path]:
+    ffmpeg_bin = resolve_ffmpeg_bin()
     out_paths: List[Path] = []
     for idx, frame_path in enumerate(frame_paths):
         image = cv2.imread(str(frame_path))
@@ -309,7 +311,7 @@ def _upscale_with_ffmpeg_scale_vt(
         target_h = max(2, int(round(image.shape[0] * scale)))
         out_path = workspace / f"upscaled_{idx:05d}.png"
         cmd = [
-            "ffmpeg",
+            ffmpeg_bin,
             "-y",
             "-hide_banner",
             "-loglevel",

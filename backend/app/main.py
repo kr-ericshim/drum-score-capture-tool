@@ -28,6 +28,7 @@ from app.schemas import (
     RuntimeStatusResponse,
 )
 from app.pipeline.acceleration import get_runtime_acceleration, runtime_public_info
+from app.pipeline.ffmpeg_runtime import resolve_ffmpeg_bin
 from app.pipeline.extract import extract_frames, extract_preview_frame, prepare_preview_source
 from app.pipeline.detect import detect_sheet_regions
 from app.pipeline.rectify import rectify_frames
@@ -35,6 +36,7 @@ from app.pipeline.stitch import stitch_pages
 from app.pipeline.upscale import upscale_frames
 from app.pipeline.audio_beat import extract_audio_for_beat_input, track_beats_for_audio
 from app.pipeline.audio_uvr import separate_audio_stem
+from app.pipeline.torch_runtime import inspect_torch_runtime, select_torch_device
 from app.pipeline.export import export_frames
 
 
@@ -65,8 +67,23 @@ def health() -> Dict[str, str]:
 
 @app.get("/runtime", response_model=RuntimeStatusResponse)
 def runtime_status() -> RuntimeStatusResponse:
-    accel = get_runtime_acceleration()
+    accel = get_runtime_acceleration(ffmpeg_bin=resolve_ffmpeg_bin())
     payload = runtime_public_info(accel)
+    torch_info = inspect_torch_runtime()
+    payload.update(
+        {
+            "audio_gpu_mode": select_torch_device(torch_info),
+            "audio_gpu_ready": bool(torch_info.get("gpu_ready", False)),
+            "torch_version": str(torch_info.get("torch_version")) if torch_info.get("torch_version") else None,
+            "torch_cuda_available": bool(torch_info.get("cuda_available", False)),
+            "torch_cuda_version": str(torch_info.get("cuda_version")) if torch_info.get("cuda_version") else None,
+            "torch_cuda_device_count": int(torch_info.get("cuda_device_count", 0) or 0),
+            "torch_cuda_device_name": str(torch_info.get("cuda_device_name")) if torch_info.get("cuda_device_name") else None,
+            "torch_mps_available": bool(torch_info.get("mps_available", False)),
+            "torch_python": str(torch_info.get("python_executable")) if torch_info.get("python_executable") else None,
+            "torch_gpu_reason": str(torch_info.get("gpu_reason", "unknown")),
+        }
+    )
     return RuntimeStatusResponse(**payload)
 
 
@@ -359,7 +376,10 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
         audio_opts = options.audio
         export_opts = options.export
         runtime_capture: Dict[str, str] = {}
-        accel = get_runtime_acceleration(logger=lambda msg: _append(job_id, msg))
+        accel = get_runtime_acceleration(
+            logger=lambda msg: _append(job_id, msg),
+            ffmpeg_bin=resolve_ffmpeg_bin(),
+        )
 
         if stitch_opts.layout_hint == "auto" and detect_opts.layout_hint != "auto":
             stitch_opts.layout_hint = detect_opts.layout_hint

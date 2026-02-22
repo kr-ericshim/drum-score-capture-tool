@@ -38,6 +38,50 @@ function canLaunchCommand(command, args = ["--version"]) {
   }
 }
 
+function resolveBundledBinary(backendDir, baseName) {
+  const fileName = process.platform === "win32" ? `${baseName}.exe` : baseName;
+  const candidates = [
+    path.join(backendDir, "bin", fileName),
+    path.join(backendDir, "bin", baseName, fileName),
+    path.join(backendDir, "bin", "ffmpeg", fileName),
+    path.join(backendDir, "ffmpeg", fileName),
+    path.join(backendDir, "ffmpeg", "bin", fileName),
+    path.join(backendDir, "tools", "ffmpeg", fileName),
+    path.join(backendDir, "tools", "ffmpeg", "bin", fileName),
+    path.join(backendDir, "third_party", "ffmpeg", fileName),
+    path.join(backendDir, "third_party", "ffmpeg", "bin", fileName),
+    path.join(backendDir, "vendor", "ffmpeg", fileName),
+    path.join(backendDir, "vendor", "ffmpeg", "bin", fileName),
+  ];
+  for (const candidate of candidates) {
+    if (existsFile(candidate)) {
+      return candidate;
+    }
+  }
+  return "";
+}
+
+function resolveFfmpegBinaries(backendDir) {
+  const fromEnvFfmpeg = (process.env.DRUMSHEET_FFMPEG_BIN || "").trim();
+  const fromEnvFfprobe = (process.env.DRUMSHEET_FFPROBE_BIN || "").trim();
+
+  const ffmpegBin = fromEnvFfmpeg || resolveBundledBinary(backendDir, "ffmpeg");
+  let ffprobeBin = fromEnvFfprobe || resolveBundledBinary(backendDir, "ffprobe");
+
+  if (!ffprobeBin && ffmpegBin && existsFile(ffmpegBin)) {
+    const ffprobeName = process.platform === "win32" ? "ffprobe.exe" : "ffprobe";
+    const sibling = path.join(path.dirname(ffmpegBin), ffprobeName);
+    if (existsFile(sibling)) {
+      ffprobeBin = sibling;
+    }
+  }
+
+  return {
+    ffmpegBin,
+    ffprobeBin,
+  };
+}
+
 function findPythonCommand(backendDir) {
   const candidates = [];
   const configured = process.env.DRUMSHEET_PYTHON_BIN;
@@ -145,6 +189,13 @@ function runBackend() {
   }
   const python = findPythonCommand(backendDir);
   console.log(`[backend] python launcher: ${python.label} -> ${python.command} ${python.prefixArgs.join(" ")}`.trim());
+  const bins = resolveFfmpegBinaries(backendDir);
+  if (bins.ffmpegBin) {
+    console.log(`[backend] ffmpeg bin: ${bins.ffmpegBin}`);
+  }
+  if (bins.ffprobeBin) {
+    console.log(`[backend] ffprobe bin: ${bins.ffprobeBin}`);
+  }
 
   const env = {
     ...process.env,
@@ -152,6 +203,8 @@ function runBackend() {
     DRUMSHEET_JOBS_DIR: path.join(backendDir, "jobs"),
     DRUMSHEET_HWACCEL: process.env.DRUMSHEET_HWACCEL || "auto",
     DRUMSHEET_OPENCV_ACCEL: process.env.DRUMSHEET_OPENCV_ACCEL || "auto",
+    ...(bins.ffmpegBin ? { DRUMSHEET_FFMPEG_BIN: bins.ffmpegBin } : {}),
+    ...(bins.ffprobeBin ? { DRUMSHEET_FFPROBE_BIN: bins.ffprobeBin } : {}),
   };
   backendProcess = spawn(python.command, [...python.prefixArgs, runPy], {
     cwd: backendDir,

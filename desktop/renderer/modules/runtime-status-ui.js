@@ -37,6 +37,18 @@ function formatUpscaleEngine(runtime) {
   return "업스케일 가능";
 }
 
+function formatAudioGpu(runtime) {
+  const mode = String(runtime?.audio_gpu_mode || "cpu").toLowerCase();
+  if (mode === "cuda") {
+    const name = runtime?.torch_cuda_device_name || runtime?.gpu_name || "CUDA GPU";
+    return `GPU (CUDA) - ${name}`;
+  }
+  if (mode === "mps") {
+    return "GPU (MPS)";
+  }
+  return "CPU (torch GPU 미사용)";
+}
+
 function formatEngineMini(runtime) {
   const ffmpeg = String(runtime?.ffmpeg_mode || "unknown").toUpperCase();
   const opencv = formatMode(runtime?.opencv_mode || "cpu");
@@ -57,6 +69,10 @@ function summaryText(runtime) {
   const opencv = formatMode(runtime.opencv_mode);
   const upscale = formatUpscaleEngine(runtime);
   if (overall === "gpu") {
+    const audioGpuReady = Boolean(runtime.audio_gpu_ready);
+    if (!audioGpuReady) {
+      return `GPU는 일부 단계에서만 사용 중입니다. 오디오 분리는 torch CUDA/MPS 상태를 따로 확인해야 합니다. (FFmpeg: ${ffmpeg}, OpenCV: ${opencv}, 업스케일: ${upscale})`;
+    }
     return `가속 가능한 단계는 GPU로 처리하고, 실패하면 자동으로 CPU로 전환합니다. (FFmpeg: ${ffmpeg}, OpenCV: ${opencv}, 업스케일: ${upscale})`;
   }
   return `현재 환경에서는 CPU로 처리 중입니다. GPU 가속 가능 환경이면 자동 전환됩니다. (FFmpeg: ${ffmpeg}, OpenCV: ${opencv}, 업스케일: ${upscale})`;
@@ -73,9 +89,11 @@ export function renderRuntimeStatus(runtime) {
   const desc = el("runtimeMainDesc");
   const ffmpeg = el("runtimeFfmpeg");
   const opencv = el("runtimeOpencv");
+  const audioGpu = el("runtimeAudioGpu");
   const upscale = el("runtimeUpscale");
   const gpu = el("runtimeGpu");
   const cpu = el("runtimeCpu");
+  const torch = el("runtimeTorch");
   const order = el("runtimeOrder");
 
   const usesGpu = String(runtime.overall_mode || "").toLowerCase() === "gpu";
@@ -102,6 +120,9 @@ export function renderRuntimeStatus(runtime) {
   if (opencv) {
     opencv.textContent = formatMode(runtime.opencv_mode);
   }
+  if (audioGpu) {
+    audioGpu.textContent = formatAudioGpu(runtime);
+  }
   if (upscale) {
     upscale.textContent = formatUpscaleEngine(runtime);
   }
@@ -110,6 +131,13 @@ export function renderRuntimeStatus(runtime) {
   }
   if (cpu) {
     cpu.textContent = runtime.cpu_name || "알 수 없음";
+  }
+  if (torch) {
+    const version = runtime.torch_version || "미설치";
+    const cudaVer = runtime.torch_cuda_version || "-";
+    const reason = runtime.torch_gpu_reason || "unknown";
+    const count = Number.isFinite(Number(runtime.torch_cuda_device_count)) ? Number(runtime.torch_cuda_device_count) : 0;
+    torch.textContent = `${version} (CUDA=${cudaVer}, dev=${count}, reason=${reason})`;
   }
   if (order) {
     order.textContent = Array.isArray(runtime.ffmpeg_order) && runtime.ffmpeg_order.length > 0 ? runtime.ffmpeg_order.join(" -> ") : "cpu";
@@ -128,5 +156,13 @@ export function renderRuntimeError() {
   }
   if (engineMini) {
     engineMini.textContent = "확인 실패";
+  }
+  const audioGpu = el("runtimeAudioGpu");
+  const torch = el("runtimeTorch");
+  if (audioGpu) {
+    audioGpu.textContent = "확인 실패";
+  }
+  if (torch) {
+    torch.textContent = "확인 실패";
   }
 }

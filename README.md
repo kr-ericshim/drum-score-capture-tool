@@ -94,6 +94,10 @@ Windows Notes
   - `backend\\.venv\\Scripts\\python.exe`
   - `py -3.11` → `py -3` → `py` → `python`
 - If you see `python 9009`, Python is not discoverable by Windows shell. Install Python 3.11 (x64) and enable PATH.
+- FFmpeg/FFprobe resolution order:
+  - `DRUMSHEET_FFMPEG_BIN` / `DRUMSHEET_FFPROBE_BIN`
+  - bundled backend paths (`backend\\bin`, `backend\\ffmpeg\\bin`, `backend\\tools\\ffmpeg\\bin` 등)
+  - system PATH (`ffmpeg.exe`, `ffprobe.exe`)
 - Always run `npm start` inside `score_capture_program\\desktop`.
 
 운영 영향 변경사항 (최근)
@@ -156,6 +160,12 @@ Troubleshooting
   - Disable GPU-only option or confirm torch device availability (`python scripts/doctor.py`).
 - `Audio separation requires GPU, but CUDA/MPS is not available` (Windows + NVIDIA, e.g. RTX 5080):
   - 원인: 앱이 다른 Python을 쓰거나, 현재 venv에 CPU용 torch가 설치된 경우가 대부분입니다.
+  - 참고: 상단 런타임의 GPU 표시는 FFmpeg/OpenCV 기준입니다. 오디오 분리는 `오디오 분리 GPU(torch)` 상태를 별도로 봐야 합니다.
+  - `torch_gpu_reason` 해석:
+    - `cuda_build_missing`: CUDA wheel이 아닌 torch(CPU 빌드) 설치
+    - `cuda_no_visible_device`: torch가 CUDA 장치를 읽지 못함
+    - `cuda_runtime_unavailable`: CUDA 빌드는 있으나 드라이버/런타임 비활성
+    - `torch_missing`: torch 미설치/로드 실패
   - PowerShell에서 아래를 순서대로 실행하세요.
   - `cd C:\path\to\score_capture_program\backend`
   - `.\.venv\Scripts\python.exe -c "import sys,torch;print('py=',sys.executable);print('torch=',torch.__version__);print('cuda=',torch.cuda.is_available());print('torch_cuda=',torch.version.cuda);print('gpu_count=',torch.cuda.device_count())"`
@@ -171,6 +181,17 @@ Troubleshooting
     - `$env:DRUMSHEET_PYTHON_BIN = (Resolve-Path ..\backend\.venv\Scripts\python.exe).Path`
     - `npm start`
   - 참고: 에러 문구의 `MPS`는 macOS용 GPU 경로입니다. Windows에서는 `CUDA`만 확인하면 됩니다.
+- `ffmpeg`가 상대 경로/잘못된 경로로 잡히는 경우(Windows):
+  - 증상 예: `WinError 2`, `No such file or directory: 'ffmpeg'`, 혹은 상대 경로 호출 실패
+  - 절대 경로를 강제로 지정해 실행:
+  - `cd C:\path\to\score_capture_program\desktop`
+  - `$env:DRUMSHEET_FFMPEG_BIN = (Resolve-Path ..\backend\bin\ffmpeg.exe).Path`
+  - `$env:DRUMSHEET_FFPROBE_BIN = (Resolve-Path ..\backend\bin\ffprobe.exe).Path`
+  - `npm start`
+  - 시스템 PATH ffmpeg를 쓸 경우에는:
+  - `where ffmpeg`
+  - `where ffprobe`
+  - 경로가 나오지 않으면 FFmpeg 설치 또는 PATH 설정이 필요합니다.
 
 Packaging (MVP)
 - Add `electron-builder` install (already in `desktop/package.json`).
@@ -203,6 +224,7 @@ GPU / Acceleration (auto with CPU fallback)
 - This app tries GPU first and falls back to CPU automatically when unavailable.
 - FFmpeg decode acceleration order is chosen by OS (e.g., `videotoolbox` on macOS, `cuda`/`d3d11va` on Windows).
 - OpenCV acceleration uses `CUDA` if available, then `OpenCL`, otherwise `CPU`.
+- Audio separation/beat tracking GPU는 PyTorch(CUDA/MPS) 기준이며 FFmpeg/OpenCV 감지와 별개입니다.
 - On macOS (Apple Silicon), upscale can use FFmpeg `scale_vt` (VideoToolbox/Metal path) when available.
 - `scale_vt` is enabled only after a runtime self-test passes (to avoid exposing a broken GPU path).
 - Current default upscale is interpolation-based (not AI super-resolution), tuned for better text/sheet clarity.
@@ -211,6 +233,8 @@ GPU / Acceleration (auto with CPU fallback)
   - `DRUMSHEET_OPENCV_ACCEL=auto|cuda|opencl|cpu`
   - `DRUMSHEET_UPSCALE_ENGINE=auto|hat|opencv|ffmpeg`
   - `DRUMSHEET_UPSCALE_SHARPEN=1|0` (default `1`, toggles post-upscale unsharp enhancement)
+  - `DRUMSHEET_FFMPEG_BIN=/absolute/path/to/ffmpeg(.exe)`
+  - `DRUMSHEET_FFPROBE_BIN=/absolute/path/to/ffprobe(.exe)`
 
 HAT Upscale (optional)
 - This project can call HAT (`XPixelGroup/HAT`) as an upscale engine.

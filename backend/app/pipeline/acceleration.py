@@ -33,8 +33,8 @@ class RuntimeAcceleration:
     gpu_name: Optional[str]
 
 
-_ACCELERATION_CACHE: Optional[RuntimeAcceleration] = None
-_ACCELERATION_LOGGED = False
+_ACCELERATION_CACHE: Dict[str, RuntimeAcceleration] = {}
+_ACCELERATION_LOGGED_KEYS: set[str] = set()
 _LOCK = threading.Lock()
 
 
@@ -43,16 +43,17 @@ def get_runtime_acceleration(
     logger: Optional[Callable[[str], None]] = None,
     ffmpeg_bin: str = "ffmpeg",
 ) -> RuntimeAcceleration:
-    global _ACCELERATION_CACHE, _ACCELERATION_LOGGED
+    cache_key = str(ffmpeg_bin or "ffmpeg").strip() or "ffmpeg"
     with _LOCK:
-        if _ACCELERATION_CACHE is None:
-            _ACCELERATION_CACHE = _detect_runtime_acceleration(ffmpeg_bin=ffmpeg_bin)
-            _ACCELERATION_LOGGED = False
-        accel = _ACCELERATION_CACHE
+        accel = _ACCELERATION_CACHE.get(cache_key)
+        if accel is None:
+            accel = _detect_runtime_acceleration(ffmpeg_bin=cache_key)
+            _ACCELERATION_CACHE[cache_key] = accel
+            _ACCELERATION_LOGGED_KEYS.discard(cache_key)
 
-        if logger is not None and not _ACCELERATION_LOGGED:
+        if logger is not None and cache_key not in _ACCELERATION_LOGGED_KEYS:
             _log_runtime_acceleration(accel, logger)
-            _ACCELERATION_LOGGED = True
+            _ACCELERATION_LOGGED_KEYS.add(cache_key)
         return accel
 
 

@@ -8,12 +8,15 @@ from typing import Dict, Optional
 
 import numpy as np
 
+from app.pipeline.ffmpeg_runtime import resolve_ffmpeg_bin
+from app.pipeline.torch_runtime import inspect_torch_runtime, select_torch_device, torch_runtime_summary
 from app.schemas import BeatTrackOptions
 
 
 def extract_audio_for_beat_input(*, source_video: Path, audio_output: Path) -> None:
+    ffmpeg_bin = resolve_ffmpeg_bin()
     cmd = [
-        "ffmpeg",
+        ffmpeg_bin,
         "-y",
         "-hide_banner",
         "-loglevel",
@@ -56,7 +59,9 @@ def track_beats_for_audio(
     _normalize_audio_for_inference(source_audio=audio_input, audio_output=prepared_audio)
     logger(f"beat tracking input prepared: {prepared_audio}")
 
-    device = _resolve_beat_device()
+    torch_info = inspect_torch_runtime()
+    device = select_torch_device(torch_info)
+    logger(f"beat tracking torch runtime: {torch_runtime_summary(torch_info)}")
     if options.gpu_only and device == "cpu":
         raise RuntimeError("Beat tracking requires GPU, but CUDA/MPS is not available.")
     logger(f"beat tracking model={options.model}, device={device}, dbn={dbn_enabled}, float16={options.float16}")
@@ -99,8 +104,9 @@ def track_beats_for_audio(
 
 
 def _normalize_audio_for_inference(*, source_audio: Path, audio_output: Path) -> None:
+    ffmpeg_bin = resolve_ffmpeg_bin()
     cmd = [
-        "ffmpeg",
+        ffmpeg_bin,
         "-y",
         "-hide_banner",
         "-loglevel",
@@ -168,27 +174,6 @@ def _estimate_bpm(beats: list[float]) -> Optional[float]:
     if not np.isfinite(bpm):
         return None
     return round(float(bpm), 2)
-
-
-def _resolve_beat_device() -> str:
-    try:
-        import torch  # type: ignore
-    except Exception:
-        return "cpu"
-
-    try:
-        if torch.cuda.is_available():
-            return "cuda"
-    except Exception:
-        pass
-
-    try:
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            return "mps"
-    except Exception:
-        pass
-
-    return "cpu"
 
 
 def _ensure_beat_stack_installed(*, use_dbn: bool) -> None:

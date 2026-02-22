@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 from typing import Dict
 
+from app.pipeline.ffmpeg_runtime import resolve_ffmpeg_bin, resolve_ffprobe_bin
+from app.pipeline.torch_runtime import inspect_torch_runtime, select_torch_device, torch_runtime_summary
 from app.schemas import AudioSeparationOptions
 
 
@@ -29,20 +31,25 @@ def separate_audio_stem(
 
     workspace.mkdir(parents=True, exist_ok=True)
     logger(f"audio separation workspace: {workspace}")
+    ffmpeg_bin = resolve_ffmpeg_bin()
+    ffprobe_bin = resolve_ffprobe_bin()
+    logger(f"audio separation binaries: ffmpeg={ffmpeg_bin}, ffprobe={ffprobe_bin}")
     audio_input = workspace / "source_audio.wav"
     logger("audio separation stage: extract audio track (ffmpeg)")
     extract_started = time.perf_counter()
-    _extract_audio_track(source_video=source_video, audio_output=audio_input)
+    _extract_audio_track(source_video=source_video, audio_output=audio_input, ffmpeg_bin=ffmpeg_bin)
     extract_elapsed = time.perf_counter() - extract_started
     file_size_mb = float(audio_input.stat().st_size) / (1024.0 * 1024.0) if audio_input.exists() else 0.0
-    duration_sec = _probe_duration_seconds(audio_input)
+    duration_sec = _probe_duration_seconds(audio_input, ffprobe_bin=ffprobe_bin)
     if duration_sec is not None:
         logger(f"audio extraction finished: duration={duration_sec:.1f}s, size={file_size_mb:.1f}MB, elapsed={extract_elapsed:.1f}s")
     else:
         logger(f"audio extraction finished: size={file_size_mb:.1f}MB, elapsed={extract_elapsed:.1f}s")
     logger("audio separation input prepared")
 
-    device = _resolve_demucs_device()
+    torch_info = inspect_torch_runtime()
+    device = select_torch_device(torch_info)
+    logger(f"audio separation torch runtime: {torch_runtime_summary(torch_info)}")
     if options.gpu_only and device == "cpu":
         raise RuntimeError("Audio separation requires GPU, but CUDA/MPS is not available.")
 
@@ -78,7 +85,7 @@ def separate_audio_stem(
         if options.output_format == "wav":
             shutil.copy2(stem_src, stem_out)
         else:
-            _transcode_audio(src=stem_src, dst=stem_out, fmt=options.output_format)
+            _transcode_audio(src=stem_src, dst=stem_out, fmt=options.output_format, ffmpeg_bin=ffmpeg_bin)
         exported_stems[stem_name] = str(stem_out)
         stem_size_mb = float(stem_out.stat().st_size) / (1024.0 * 1024.0) if stem_out.exists() else 0.0
         logger(f"audio stem saved: {stem_name} -> {stem_out.name} ({stem_size_mb:.1f}MB)")
@@ -96,9 +103,9 @@ def separate_audio_stem(
     }
 
 
-def _extract_audio_track(*, source_video: Path, audio_output: Path) -> None:
+def _extract_audio_track(*, source_video: Path, audio_output: Path, ffmpeg_bin: str) -> None:
     cmd = [
-        "ffmpeg",
+        ffmpeg_bin,
         "-y",
         "-hide_banner",
         "-loglevel",
@@ -171,12 +178,12 @@ def _collect_stem_files(*, output_root: Path, model: str, track_name: str) -> Di
     return stems
 
 
-def _transcode_audio(*, src: Path, dst: Path, fmt: str) -> None:
+def _transcode_audio(*, src: Path, dst: Path, fmt: str, ffmpeg_bin: str) -> None:
     if fmt == "wav":
         shutil.copy2(src, dst)
         return
     cmd = [
-        "ffmpeg",
+        ffmpeg_bin,
         "-y",
         "-hide_banner",
         "-loglevel",
@@ -207,27 +214,6 @@ def _resolve_python_bin() -> str:
     return "python3"
 
 
-def _resolve_demucs_device() -> str:
-    try:
-        import torch  # type: ignore
-    except Exception:
-        return "cpu"
-
-    try:
-        if torch.cuda.is_available():
-            return "cuda"
-    except Exception:
-        pass
-
-    try:
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            return "mps"
-    except Exception:
-        pass
-
-    return "cpu"
-
-
 def _ensure_audio_stack_installed() -> None:
     if importlib.util.find_spec("demucs") is None:
         raise RuntimeError("demucs is not installed. Install optional dependency and retry.")
@@ -250,9 +236,9 @@ def _trim_error_log(text: str, *, max_lines: int = 40, max_chars: int = 4000) ->
     return compact
 
 
-def _probe_duration_seconds(path: Path) -> float | None:
+def _probe_duration_seconds(path: Path, *, ffprobe_bin: str) -> float | None:
     cmd = [
-        "ffprobe",
+        ffprobe_bin,
         "-v",
         "error",
         "-show_entries",
