@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Drum Sheet Capture Tool</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="hero-eyebrow">로컬 데스크톱 도구</p>
+          <h1>Drum Sheet Capture Tool</h1>
+          <p class="hero-subtitle">영상에서 악보를 뽑아 정리하고, 이미지/PDF로 저장하는 프로그램</p>
+        </div>
+        <div class="hero-badges">
+          <span class="hero-badge">로컬에서만 처리</span>
+          <span class="hero-badge">자동 + 직접 지정</span>
+          <span class="hero-badge">PNG / JPG / PDF 저장</span>
+        </div>
+      </header>
+
+      <section class="panel panel-runtime">
+        <div class="panel-head">
+          <h2>가속 상태</h2>
+          <p>실행 중인 장치/가속 모드를 표시합니다. GPU 실패 시 자동으로 CPU로 전환됩니다.</p>
+        </div>
+        <div class="runtime-grid">
+          <article class="runtime-card runtime-primary">
+            <span id="runtimeOverallChip" class="runtime-chip runtime-chip-cpu">확인 중</span>
+            <h3 id="runtimeMainTitle">런타임 정보 확인 중</h3>
+            <p id="runtimeMainDesc">로딩 중입니다...</p>
+          </article>
+          <article class="runtime-card">
+            <div class="runtime-list">
+              <div class="runtime-row"><span>프레임 추출</span><strong id="runtimeFfmpeg">확인 중</strong></div>
+              <div class="runtime-row"><span>OpenCV 처리</span><strong id="runtimeOpencv">확인 중</strong></div>
+              <div class="runtime-row"><span>GPU 장치</span><strong id="runtimeGpu">확인 중</strong></div>
+              <div class="runtime-row"><span>CPU 장치</span><strong id="runtimeCpu">확인 중</strong></div>
+              <div class="runtime-row runtime-row-order"><span>FFmpeg 우선순위</span><strong id="runtimeOrder">확인 중</strong></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel panel-input">
+        <div class="panel-head">
+          <h2>1. 입력 소스</h2>
+          <p>로컬 파일 또는 유튜브 URL 중 하나를 선택하세요.</p>
+        </div>
+        <div class="choice-row">
+          <label class="choice-chip"><input type="radio" name="sourceType" value="file" checked /> 로컬 파일</label>
+          <label class="choice-chip"><input type="radio" name="sourceType" value="youtube" /> 유튜브 URL</label>
+        </div>
+        <div class="control-row" id="fileRow">
+          <input id="filePath" type="text" placeholder="로컬 영상 파일 경로" readonly />
+          <button id="browseFile" class="secondary">파일 선택</button>
+        </div>
+        <div class="control-row" id="youtubeRow" style="display: none">
+          <input id="youtubeUrl" type="text" placeholder="https://www.youtube.com/..." />
+        </div>
+        <p class="helper-text">유튜브 다운로드 옵션은 영상 정책/환경에 따라 변동될 수 있습니다.</p>
+      </section>
+
+      <section class="panel panel-options">
+        <div class="panel-head">
+          <h2>2. 처리 옵션</h2>
+          <p>처음에는 기본값으로 실행하세요. 유튜브 영상은 하단에 나오는 경우를 우선 고려해 자동으로 찾습니다.</p>
+        </div>
+        <div class="field-grid">
+          <label class="field">
+            <span>캡처 민감도</span>
+            <select id="captureSensitivity">
+              <option value="low">낮음 (중복 적게)</option>
+              <option value="medium" selected>보통 (추천)</option>
+              <option value="high">높음 (세밀하게)</option>
+            </select>
+            <small id="captureSensitivityHelp" class="field-help">플레이헤드 같은 작은 움직임은 최대한 무시하고, 실제 악보 변화 위주로 캡처합니다.</small>
+          </label>
+          <label class="field">
+            <span>시작 (sec)</span>
+            <input id="startSec" type="number" value="" step="0.1" min="0" />
+          </label>
+          <label class="field">
+            <span>끝 (sec)</span>
+            <input id="endSec" type="number" value="" step="0.1" min="0" />
+          </label>
+        </div>
+        <div id="localRangeHelper" class="video-helper" style="display: none">
+          <p class="video-helper-title">로컬 파일 구간 선택 도우미</p>
+          <video id="rangeVideo" class="range-video" preload="metadata" controls></video>
+          <div class="range-time-row">
+            <span id="videoCurrent">00:00.0</span>
+            <input id="videoSeek" type="range" min="0" max="0" value="0" step="0.1" disabled />
+            <span id="videoDuration">00:00.0</span>
+          </div>
+          <div class="range-sliders">
+            <label class="field">
+              <span>시작 슬라이더</span>
+              <input id="startSlider" type="range" min="0" max="0" value="0" step="0.1" disabled />
+            </label>
+            <label class="field">
+              <span>끝 슬라이더</span>
+              <input id="endSlider" type="range" min="0" max="0" value="0" step="0.1" disabled />
+            </label>
+          </div>
+          <div class="result-actions">
+            <button id="setStartAtCurrent" type="button" class="secondary" disabled>현재 시점을 시작으로</button>
+            <button id="setEndAtCurrent" type="button" class="secondary" disabled>현재 시점을 끝으로</button>
+            <button id="clearRange" type="button" class="secondary" disabled>시작/끝 비우기</button>
+          </div>
+          <p id="videoHelperHint" class="helper-text">로컬 파일을 선택하면 아래 플레이어에서 시작/끝 시간을 슬라이더로 쉽게 고를 수 있어요.</p>
+        </div>
+        <label class="field field-full">
+          <span>영상 형태</span>
+          <select id="layoutHint">
+            <option value="auto" selected>자동 추천 (처음 사용 권장)</option>
+            <option value="bottom_bar">연주 화면 + 하단 악보 바</option>
+            <option value="full_scroll">전체 악보 + 천천히 스크롤</option>
+            <option value="page_turn">전체 악보 + 페이지 넘김</option>
+          </select>
+        </label>
+        <p id="layoutHintText" class="helper-text">자동 추천: 유튜브는 하단 악보 바를, 그 외는 전체 악보 형태를 우선으로 찾습니다.</p>
+        <div class="choice-row">
+          <label class="choice-chip"><input id="detectAuto" type="radio" name="detectMode" value="auto" checked /> 자동으로 찾기</label>
+          <label class="choice-chip"><input id="detectManual" type="radio" name="detectMode" value="manual" /> 직접 영역 지정</label>
+        </div>
+        <div class="result-actions" id="manualRoiTools" style="display: none">
+          <button id="loadPreviewForRoi" type="button" class="secondary">영역 지정 화면 불러오기</button>
+          <span class="helper-text">로컬 파일은 위 플레이어의 현재 시점 기준으로 화면을 불러옵니다. 화면이 보이면 악보 부분을 드래그해서 네모를 그려주세요.</span>
+        </div>
+        <div id="roiEditorWrap" style="display: none">
+          <div class="roi-help">자동으로 못 찾으면, 악보가 보이는 부분을 드래그해서 네모 박스를 그려주세요. 좌표는 자동 입력되고, 필요하면 "영역 적용" 버튼으로 다시 반영할 수 있어요.</div>
+          <div class="preview-stage">
+            <img id="roiImage" alt="preview image" />
+            <canvas id="roiCanvas"></canvas>
+          </div>
+          <div class="result-actions">
+            <button id="applyRoi" type="button" class="secondary">영역 적용</button>
+          </div>
+        </div>
+        <label class="field field-full">
+          <span>직접 지정 좌표 (고급)</span>
+          <textarea id="roiInput" rows="3" placeholder='[[0,0],[100,0],[100,100],[0,100]]'></textarea>
+        </label>
+        <div class="control-row stacked-mobile">
+          <label class="choice-chip"><input id="enableStitch" type="checkbox" /> 스크롤 스티칭</label>
+          <label class="field compact-field">
+            <span>겹침 기준값</span>
+            <input id="overlapThreshold" type="number" value="0.2" min="0" max="1" step="0.05" />
+          </label>
+        </div>
+        <div class="control-row stacked-mobile">
+          <label class="choice-chip"><input id="enableUpscale" type="checkbox" /> 악보 업스케일 (GPU 전용)</label>
+          <label class="field compact-field">
+            <span>업스케일 배율</span>
+            <select id="upscaleFactor" disabled>
+              <option value="2.0" selected>2x (권장)</option>
+              <option value="3.0">3x</option>
+            </select>
+          </label>
+        </div>
+        <p id="upscaleHint" class="helper-text">켜면 업스케일은 GPU로만 처리합니다. GPU 가속 불가 환경이면 작업을 중단하고 안내합니다.</p>
+        <div class="choice-row">
+          <label class="choice-chip"><input class="format" type="checkbox" value="png" checked /> PNG</label>
+          <label class="choice-chip"><input class="format" type="checkbox" value="jpg" /> JPG</label>
+          <label class="choice-chip"><input class="format" type="checkbox" value="pdf" checked /> PDF</label>
+        </div>
+        <button id="runJob" class="primary">입력 → 처리</button>
+      </section>
+
+      <section class="panel panel-progress">
+        <div class="panel-head">
+          <h2>3. 진행 상태</h2>
+          <p>아래 로그에서 처리 과정을 확인할 수 있습니다.</p>
+        </div>
+        <div class="status-shell">
+          <span class="status-label">현재 상태</span>
+          <strong id="status">대기 중</strong>
+        </div>
+        <div class="progress-wrap"><div id="progressBar"></div></div>
+        <div id="logs" class="logs"></div>
+      </section>
+
+      <section class="panel panel-result">
+        <div class="panel-head">
+          <h2>4. 결과</h2>
+          <p>완료되면 저장된 파일 정보와 미리보기를 보여줍니다.</p>
+        </div>
+        <div id="resultMeta"></div>
+        <div class="result-actions">
+          <button id="openOutputDir" disabled class="secondary">결과 폴더 열기</button>
+        </div>
+        <div id="previewWrap" class="preview-wrap">
+          <img id="resultPreviewImage" class="result-preview-image" alt="result preview" style="display: none" />
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,14 @@
+.venv/
+dist/
+build/
+*.log
+*.pyc
+__pycache__/
+.DS_Store
+.idea/
+backend/.uv/
+backend/.venv/
+backend/output/
+backend/jobs/
+desktop/node_modules/
+desktop/dist/

@@ -1,0 +1,43 @@
+{
+  "name": "drum-sheet-capture",
+  "version": "0.1.0",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "dependencies": {
+    "electron": "^37.2.0"
+  },
+  "devDependencies": {
+    "electron-builder": "^26.1.0"
+  },
+  "build": {
+    "productName": "Drum Sheet Capture",
+    "appId": "com.ericshim.drumsheetcapture",
+    "asar": false,
+    "files": [
+      "**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../backend",
+        "to": "backend"
+      }
+    ],
+    "directories": {
+      "output": "../dist"
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  }
+}
