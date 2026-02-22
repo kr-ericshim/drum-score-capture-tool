@@ -174,6 +174,8 @@ class AudioSeparateResponse(BaseModel):
     audio_url: Optional[str] = None
     audio_stems: Dict[str, str] = Field(default_factory=dict)
     audio_stem_urls: Dict[str, str] = Field(default_factory=dict)
+    source_video: Optional[str] = None
+    source_video_url: Optional[str] = None
     audio_engine: str
     audio_model: str
     audio_device: str

@@ -178,6 +178,7 @@ def audio_separate(payload: AudioSeparateRequest) -> AudioSeparateResponse:
             logger=_audio_log,
         )
         _audio_log(f"audio source ready: {source_video}")
+        source_video_url = _to_jobs_files_url(source_video)
         result = separate_audio_stem(
             source_video=source_video,
             options=options,
@@ -206,6 +207,8 @@ def audio_separate(payload: AudioSeparateRequest) -> AudioSeparateResponse:
             audio_url=audio_url,
             audio_stems=stem_paths,
             audio_stem_urls=stem_urls,
+            source_video=str(source_video),
+            source_video_url=source_video_url,
             audio_engine=str(result.get("audio_engine", options.engine)),
             audio_model=str(result.get("audio_model", options.model)),
             audio_device=str(result.get("audio_device", "unknown")),

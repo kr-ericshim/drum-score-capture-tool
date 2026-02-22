@@ -379,6 +379,20 @@
             <h3>바로 재생 / 파트 믹서</h3>
             <p>앱 안에서 바로 재생하고, 파트별 볼륨과 속도를 조절해 연습하세요.</p>
           </div>
+          <section id="audioVideoPanel" class="audio-video-panel" style="display: none">
+            <div class="audio-video-head">
+              <strong>연습용 영상 동기화</strong>
+              <button id="audioPrepareVideo" class="secondary" type="button">영상 다시 불러오기</button>
+            </div>
+            <video
+              id="audioVideoPreview"
+              class="audio-video-preview"
+              preload="metadata"
+              playsinline
+              muted
+            ></video>
+            <p id="audioVideoHint" class="helper-text">영상 입력(mp4/유튜브)일 때만 표시됩니다.</p>
+          </section>
           <div class="audio-player-controls">
             <button id="audioPlayToggle" class="primary" disabled>재생</button>
             <button id="audioStop" class="secondary" disabled>정지</button>

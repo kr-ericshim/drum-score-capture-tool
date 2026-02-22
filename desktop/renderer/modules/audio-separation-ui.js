@@ -47,15 +47,40 @@ function normalizeApiDetail(detail) {
   return String(detail || "");
 }
 
+const VIDEO_EXTENSIONS = new Set([".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"]);
+
+function fileExtension(rawPath) {
+  const normalized = String(rawPath || "").trim().replace(/\\/g, "/");
+  if (!normalized) {
+    return "";
+  }
+  const idx = normalized.lastIndexOf(".");
+  if (idx < 0) {
+    return "";
+  }
+  return normalized.slice(idx).toLowerCase();
+}
+
+function isVideoLikePath(rawPath) {
+  return VIDEO_EXTENSIONS.has(fileExtension(rawPath));
+}
+
 export function createAudioSeparationUi({ apiBase }) {
   let outputDir = "";
   let latestStemEntries = [];
+  let latestSourcePayload = null;
+  let latestSeparationResult = null;
   let markerSignature = "";
   const playback = {
     tracks: [],
     duration: 0,
     timerId: null,
     isPlaying: false,
+  };
+  const videoPlayback = {
+    ready: false,
+    activeSrc: "",
+    isProgrammaticSeek: false,
   };
   const beatState = {
     beats: [],
@@ -104,6 +129,82 @@ export function createAudioSeparationUi({ apiBase }) {
       return "입력 오디오 추출";
     }
     return "Demucs 분리 실행";
+  }
+
+  function setVideoHint(text) {
+    const node = el("audioVideoHint");
+    if (node) {
+      node.textContent = text;
+    }
+  }
+
+  function setVideoPanelVisible(visible) {
+    const panel = el("audioVideoPanel");
+    if (panel) {
+      panel.style.display = visible ? "block" : "none";
+    }
+  }
+
+  function setVideoPrepareEnabled(enabled) {
+    const button = el("audioPrepareVideo");
+    if (button) {
+      button.disabled = !enabled;
+    }
+  }
+
+  function resolveMediaSrc(mediaUrl, mediaPath) {
+    const url = String(mediaUrl || "").trim();
+    if (url) {
+      if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("file://")) {
+        return url;
+      }
+      if (url.startsWith("/")) {
+        return `${apiBase}${url}`;
+      }
+    }
+    const path = String(mediaPath || "").trim();
+    if (!path) {
+      return "";
+    }
+    return fileUrl(path);
+  }
+
+  function resolveVideoCandidate(payload, result = null) {
+    const sourceType = String(payload?.source_type || selectedAudioSourceType());
+    const filePath = String(payload?.file_path || "").trim();
+    const youtubeUrl = String(payload?.youtube_url || "").trim();
+    const sourceVideoPath = String(result?.source_video || "").trim();
+    const sourceVideoUrl = String(result?.source_video_url || "").trim();
+    const candidatePath = sourceVideoPath || filePath;
+    const hasVideo = sourceType === "youtube" || isVideoLikePath(candidatePath);
+    return {
+      sourceType,
+      filePath,
+      youtubeUrl,
+      sourceVideoPath,
+      sourceVideoUrl,
+      hasVideo,
+    };
+  }
+
+  async function fetchPreparedVideoSource(sourceType, filePath, youtubeUrl) {
+    const payload = { source_type: sourceType };
+    if (sourceType === "file") {
+      payload.file_path = filePath;
+    } else {
+      payload.youtube_url = youtubeUrl;
+    }
+
+    const response = await fetch(`${apiBase}/preview/source`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: "영상 준비 실패" }));
+      throw new Error(friendlyApiError(normalizeApiDetail(error.detail || "영상 준비 실패")));
+    }
+    return response.json();
   }
 
   function setBeatStatus(text) {
@@ -235,21 +336,7 @@ export function createAudioSeparationUi({ apiBase }) {
   }
 
   function resolveAudioSrc(audioUrl, audioPath) {
-    const url = String(audioUrl || "").trim();
-    if (url) {
-      if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("file://")) {
-        return url;
-      }
-      if (url.startsWith("/")) {
-        return `${apiBase}${url}`;
-      }
-    }
-
-    const path = String(audioPath || "").trim();
-    if (!path) {
-      return "";
-    }
-    return fileUrl(path);
+    return resolveMediaSrc(audioUrl, audioPath);
   }
 
   function setMixerControlsEnabled(enabled) {
@@ -308,6 +395,183 @@ export function createAudioSeparationUi({ apiBase }) {
     });
   }
 
+  function getVideoNode() {
+    return el("audioVideoPreview");
+  }
+
+  function seekVideoTo(nextTime, { force = false } = {}) {
+    const video = getVideoNode();
+    if (!video || !videoPlayback.ready) {
+      return;
+    }
+    const safe = Number(nextTime);
+    if (!Number.isFinite(safe) || safe < 0) {
+      return;
+    }
+    const drift = Math.abs((video.currentTime || 0) - safe);
+    if (!force && drift < 0.08) {
+      return;
+    }
+    try {
+      videoPlayback.isProgrammaticSeek = true;
+      video.currentTime = safe;
+    } catch (_) {
+      // no-op
+    } finally {
+      setTimeout(() => {
+        videoPlayback.isProgrammaticSeek = false;
+      }, 0);
+    }
+  }
+
+  function seekTracksTo(nextTime) {
+    const safe = Number(nextTime);
+    if (!Number.isFinite(safe) || safe < 0) {
+      return;
+    }
+    playback.tracks.forEach((track) => {
+      try {
+        track.audio.currentTime = safe;
+      } catch (_) {
+        // no-op
+      }
+    });
+    seekVideoTo(safe);
+  }
+
+  function syncVideoToMaster(force = false) {
+    const video = getVideoNode();
+    const master = playback.tracks[0];
+    if (!video || !videoPlayback.ready || !master) {
+      return;
+    }
+    const masterTime = Number(master.audio.currentTime || 0);
+    seekVideoTo(masterTime, { force });
+
+    const masterRate = Number(master.audio.playbackRate || 1);
+    if (Math.abs((video.playbackRate || 1) - masterRate) > 0.001) {
+      video.playbackRate = masterRate;
+    }
+  }
+
+  async function playVideoPreview() {
+    const video = getVideoNode();
+    if (!video || !videoPlayback.ready) {
+      return;
+    }
+    syncVideoToMaster(true);
+    try {
+      await video.play();
+    } catch (_) {
+      // no-op: video autoplay may be blocked; audio playback can continue.
+    }
+  }
+
+  function pauseVideoPreview() {
+    const video = getVideoNode();
+    if (!video) {
+      return;
+    }
+    try {
+      video.pause();
+    } catch (_) {
+      // no-op
+    }
+  }
+
+  function clearVideoPreview() {
+    const video = getVideoNode();
+    if (video) {
+      try {
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+      } catch (_) {
+        // no-op
+      }
+    }
+    videoPlayback.ready = false;
+    videoPlayback.activeSrc = "";
+    setVideoPanelVisible(false);
+    setVideoPrepareEnabled(Boolean(latestSourcePayload));
+    setVideoHint("영상 입력(mp4/유튜브)일 때만 표시됩니다.");
+  }
+
+  async function loadVideoPreviewForSource(payload, result, { force = false } = {}) {
+    latestSourcePayload = payload || latestSourcePayload;
+    latestSeparationResult = result || latestSeparationResult;
+    const source = resolveVideoCandidate(latestSourcePayload, latestSeparationResult);
+    if (!source.hasVideo) {
+      clearVideoPreview();
+      appendLog("안내: 현재 입력은 오디오 파일이라 영상 미리보기를 생략합니다.");
+      return false;
+    }
+
+    setVideoPanelVisible(true);
+    setVideoPrepareEnabled(Boolean(latestSourcePayload));
+    setVideoHint("영상 소스를 준비하고 있어요...");
+
+    let videoPath = source.sourceVideoPath || source.filePath;
+    let videoUrl = source.sourceVideoUrl;
+
+    if (!videoUrl && source.sourceType === "youtube") {
+      const prepared = await fetchPreparedVideoSource(source.sourceType, source.filePath, source.youtubeUrl);
+      videoPath = String(prepared.video_path || "").trim() || videoPath;
+      videoUrl = String(prepared.video_url || "").trim() || videoUrl;
+      appendLog(prepared.from_cache ? "영상 미리보기: 캐시 영상 재사용" : "영상 미리보기: 유튜브 영상 준비 완료");
+    }
+
+    const nextSrc = resolveMediaSrc(videoUrl, videoPath);
+    if (!nextSrc) {
+      setVideoHint("영상 미리보기를 준비하지 못했어요.");
+      return false;
+    }
+
+    const video = getVideoNode();
+    if (!video) {
+      return false;
+    }
+
+    const shouldReload = force || videoPlayback.activeSrc !== nextSrc;
+    if (shouldReload) {
+      try {
+        video.pause();
+      } catch (_) {
+        // no-op
+      }
+      video.src = nextSrc;
+      video.load();
+      videoPlayback.activeSrc = nextSrc;
+    }
+
+    video.muted = true;
+    videoPlayback.ready = true;
+    syncVideoToMaster(true);
+    setVideoHint("영상이 오디오와 동기화됩니다. 재생/정지/속도/탐색은 공용 컨트롤을 사용하세요.");
+    return true;
+  }
+
+  async function retryVideoPreview() {
+    if (!latestSourcePayload) {
+      appendLog("안내: 먼저 음원 분리를 실행한 뒤 영상을 불러와 주세요.");
+      return;
+    }
+    const button = el("audioPrepareVideo");
+    try {
+      if (button) {
+        button.disabled = true;
+      }
+      await loadVideoPreviewForSource(latestSourcePayload, latestSeparationResult, { force: true });
+    } catch (error) {
+      appendLog(`영상 불러오기 오류: ${error.message}`);
+      setVideoHint("영상 준비 실패. 버튼으로 다시 시도해 주세요.");
+    } finally {
+      if (button) {
+        button.disabled = false;
+      }
+    }
+  }
+
   function updateTimeline() {
     const seek = el("audioSeek");
     const currentNode = el("audioCurrentTime");
@@ -350,6 +614,7 @@ export function createAudioSeparationUi({ apiBase }) {
       updateTimeline();
       if (playback.isPlaying) {
         syncTracks(false);
+        syncVideoToMaster(false);
       }
     }, 180);
   }
@@ -360,12 +625,17 @@ export function createAudioSeparationUi({ apiBase }) {
     playback.tracks.forEach((track) => {
       track.audio.playbackRate = resolved;
     });
+    const video = getVideoNode();
+    if (video && videoPlayback.ready) {
+      video.playbackRate = resolved;
+    }
   }
 
   function pausePlayback() {
     playback.tracks.forEach((track) => {
       track.audio.pause();
     });
+    pauseVideoPreview();
     playback.isPlaying = false;
     updatePlayButton();
   }
@@ -380,6 +650,7 @@ export function createAudioSeparationUi({ apiBase }) {
           // no-op
         }
       });
+      seekVideoTo(0, { force: true });
     }
     updateTimeline();
   }
@@ -399,6 +670,7 @@ export function createAudioSeparationUi({ apiBase }) {
     }
     playback.isPlaying = true;
     updatePlayButton();
+    await playVideoPreview();
     startTimelineTicker();
   }
 
@@ -416,6 +688,7 @@ export function createAudioSeparationUi({ apiBase }) {
     playback.tracks = [];
     playback.duration = 0;
     playback.isPlaying = false;
+    clearVideoPreview();
     updatePlayButton();
     updateTimeline();
     setMixerControlsEnabled(false);
@@ -552,6 +825,7 @@ export function createAudioSeparationUi({ apiBase }) {
     if (openButton) {
       openButton.disabled = true;
     }
+    latestSeparationResult = null;
     clearPlayback();
   }
 
@@ -744,6 +1018,7 @@ export function createAudioSeparationUi({ apiBase }) {
       setStatus("분리 요청 준비");
       appendLog("드럼 음원 분리 시작");
       const payload = buildPayload();
+      latestSourcePayload = payload;
       appendLog(`입력 소스: ${payload.source_type === "youtube" ? "유튜브" : "로컬 파일"}`);
       appendLog(`요청 옵션: 모델=${payload.options.model}, 포맷=${payload.options.output_format}, GPU전용=${payload.options.gpu_only ? "on" : "off"}`);
       setStatus("분리 요청 전송 중");
@@ -766,8 +1041,15 @@ export function createAudioSeparationUi({ apiBase }) {
       }
 
       const data = await response.json();
+      latestSeparationResult = data;
       appendBackendLogs(data.log_tail);
       renderResult(data);
+      try {
+        await loadVideoPreviewForSource(payload, data, { force: true });
+      } catch (videoError) {
+        appendLog(`영상 미리보기 준비 실패: ${videoError.message}`);
+        setVideoHint("영상 준비 실패. '영상 다시 불러오기' 버튼으로 재시도해 주세요.");
+      }
       setStatus("완료");
       const count = data?.audio_stems && typeof data.audio_stems === "object" ? Object.keys(data.audio_stems).length : 0;
       appendLog(count > 1 ? `완료: ${count}개 stem 생성` : `완료: ${data.audio_stem}`);
@@ -818,6 +1100,50 @@ export function createAudioSeparationUi({ apiBase }) {
       });
     }
 
+    const prepareVideo = el("audioPrepareVideo");
+    if (prepareVideo) {
+      prepareVideo.addEventListener("click", () => {
+        retryVideoPreview();
+      });
+    }
+
+    const video = getVideoNode();
+    if (video) {
+      video.addEventListener("loadedmetadata", () => {
+        if (!videoPlayback.activeSrc) {
+          return;
+        }
+        videoPlayback.ready = true;
+        syncVideoToMaster(true);
+      });
+      video.addEventListener("error", () => {
+        videoPlayback.ready = false;
+        setVideoHint("영상을 재생하지 못했어요. '영상 다시 불러오기'를 눌러 재시도해 주세요.");
+      });
+      video.addEventListener("seeking", () => {
+        if (videoPlayback.isProgrammaticSeek || !playback.tracks.length) {
+          return;
+        }
+        const nextTime = Number(video.currentTime || 0);
+        if (!Number.isFinite(nextTime)) {
+          return;
+        }
+        playback.tracks.forEach((track) => {
+          try {
+            track.audio.currentTime = nextTime;
+          } catch (_) {
+            // no-op
+          }
+        });
+        updateTimeline();
+      });
+      video.addEventListener("ended", () => {
+        if (playback.isPlaying) {
+          stopPlayback({ resetPosition: true });
+        }
+      });
+    }
+
     const playToggle = el("audioPlayToggle");
     if (playToggle) {
       playToggle.addEventListener("click", async () => {
@@ -851,13 +1177,7 @@ export function createAudioSeparationUi({ apiBase }) {
         }
         const ratio = Number(seek.value || "0") / 1000;
         const nextTime = Math.max(0, Math.min(playback.duration, ratio * playback.duration));
-        playback.tracks.forEach((track) => {
-          try {
-            track.audio.currentTime = nextTime;
-          } catch (_) {
-            // no-op
-          }
-        });
+        seekTracksTo(nextTime);
         updateTimeline();
       });
     }
@@ -868,6 +1188,9 @@ export function createAudioSeparationUi({ apiBase }) {
     }
 
     updateSourceRows();
+    setVideoPrepareEnabled(false);
+    setVideoPanelVisible(false);
+    setVideoHint("영상 입력(mp4/유튜브)일 때만 표시됩니다.");
     setMixerControlsEnabled(false);
     setBeatRunEnabled(false);
     updatePlayButton();
