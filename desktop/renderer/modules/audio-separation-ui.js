@@ -54,6 +54,14 @@ const BEAT_TRACK_USE_DBN = true;
 const METRONOME_SCHEDULER_INTERVAL_MS = 25;
 const METRONOME_LOOKAHEAD_SEC = 0.25;
 const METRONOME_LATE_TOLERANCE_SEC = 0.045;
+const AUDIO_PHASE_IDS = ["audioPhasePrepare", "audioPhaseExtract", "audioPhaseSeparate", "audioPhaseBeat"];
+const AUDIO_PHASE_STAGES = {
+  prepare: { active: "audioPhasePrepare", done: [] },
+  extract: { active: "audioPhaseExtract", done: ["audioPhasePrepare"] },
+  separate: { active: "audioPhaseSeparate", done: ["audioPhasePrepare", "audioPhaseExtract"] },
+  beat: { active: "audioPhaseBeat", done: ["audioPhasePrepare", "audioPhaseExtract", "audioPhaseSeparate"] },
+  done: { active: "audioPhaseBeat", done: ["audioPhasePrepare", "audioPhaseExtract", "audioPhaseSeparate", "audioPhaseBeat"] },
+};
 
 function fileExtension(rawPath) {
   const normalized = String(rawPath || "").trim().replace(/\\/g, "/");
@@ -78,6 +86,8 @@ export function createAudioSeparationUi({ apiBase }) {
   let latestSeparationResult = null;
   let beatRequestId = 0;
   let markerSignature = "";
+  let runBusy = false;
+  let phaseStage = "prepare";
   const playback = {
     tracks: [],
     duration: 0,
@@ -114,10 +124,96 @@ export function createAudioSeparationUi({ apiBase }) {
     offsetMs: 0,
   };
 
+  function isSourceReady() {
+    const type = selectedAudioSourceType();
+    if (type === "file") {
+      return Boolean(String(el("audioFilePath")?.value || "").trim());
+    }
+    return Boolean(String(el("audioYoutubeUrl")?.value || "").trim());
+  }
+
+  function refreshRunButtonState() {
+    const runButton = el("audioRunSeparation");
+    if (!runButton) {
+      return;
+    }
+    if (runBusy) {
+      runButton.disabled = true;
+      runButton.classList.add("is-running");
+      runButton.textContent = "분리 처리 중...";
+      return;
+    }
+    const ready = isSourceReady();
+    runButton.classList.remove("is-running");
+    runButton.textContent = ready ? "드럼 음원 분리 시작" : "입력 소스 먼저 선택";
+    runButton.disabled = !ready;
+  }
+
+  function statusToneAndGuide(text) {
+    const value = String(text || "").toLowerCase();
+    if (value.includes("오류")) {
+      return {
+        tone: "error",
+        guide: "문제가 발생했습니다. 상세 로그를 열어 원인과 해결 방법을 확인해 주세요.",
+      };
+    }
+    if (value.includes("완료")) {
+      return {
+        tone: "done",
+        guide: "분리가 끝났습니다. 아래 재생/믹서에서 바로 확인할 수 있어요.",
+      };
+    }
+    if (/처리 중|분석 중|요청|준비|전송/.test(value)) {
+      return {
+        tone: "running",
+        guide: "작업 중입니다. 긴 곡/정밀 모델은 시간이 더 걸릴 수 있습니다.",
+      };
+    }
+    return {
+      tone: "idle",
+      guide: "입력 소스를 선택한 뒤 실행 버튼을 누르면 분리가 시작됩니다.",
+    };
+  }
+
   function setStatus(text) {
+    const resolved = String(text || "대기 중");
+    const status = statusToneAndGuide(resolved);
     const node = el("audioStatus");
     if (node) {
-      node.textContent = text;
+      node.textContent = resolved;
+      node.classList.remove("audio-status-idle", "audio-status-running", "audio-status-done", "audio-status-error");
+      node.classList.add(`audio-status-${status.tone}`);
+    }
+    const guide = el("audioStatusGuide");
+    if (guide) {
+      guide.textContent = status.guide;
+    }
+  }
+
+  function setPhaseStage(stage) {
+    const normalized = Object.prototype.hasOwnProperty.call(AUDIO_PHASE_STAGES, stage) ? stage : "prepare";
+    const config = AUDIO_PHASE_STAGES[normalized];
+    phaseStage = normalized;
+    AUDIO_PHASE_IDS.forEach((id) => {
+      const node = el(id);
+      if (!node) {
+        return;
+      }
+      node.classList.remove("audio-phase-step-active", "audio-phase-step-done", "audio-phase-step-error");
+      if (config.done.includes(id)) {
+        node.classList.add("audio-phase-step-done");
+      }
+      if (id === config.active) {
+        node.classList.add("audio-phase-step-active");
+      }
+    });
+  }
+
+  function markPhaseError() {
+    const config = AUDIO_PHASE_STAGES[phaseStage] || AUDIO_PHASE_STAGES.prepare;
+    const activeNode = el(config.active);
+    if (activeNode) {
+      activeNode.classList.add("audio-phase-step-error");
     }
   }
 
@@ -146,12 +242,12 @@ export function createAudioSeparationUi({ apiBase }) {
   function describeProgressPhase(elapsedSec) {
     const sec = Number.isFinite(elapsedSec) ? Math.max(0, elapsedSec) : 0;
     if (sec < 8) {
-      return "요청/의존성 확인";
+      return { label: "요청/의존성 확인", stage: "prepare" };
     }
     if (sec < 20) {
-      return "입력 오디오 추출";
+      return { label: "입력 오디오 추출", stage: "extract" };
     }
-    return "Demucs 분리 실행";
+    return { label: "Demucs 분리 실행", stage: "separate" };
   }
 
   function setVideoHint(text) {
@@ -1213,7 +1309,7 @@ export function createAudioSeparationUi({ apiBase }) {
   function clearResult() {
     const meta = el("audioResultMeta");
     if (meta) {
-      meta.textContent = "";
+      meta.textContent = "분리 결과가 아직 없습니다. 실행하면 stem 정보와 저장 경로가 여기에 표시됩니다.";
     }
     outputDir = "";
     const openButton = el("audioOpenOutputDir");
@@ -1314,6 +1410,7 @@ export function createAudioSeparationUi({ apiBase }) {
   async function runBeatTracking() {
     const requestId = ++beatRequestId;
     try {
+      setPhaseStage("beat");
       setBeatStatus("자동 분석 중");
       appendLog("비트 분석 자동 시작");
       const { payload, selected } = buildBeatPayload();
@@ -1352,12 +1449,14 @@ export function createAudioSeparationUi({ apiBase }) {
       renderBeatMarkers();
 
       setBeatStatus("완료");
+      setPhaseStage("done");
       appendLog(`비트 분석 완료: beats=${beatState.beats.length}, downbeats=${beatState.downbeats.length}, bpm=${beatState.bpm ?? "n/a"}`);
     } catch (error) {
       if (requestId !== beatRequestId) {
         return;
       }
       setBeatStatus("오류");
+      markPhaseError();
       appendLog(`비트 분석 오류: ${error.message}`);
     }
   }
@@ -1372,6 +1471,13 @@ export function createAudioSeparationUi({ apiBase }) {
     if (youtubeRow) {
       youtubeRow.style.display = type === "youtube" ? "flex" : "none";
     }
+    const sourceHint = el("audioSourceHint");
+    if (sourceHint) {
+      sourceHint.textContent = type === "youtube"
+        ? "유튜브 URL은 먼저 로컬 파일로 준비됩니다. 네트워크 환경에 따라 첫 실행이 오래 걸릴 수 있어요."
+        : "mp3/wav/mp4 파일을 바로 분리합니다. 영상(mp4)을 넣으면 아래 믹서에서 동기 재생도 가능합니다.";
+    }
+    refreshRunButtonState();
   }
 
   function buildPayload() {
@@ -1406,14 +1512,17 @@ export function createAudioSeparationUi({ apiBase }) {
   }
 
   async function runSeparation() {
-    const runButton = el("audioRunSeparation");
     let progressTimer = null;
     let elapsed = 0;
     try {
       clearResult();
-      if (runButton) {
-        runButton.disabled = true;
+      const logsNode = el("audioLogs");
+      if (logsNode) {
+        logsNode.textContent = "";
       }
+      setPhaseStage("prepare");
+      runBusy = true;
+      refreshRunButtonState();
       setStatus("분리 요청 준비");
       appendLog("드럼 음원 분리 시작");
       const payload = buildPayload();
@@ -1424,9 +1533,10 @@ export function createAudioSeparationUi({ apiBase }) {
       progressTimer = setInterval(() => {
         elapsed += 1;
         const phase = describeProgressPhase(elapsed);
-        setStatus(`분리 처리 중 · ${elapsed}s (${phase})`);
+        setPhaseStage(phase.stage);
+        setStatus(`분리 처리 중 · ${elapsed}s (${phase.label})`);
         if (elapsed > 0 && elapsed % 10 === 0) {
-          appendLog(`진행 중: ${elapsed}s 경과 (${phase})`);
+          appendLog(`진행 중: ${elapsed}s 경과 (${phase.label})`);
         }
       }, 1000);
       const response = await fetch(`${apiBase}/audio/separate`, {
@@ -1441,6 +1551,7 @@ export function createAudioSeparationUi({ apiBase }) {
 
       const data = await response.json();
       latestSeparationResult = data;
+      setPhaseStage("separate");
       appendBackendLogs(data.log_tail);
       renderResult(data);
       try {
@@ -1456,24 +1567,37 @@ export function createAudioSeparationUi({ apiBase }) {
         runBeatTracking().catch((error) => {
           appendLog(`비트 분석 오류: ${error.message}`);
         });
+      } else {
+        setPhaseStage("done");
       }
     } catch (error) {
       appendLog(`오류: ${error.message}`);
       setStatus("오류");
+      markPhaseError();
     } finally {
       if (progressTimer) {
         clearInterval(progressTimer);
       }
-      if (runButton) {
-        runButton.disabled = false;
-      }
+      runBusy = false;
+      refreshRunButtonState();
     }
   }
 
   function bindEvents() {
     document.querySelectorAll('input[name="audioSourceType"]').forEach((node) => {
-      node.addEventListener("change", updateSourceRows);
+      node.addEventListener("change", () => {
+        updateSourceRows();
+      });
     });
+
+    const filePathNode = el("audioFilePath");
+    if (filePathNode) {
+      filePathNode.addEventListener("input", refreshRunButtonState);
+    }
+    const youtubeNode = el("audioYoutubeUrl");
+    if (youtubeNode) {
+      youtubeNode.addEventListener("input", refreshRunButtonState);
+    }
 
     const browse = el("audioBrowseFile");
     if (browse) {
@@ -1484,6 +1608,7 @@ export function createAudioSeparationUi({ apiBase }) {
           const fileNode = el("audioFilePath");
           if (fileNode) {
             fileNode.value = path;
+            fileNode.dispatchEvent(new Event("input", { bubbles: true }));
           }
         }
       });
@@ -1638,6 +1763,8 @@ export function createAudioSeparationUi({ apiBase }) {
     }
 
     updateSourceRows();
+    setPhaseStage("prepare");
+    setStatus("대기 중");
     setVideoPrepareEnabled(false);
     setVideoPanelVisible(false);
     setVideoHint("영상 입력(mp4/유튜브)일 때만 표시됩니다.");
@@ -1649,6 +1776,11 @@ export function createAudioSeparationUi({ apiBase }) {
     updatePlayButton();
     clearBeatState();
     updateTimeline();
+    refreshRunButtonState();
+    const meta = el("audioResultMeta");
+    if (meta && !String(meta.textContent || "").trim()) {
+      meta.textContent = "분리 결과가 아직 없습니다. 실행하면 stem 정보와 저장 경로가 여기에 표시됩니다.";
+    }
   }
 
   bindEvents();
