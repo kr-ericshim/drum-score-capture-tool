@@ -1084,6 +1084,28 @@ if (endSecNode) {
   });
 }
 
+["videoSeek", "startSlider", "endSlider"].forEach((id) => {
+  const node = el(id);
+  if (!node) {
+    return;
+  }
+  node.addEventListener("input", () => {
+    manualOpenStep = "range";
+    refreshCaptureWorkflowUi();
+  });
+});
+
+["setStartAtCurrent", "setEndAtCurrent", "clearRange"].forEach((id) => {
+  const node = el(id);
+  if (!node) {
+    return;
+  }
+  node.addEventListener("click", () => {
+    manualOpenStep = "range";
+    refreshCaptureWorkflowUi();
+  });
+});
+
 const youtubeUrlNode = el("youtubeUrl");
 if (youtubeUrlNode) {
   youtubeUrlNode.addEventListener("input", () => {
