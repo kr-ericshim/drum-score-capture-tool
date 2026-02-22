@@ -113,6 +113,36 @@ def torch_runtime_summary(info: Dict[str, object]) -> str:
     return ", ".join(parts)
 
 
+def torch_gpu_error_hint(info: Dict[str, object], *, task_name: str = "task") -> str:
+    reason = str(info.get("gpu_reason", "gpu_unavailable"))
+    system_name = platform.system().lower()
+    if reason == "torch_missing":
+        return f"{task_name} requires GPU, but torch is not installed in the backend environment."
+    if reason == "cuda_build_missing":
+        if "windows" in system_name:
+            return (
+                f"{task_name} requires CUDA torch, but the installed torch wheel is CPU-only. "
+                "Install a CUDA build and matching torchaudio."
+            )
+        return f"{task_name} requires GPU, but MPS/CUDA torch is not available in this environment."
+    if reason == "cuda_no_visible_device":
+        return (
+            f"{task_name} requires CUDA device access, but torch detects no visible CUDA devices. "
+            "Check GPU driver/driver reboot and WSL/WSA restrictions."
+        )
+    if reason == "cuda_runtime_unavailable":
+        return (
+            f"{task_name} requires CUDA runtime, but CUDA cannot be initialized. "
+            "Update NVIDIA driver and Python/CUDA compatible torch wheel."
+        )
+    if reason == "mps_unavailable":
+        return (
+            f"{task_name} requires MPS, but MPS is unavailable. "
+            "Try torch built with MPS support or enable CUDA path where available."
+        )
+    return f"{task_name} requires GPU, but currently running on CPU."
+
+
 def _gpu_unavailable_reason(info: Dict[str, object]) -> str:
     if not bool(info.get("torch_available")):
         return "torch_missing"

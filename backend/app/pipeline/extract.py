@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
+import platform
 
 from yt_dlp import YoutubeDL
 
@@ -151,7 +152,7 @@ def _extract_with_ffmpeg(
     runtime_info: Optional[Dict[str, str]],
     logger,
 ) -> List[Path]:
-    ffmpeg = resolve_ffmpeg_bin()
+    ffmpeg = resolve_ffmpeg_bin(strict=platform.system().lower() == "windows")
     accel = get_runtime_acceleration(logger=logger, ffmpeg_bin=ffmpeg)
     hwaccel_flag_sets = accel.ffmpeg_hwaccel_flags or [[]]
     out_pattern = out_dir / "frame_%06d.png"
@@ -199,7 +200,7 @@ def _extract_single_frame_with_ffmpeg(
     sec: float,
     logger,
 ) -> None:
-    ffmpeg = resolve_ffmpeg_bin()
+    ffmpeg = resolve_ffmpeg_bin(strict=platform.system().lower() == "windows")
     accel = get_runtime_acceleration(logger=logger, ffmpeg_bin=ffmpeg)
     hwaccel_flag_sets = accel.ffmpeg_hwaccel_flags or [[]]
     seek_candidates = [max(0.0, sec), max(0.0, sec + 0.8), max(0.0, sec + 1.8)]

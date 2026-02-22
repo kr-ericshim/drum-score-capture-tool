@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import platform
 import shutil
 import subprocess
 import tempfile
@@ -301,7 +302,7 @@ def _upscale_with_ffmpeg_scale_vt(
     scale: float,
     workspace: Path,
 ) -> List[Path]:
-    ffmpeg_bin = resolve_ffmpeg_bin()
+    ffmpeg_bin = resolve_ffmpeg_bin(strict=platform.system().lower() == "windows")
     out_paths: List[Path] = []
     for idx, frame_path in enumerate(frame_paths):
         image = cv2.imread(str(frame_path))

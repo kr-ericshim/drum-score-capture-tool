@@ -3,18 +3,24 @@ from __future__ import annotations
 import importlib.util
 import subprocess
 import time
+import platform
 from pathlib import Path
 from typing import Dict, Optional
 
 import numpy as np
 
 from app.pipeline.ffmpeg_runtime import resolve_ffmpeg_bin
-from app.pipeline.torch_runtime import inspect_torch_runtime, select_torch_device, torch_runtime_summary
+from app.pipeline.torch_runtime import (
+    inspect_torch_runtime,
+    select_torch_device,
+    torch_runtime_summary,
+    torch_gpu_error_hint,
+)
 from app.schemas import BeatTrackOptions
 
 
 def extract_audio_for_beat_input(*, source_video: Path, audio_output: Path) -> None:
-    ffmpeg_bin = resolve_ffmpeg_bin()
+    ffmpeg_bin = resolve_ffmpeg_bin(strict=platform.system().lower() == "windows")
     cmd = [
         ffmpeg_bin,
         "-y",
@@ -63,7 +69,7 @@ def track_beats_for_audio(
     device = select_torch_device(torch_info)
     logger(f"beat tracking torch runtime: {torch_runtime_summary(torch_info)}")
     if options.gpu_only and device == "cpu":
-        raise RuntimeError("Beat tracking requires GPU, but CUDA/MPS is not available.")
+        raise RuntimeError(torch_gpu_error_hint(torch_info, task_name="Beat tracking"))
     logger(f"beat tracking model={options.model}, device={device}, dbn={dbn_enabled}, float16={options.float16}")
 
     logger("beat tracking stage: run model inference")
@@ -104,7 +110,7 @@ def track_beats_for_audio(
 
 
 def _normalize_audio_for_inference(*, source_audio: Path, audio_output: Path) -> None:
-    ffmpeg_bin = resolve_ffmpeg_bin()
+    ffmpeg_bin = resolve_ffmpeg_bin(strict=platform.system().lower() == "windows")
     cmd = [
         ffmpeg_bin,
         "-y",

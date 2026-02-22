@@ -98,6 +98,9 @@ Windows Notes
   - `DRUMSHEET_FFMPEG_BIN` / `DRUMSHEET_FFPROBE_BIN`
   - bundled backend paths (`backend\\bin`, `backend\\ffmpeg\\bin`, `backend\\tools\\ffmpeg\\bin` 등)
   - system PATH (`ffmpeg.exe`, `ffprobe.exe`)
+- Windows only hardening notes:
+  - 윈도우에서만 파이프라인 시작 시 ffmpeg 경로를 엄격히 검사해 "명확한 누락 메시지"로 실패합니다.
+  - macOS 동작 방식은 기존 fallback을 유지해 기존 동작에 영향이 없습니다.
 - Always run `npm start` inside `score_capture_program\\desktop`.
 
 운영 영향 변경사항 (최근)
@@ -160,6 +163,11 @@ Troubleshooting
   - Activate the same venv used by Electron (`backend/.venv`) and reinstall UVR deps.
 - `TorchCodec is required`:
   - `pip install torchcodec` (inside `backend/.venv`)
+- `ffmpeg ... not found` / `override path not found`:
+  - 윈도우에서 ffmpeg 경로가 틀린 경우 새로 생긴 진단 메시지입니다.
+  - 절대 경로 지정:
+  - `set DRUMSHEET_FFMPEG_BIN=C:\\path\\to\\backend\\bin\\ffmpeg.exe`
+  - `set DRUMSHEET_FFPROBE_BIN=C:\\path\\to\\backend\\bin\\ffprobe.exe`
 - `GPU 전용, but CUDA/MPS is not available`:
   - Disable GPU-only option or confirm torch device availability (`python scripts/doctor.py`).
 - `Audio separation requires GPU, but CUDA/MPS is not available` (Windows + NVIDIA, e.g. RTX 5080):

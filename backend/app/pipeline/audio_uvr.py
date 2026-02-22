@@ -6,11 +6,17 @@ import shutil
 import subprocess
 import sys
 import time
+import platform
 from pathlib import Path
 from typing import Dict
 
 from app.pipeline.ffmpeg_runtime import resolve_ffmpeg_bin, resolve_ffprobe_bin
-from app.pipeline.torch_runtime import inspect_torch_runtime, select_torch_device, torch_runtime_summary
+from app.pipeline.torch_runtime import (
+    inspect_torch_runtime,
+    select_torch_device,
+    torch_runtime_summary,
+    torch_gpu_error_hint,
+)
 from app.schemas import AudioSeparationOptions
 
 
@@ -31,7 +37,7 @@ def separate_audio_stem(
 
     workspace.mkdir(parents=True, exist_ok=True)
     logger(f"audio separation workspace: {workspace}")
-    ffmpeg_bin = resolve_ffmpeg_bin()
+    ffmpeg_bin = resolve_ffmpeg_bin(strict=platform.system().lower() == "windows")
     ffprobe_bin = resolve_ffprobe_bin()
     logger(f"audio separation binaries: ffmpeg={ffmpeg_bin}, ffprobe={ffprobe_bin}")
     audio_input = workspace / "source_audio.wav"
@@ -51,7 +57,7 @@ def separate_audio_stem(
     device = select_torch_device(torch_info)
     logger(f"audio separation torch runtime: {torch_runtime_summary(torch_info)}")
     if options.gpu_only and device == "cpu":
-        raise RuntimeError("Audio separation requires GPU, but CUDA/MPS is not available.")
+        raise RuntimeError(torch_gpu_error_hint(torch_info, task_name="Audio separation"))
 
     logger(f"audio separation engine={options.engine}, model={options.model}, stem={options.stem}, device={device}")
     demucs_output_root = workspace / "demucs_output"
@@ -158,7 +164,7 @@ def _run_demucs(
     if "No module named demucs" in combined:
         raise RuntimeError("demucs is not installed. Install optional dependency and retry.")
     if "No module named torchcodec" in combined or "TorchCodec is required for save_with_torchcodec" in combined:
-        raise RuntimeError("torchcodec is not installed. Install torchcodec and retry.")
+        raise RuntimeError("torchcodec is not installed. Install torchcodec and retry: pip install torchcodec")
     raise RuntimeError(f"Demucs separation failed: {_trim_error_log(combined) or 'unknown error'}")
 
 
@@ -216,11 +222,11 @@ def _resolve_python_bin() -> str:
 
 def _ensure_audio_stack_installed() -> None:
     if importlib.util.find_spec("demucs") is None:
-        raise RuntimeError("demucs is not installed. Install optional dependency and retry.")
+        raise RuntimeError("demucs is not installed. Install optional dependency and retry: pip install -r requirements-uvr.txt")
     if importlib.util.find_spec("torch") is None:
         raise RuntimeError("torch is not installed. Install torch for demucs and retry.")
     if importlib.util.find_spec("torchcodec") is None:
-        raise RuntimeError("torchcodec is not installed. Install torchcodec and retry.")
+        raise RuntimeError("torchcodec is not installed. Install torchcodec and retry: pip install torchcodec")
 
 
 def _trim_error_log(text: str, *, max_lines: int = 40, max_chars: int = 4000) -> str:

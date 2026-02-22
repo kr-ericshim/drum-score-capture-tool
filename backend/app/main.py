@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import platform
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -67,7 +68,8 @@ def health() -> Dict[str, str]:
 
 @app.get("/runtime", response_model=RuntimeStatusResponse)
 def runtime_status() -> RuntimeStatusResponse:
-    accel = get_runtime_acceleration(ffmpeg_bin=resolve_ffmpeg_bin())
+    ffmpeg_bin = resolve_ffmpeg_bin(strict=platform.system().lower() == "windows")
+    accel = get_runtime_acceleration(ffmpeg_bin=ffmpeg_bin)
     payload = runtime_public_info(accel)
     torch_info = inspect_torch_runtime()
     payload.update(
@@ -393,7 +395,7 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
 
         accel = get_runtime_acceleration(
             logger=lambda msg: _append(job_id, msg),
-            ffmpeg_bin=resolve_ffmpeg_bin(),
+            ffmpeg_bin=resolve_ffmpeg_bin(strict=platform.system().lower() == "windows"),
         )
 
         if stitch_opts.layout_hint == "auto" and detect_opts.layout_hint != "auto":

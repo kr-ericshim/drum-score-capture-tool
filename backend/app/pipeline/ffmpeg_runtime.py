@@ -10,28 +10,34 @@ from pathlib import Path
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 
-def resolve_ffmpeg_bin() -> str:
-    return _resolve_tool_bin("ffmpeg", "DRUMSHEET_FFMPEG_BIN")
+def resolve_ffmpeg_bin(*, strict: bool = False) -> str:
+    return _resolve_tool_bin("ffmpeg", "DRUMSHEET_FFMPEG_BIN", strict=strict)
 
 
-def resolve_ffprobe_bin() -> str:
+def resolve_ffprobe_bin(*, strict: bool = False) -> str:
     override = _resolve_env_override("ffprobe", "DRUMSHEET_FFPROBE_BIN")
     if override:
         return override
 
-    ffmpeg_bin = resolve_ffmpeg_bin()
+    ffmpeg_bin = resolve_ffmpeg_bin(strict=strict)
     sibling = _resolve_sibling_binary(ffmpeg_bin, "ffprobe")
     if sibling:
         return sibling
 
-    return _resolve_tool_bin("ffprobe", "")
+    return _resolve_tool_bin("ffprobe", "", strict=strict)
 
 
 @lru_cache(maxsize=None)
-def _resolve_tool_bin(tool_name: str, env_key: str) -> str:
+def _resolve_tool_bin(tool_name: str, env_key: str, *, strict: bool = False) -> str:
     if env_key:
         override = _resolve_env_override(tool_name, env_key)
         if override:
+            override_path = Path(override).expanduser()
+            if strict and _looks_like_path(str(override_path)) and not _candidate_is_executable(override_path):
+                raise RuntimeError(
+                    f"{tool_name} override path not found or not executable: {override_path}. "
+                    f"Set DRUMSHEET_{tool_name.upper()}_BIN to a valid absolute path."
+                )
             return override
 
     for candidate in _bundled_candidates(tool_name):
@@ -43,7 +49,19 @@ def _resolve_tool_bin(tool_name: str, env_key: str) -> str:
         if located:
             return str(Path(located).resolve())
 
+    if strict:
+        commands = _command_candidates(tool_name)
+        raise RuntimeError(
+            f"{tool_name} was not found. Checked candidate paths and PATH commands: {', '.join(commands)}. "
+            "Set DRUMSHEET_FFMPEG_BIN / DRUMSHEET_FFPROBE_BIN to an absolute executable path and restart."
+        )
     return _command_candidates(tool_name)[0]
+
+
+def _candidate_is_executable(candidate: Path) -> bool:
+    if not candidate.is_file():
+        return False
+    return True
 
 
 def _resolve_env_override(tool_name: str, env_key: str) -> str:
