@@ -233,6 +233,7 @@ export function friendlyApiError(detail) {
     "Beat tracking requires GPU, but CUDA/MPS is not available.": "GPU 전용 모드인데 비트 분석용 GPU(CUDA/MPS)를 찾지 못했어요.",
     "audio_path does not exist": "선택된 분석 오디오 파일을 찾을 수 없어요. 음원 분리를 다시 실행해 주세요.",
     "audio separation supports only mp3, wav, mp4 for local files": "오디오 분리는 로컬 파일 기준 mp3, wav, mp4만 지원해요.",
+    "soundfile is not installed. Install soundfile and retry.": "soundfile이 설치되지 않았어요. requirements-beat-this 또는 `pip install soundfile`로 설치 후 다시 시도해 주세요.",
   };
 
   if (typeof detail === "string" && detail.startsWith("preview frame extraction failed:")) {

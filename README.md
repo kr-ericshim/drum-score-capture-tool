@@ -29,6 +29,8 @@ Optional: Beat tracking (Beat This!)
 cd score_capture_program/backend
 source .venv/bin/activate
 python -m pip install -r requirements-beat-this.txt
+# 일부 환경에서 soundfile이 누락될 수 있어 함께 설치하세요.
+python -m pip install soundfile>=0.12.0
 # Optional (higher DBN precision on supported env)
 python -m pip install madmom
 ```
@@ -67,6 +69,8 @@ py -3.11 -m venv .venv
 
 # Beat tracking
 .\.venv\Scripts\python.exe -m pip install -r requirements-beat-this.txt
+# 일부 환경에서 soundfile이 누락될 수 있어 함께 설치하세요.
+.\.venv\Scripts\python.exe -m pip install soundfile>=0.12.0
 # Optional (DBN precision on supported env)
 .\.venv\Scripts\python.exe -m pip install madmom
 ```
@@ -163,6 +167,8 @@ Troubleshooting
   - Activate the same venv used by Electron (`backend/.venv`) and reinstall UVR deps.
 - `TorchCodec is required`:
   - `pip install torchcodec` (inside `backend/.venv`)
+- `soundfile is not installed`:
+  - `pip install soundfile>=0.12.0` (inside `backend/.venv`)
 - `beat_this` 실행 시 `torchcodec` 로딩/ffmpeg DLL 오류(Windows)로 실패:
   - 앱 실행 전에 `backend/bin` 또는 FFmpeg 폴더를 PATH에 넣거나,
   - 아래처럼 백엔드 Python에서 직접 진단해 주세요.

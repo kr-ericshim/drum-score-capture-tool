@@ -7,7 +7,7 @@ import platform
 from pathlib import Path
 import re
 import uuid
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional
 
 import numpy as np
 
@@ -59,7 +59,7 @@ def track_beats_for_audio(
         dbn_enabled = False
         logger("beat tracking fallback: madmom is not installed, DBN disabled (continuing with non-DBN mode)")
 
-    _ensure_beat_stack_installed(use_dbn=dbn_enabled)
+    _ensure_beat_stack_installed(use_dbn=dbn_enabled, logger=logger)
 
     workspace.mkdir(parents=True, exist_ok=True)
     ffmpeg_bin = resolve_ffmpeg_bin(strict=platform.system().lower() == "windows")
@@ -154,11 +154,22 @@ def _run_beat_this(
 ) -> tuple[np.ndarray, np.ndarray]:
     try:
         from beat_this.inference import File2Beats  # type: ignore
+    except ModuleNotFoundError as exc:
+        if exc.name == "soundfile":
+            raise RuntimeError("soundfile is not installed. Install soundfile and retry.")
+        raise RuntimeError(f"beat_this import failed: {exc}")
     except Exception as exc:
         raise RuntimeError(f"beat_this import failed: {exc}")
 
-    tracker = File2Beats(checkpoint_path=model, device=device, float16=float16, dbn=use_dbn)
-    beats, downbeats = tracker(str(audio_path))
+    try:
+        tracker = File2Beats(checkpoint_path=model, device=device, float16=float16, dbn=use_dbn)
+        beats, downbeats = tracker(str(audio_path))
+    except ModuleNotFoundError as exc:
+        if exc.name == "soundfile":
+            raise RuntimeError("soundfile is not installed. Install soundfile and retry.")
+        raise RuntimeError(f"beat tracking inference failed: {exc}")
+    except Exception as exc:
+        raise RuntimeError(f"beat tracking inference failed: {exc}")
     return np.asarray(beats, dtype=np.float64), np.asarray(downbeats, dtype=np.float64)
 
 
@@ -193,7 +204,7 @@ def _estimate_bpm(beats: list[float]) -> Optional[float]:
     return round(float(bpm), 2)
 
 
-def _ensure_beat_stack_installed(*, use_dbn: bool) -> None:
+def _ensure_beat_stack_installed(*, use_dbn: bool, logger: Callable[[str], None] | None = None) -> None:
     if importlib.util.find_spec("beat_this") is None:
         raise RuntimeError("beat_this is not installed. Install optional dependency and retry.")
     if importlib.util.find_spec("torchaudio") is None:
@@ -203,7 +214,8 @@ def _ensure_beat_stack_installed(*, use_dbn: bool) -> None:
     if importlib.util.find_spec("rotary_embedding_torch") is None:
         raise RuntimeError("rotary-embedding-torch is not installed. Install it and retry.")
     if importlib.util.find_spec("soundfile") is None:
-        raise RuntimeError("soundfile is not installed. Install soundfile and retry.")
+        if logger is not None:
+            logger("soundfile is not installed. beat tracking may still work via fallback, but installation is recommended.")
     if importlib.util.find_spec("torchcodec") is None:
         raise RuntimeError("torchcodec is not installed. Install torchcodec and retry.")
     if importlib.util.find_spec("torch") is None:
