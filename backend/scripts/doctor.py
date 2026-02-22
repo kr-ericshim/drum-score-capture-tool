@@ -6,6 +6,8 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
+import wave
 from pathlib import Path
 
 
@@ -113,6 +115,50 @@ def check_torch() -> None:
         print_item("torch", f"확인 실패: {exc}")
 
 
+def check_torchaudio_smoke() -> None:
+    if not has_module("torchaudio"):
+        print_item("torchaudio.load", "missing")
+        return
+    if not has_module("torch"):
+        print_item("torchaudio.load", "torch missing")
+        return
+    if not has_module("numpy"):
+        print_item("torchaudio.load", "numpy missing")
+        return
+
+    tmp_path: Path | None = None
+    try:
+        import numpy as np
+        import torchaudio  # type: ignore
+        sample_rate = 16000
+        duration_sec = 1.0
+        t = np.linspace(0, duration_sec, int(sample_rate * duration_sec), endpoint=False)
+        tone = (0.2 * np.sin(2 * np.pi * 440.0 * t) * 32767).astype(np.int16)
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+            tmp_path = Path(temp_file.name)
+
+        with wave.open(str(tmp_path), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(sample_rate)
+            wav.writeframes(tone.tobytes())
+
+        waveform, sr = torchaudio.load(str(tmp_path))
+        if int(sr) != sample_rate or getattr(waveform, "numel", lambda: 0)() <= 0:
+            print_item("torchaudio.load", f"failed: invalid output sr={sr}, samples={getattr(waveform, 'numel', lambda: 0)()}")
+            return
+        print_item("torchaudio.load", "ok")
+    except Exception as exc:
+        print_item("torchaudio.load", f"failed: {exc}")
+    finally:
+        if tmp_path is not None:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
 def main() -> int:
     print("Drum Score Capture Tool - 환경 점검")
     print_item("python", sys.version.split()[0])
@@ -152,12 +198,13 @@ def main() -> int:
         print_item(module, "ok" if has_module(module) else "missing")
 
     print_section("옵션 모듈 - 비트 분석")
-    beat_modules = ["beat_this", "soxr", "rotary_embedding_torch"]
+    beat_modules = ["beat_this", "soxr", "rotary_embedding_torch", "torchcodec", "torchaudio", "soundfile"]
     for module in beat_modules:
         print_item(module, "ok" if has_module(module) else "missing")
 
     print_section("Torch 장치")
     check_torch()
+    check_torchaudio_smoke()
 
     print_section("앱 런타임 감지")
     check_runtime()

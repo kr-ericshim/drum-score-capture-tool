@@ -11,7 +11,7 @@ from typing import Dict, Optional
 
 import numpy as np
 
-from app.pipeline.ffmpeg_runtime import resolve_ffmpeg_bin
+from app.pipeline.ffmpeg_runtime import ensure_runtime_bin_on_path, resolve_ffmpeg_bin
 from app.pipeline.torch_runtime import (
     inspect_torch_runtime,
     select_torch_device,
@@ -62,6 +62,8 @@ def track_beats_for_audio(
     _ensure_beat_stack_installed(use_dbn=dbn_enabled)
 
     workspace.mkdir(parents=True, exist_ok=True)
+    ffmpeg_bin = resolve_ffmpeg_bin(strict=platform.system().lower() == "windows")
+    ensure_runtime_bin_on_path(ffmpeg_bin=ffmpeg_bin, logger=logger)
     prepared_audio = workspace / f"{_safe_audio_stem(audio_input)}_{uuid.uuid4().hex[:8]}_beat_input.wav"
     logger("beat tracking stage: prepare audio input")
     _normalize_audio_for_inference(source_audio=audio_input, audio_output=prepared_audio)
@@ -194,10 +196,16 @@ def _estimate_bpm(beats: list[float]) -> Optional[float]:
 def _ensure_beat_stack_installed(*, use_dbn: bool) -> None:
     if importlib.util.find_spec("beat_this") is None:
         raise RuntimeError("beat_this is not installed. Install optional dependency and retry.")
+    if importlib.util.find_spec("torchaudio") is None:
+        raise RuntimeError("torchaudio is not installed. Install torch and torchaudio (or torchaudio wheel with CUDA support).")
     if importlib.util.find_spec("soxr") is None:
         raise RuntimeError("soxr is not installed. Install soxr and retry.")
     if importlib.util.find_spec("rotary_embedding_torch") is None:
         raise RuntimeError("rotary-embedding-torch is not installed. Install it and retry.")
+    if importlib.util.find_spec("soundfile") is None:
+        raise RuntimeError("soundfile is not installed. Install soundfile and retry.")
+    if importlib.util.find_spec("torchcodec") is None:
+        raise RuntimeError("torchcodec is not installed. Install torchcodec and retry.")
     if importlib.util.find_spec("torch") is None:
         raise RuntimeError("torch is not installed. Install torch and retry.")
     if use_dbn and importlib.util.find_spec("madmom") is None:

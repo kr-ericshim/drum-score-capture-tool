@@ -10,7 +10,7 @@ import platform
 from pathlib import Path
 from typing import Dict
 
-from app.pipeline.ffmpeg_runtime import resolve_ffmpeg_bin, resolve_ffprobe_bin
+from app.pipeline.ffmpeg_runtime import ensure_runtime_bin_on_path, resolve_ffmpeg_bin, resolve_ffprobe_bin
 from app.pipeline.torch_runtime import (
     inspect_torch_runtime,
     select_torch_device,
@@ -39,6 +39,7 @@ def separate_audio_stem(
     logger(f"audio separation workspace: {workspace}")
     ffmpeg_bin = resolve_ffmpeg_bin(strict=platform.system().lower() == "windows")
     ffprobe_bin = resolve_ffprobe_bin()
+    ensure_runtime_bin_on_path(ffmpeg_bin=ffmpeg_bin, logger=logger)
     logger(f"audio separation binaries: ffmpeg={ffmpeg_bin}, ffprobe={ffprobe_bin}")
     audio_input = workspace / "source_audio.wav"
     logger("audio separation stage: extract audio track (ffmpeg)")

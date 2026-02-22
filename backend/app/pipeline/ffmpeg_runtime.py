@@ -5,6 +5,7 @@ import platform
 import shutil
 from functools import lru_cache
 from pathlib import Path
+from typing import Callable
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
@@ -25,6 +26,52 @@ def resolve_ffprobe_bin(*, strict: bool = False) -> str:
         return sibling
 
     return _resolve_tool_bin("ffprobe", "", strict=strict)
+
+
+def ensure_runtime_bin_on_path(
+    *,
+    ffmpeg_bin: str,
+    logger: Callable[[str], None] | None = None,
+) -> str | None:
+    """Ensure ffmpeg directory is on PATH for the current process."""
+    if not ffmpeg_bin:
+        return None
+
+    try:
+        bin_dir = Path(ffmpeg_bin).resolve().parent
+    except Exception:
+        return None
+
+    if not bin_dir.is_dir():
+        return None
+
+    normalized = str(bin_dir.resolve())
+    system_name = platform.system().lower()
+    sep = ";" if "windows" in system_name else ":"
+
+    current_path = os.environ.get("PATH", "")
+    path_parts = [item for item in current_path.split(sep) if item]
+    normalized_set = {item.lower() for item in path_parts}
+    if system_name == "windows" and normalized.lower() not in normalized_set:
+        os.environ["PATH"] = f"{normalized}{sep}{current_path}" if current_path else normalized
+        if logger:
+            logger(f"runtime PATH updated for Windows DLL search: {normalized}")
+    elif system_name != "windows" and normalized not in path_parts:
+        os.environ["PATH"] = f"{normalized}{sep}{current_path}" if current_path else normalized
+        if logger:
+            logger(f"runtime PATH updated: {normalized}")
+
+    if "windows" in system_name:
+        add_dll_directory = getattr(os, "add_dll_directory", None)
+        if callable(add_dll_directory):
+            try:
+                add_dll_directory(normalized)
+                if logger:
+                    logger(f"runtime add_dll_directory configured: {normalized}")
+            except OSError:
+                pass
+
+    return normalized
 
 
 @lru_cache(maxsize=None)

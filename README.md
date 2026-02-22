@@ -163,6 +163,11 @@ Troubleshooting
   - Activate the same venv used by Electron (`backend/.venv`) and reinstall UVR deps.
 - `TorchCodec is required`:
   - `pip install torchcodec` (inside `backend/.venv`)
+- `beat_this` 실행 시 `torchcodec` 로딩/ffmpeg DLL 오류(Windows)로 실패:
+  - 앱 실행 전에 `backend/bin` 또는 FFmpeg 폴더를 PATH에 넣거나,
+  - 아래처럼 백엔드 Python에서 직접 진단해 주세요.
+  - `cd backend` → `.\.venv\Scripts\python.exe scripts\doctor.py`
+  - `backend/bin` 경로가 PATH/런타임 DLL 경로에 누락된 경우 `backend\\.venv` 기준으로 경로 재설정 후 앱 재시작.
 - `ffmpeg ... not found` / `override path not found`:
   - 윈도우에서 ffmpeg 경로가 틀린 경우 새로 생긴 진단 메시지입니다.
   - 절대 경로 지정:
