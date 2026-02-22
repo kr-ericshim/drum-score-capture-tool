@@ -43,6 +43,53 @@ npm start
 ```
 Important: `npm start` must be run in `score_capture_program/desktop` where `package.json` exists.
 
+Windows Quick Start (after `git pull`)
+
+If you cloned/pulled this repo on Windows and want to run `npm start` right away, follow this exact PowerShell flow:
+
+1. Move to backend and create venv with Python 3.11
+```powershell
+cd C:\path\to\score_capture_program\backend
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -U pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+2. (Optional) Install extra dependencies
+```powershell
+# UVR Demucs (audio separation)
+.\.venv\Scripts\python.exe -m pip install -r requirements-uvr.txt
+.\.venv\Scripts\python.exe -m pip install torch torchaudio torchcodec
+
+# Beat tracking
+.\.venv\Scripts\python.exe -m pip install -r requirements-beat-this.txt
+```
+
+3. Move to desktop and install Node packages
+```powershell
+cd ..\desktop
+npm install
+```
+
+4. Run app
+```powershell
+npm start
+```
+
+5. If Python launcher/path is tricky on your machine, force backend python explicitly
+```powershell
+$env:DRUMSHEET_PYTHON_BIN = (Resolve-Path ..\backend\.venv\Scripts\python.exe).Path
+npm start
+```
+
+Windows Notes
+- Desktop launcher tries Python in this order:
+  - `DRUMSHEET_PYTHON_BIN`
+  - `backend\\.venv\\Scripts\\python.exe`
+  - `py -3.11` → `py -3` → `py` → `python`
+- If you see `python 9009`, Python is not discoverable by Windows shell. Install Python 3.11 (x64) and enable PATH.
+- Always run `npm start` inside `score_capture_program\\desktop`.
+
 Quick environment check (recommended)
 ```bash
 cd ../backend
