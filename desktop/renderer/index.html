@@ -418,34 +418,26 @@
           </div>
           <div id="audioStemMixer" class="audio-stem-mixer"></div>
         </section>
-        <section id="beatTrackPanel" class="beat-track-panel" style="display: none">
+        <section id="metronomePanel" class="metronome-panel" style="display: none">
           <div class="panel-head">
-            <h3>비트 분석 (Beat This!)</h3>
-            <p>비트/다운비트를 자동 감지해 타임라인에 마커로 표시합니다. 느리게 재생해도 마커는 유지됩니다.</p>
+            <h3>자동 비트 분석 + 메트로놈</h3>
+            <p>stem 생성 직후 Beat This! 분석이 자동 실행됩니다. 메트로놈은 바로 켜고 BPM을 원하는 값으로 조절하세요.</p>
           </div>
-          <div class="field-grid">
-            <label class="field">
-              <span>비트 모델</span>
-              <select id="beatTrackModel">
-                <option value="small0" selected>small0 (빠름)</option>
-                <option value="final0">final0 (정확)</option>
-              </select>
+          <div class="metronome-row">
+            <button id="metronomeToggle" class="secondary" disabled>메트로놈 켜기</button>
+            <label class="field compact-field">
+              <span>메트로놈 BPM</span>
+              <input id="metronomeBpm" type="number" min="40" max="260" step="1" value="120" />
             </label>
-            <div class="field">
-              <span>분석 대상</span>
-              <label class="choice-chip"><input id="beatTrackUseDrum" type="checkbox" checked /> 드럼 stem 우선</label>
-            </div>
-            <div class="field">
-              <span>실행 모드</span>
-              <label class="choice-chip"><input id="beatTrackGpuOnly" type="checkbox" /> GPU 전용 (없으면 중단)</label>
-            </div>
+            <button id="metronomeUseDetected" class="secondary" disabled>감지 BPM 사용</button>
           </div>
-          <button id="beatTrackRun" class="secondary" disabled>비트 분석 실행</button>
-          <div class="status-shell">
-            <span class="status-label">비트 분석 상태</span>
-            <strong id="beatTrackStatus">대기 중</strong>
+          <div class="metronome-row metronome-row-volume">
+            <label class="field compact-field metronome-volume">
+              <span>클릭 볼륨</span>
+              <input id="metronomeVolume" type="range" min="0" max="1" step="0.01" value="0.55" />
+            </label>
           </div>
-          <div id="beatTrackMeta"></div>
+          <div id="metronomeMeta"></div>
         </section>
       </section>
     </main>

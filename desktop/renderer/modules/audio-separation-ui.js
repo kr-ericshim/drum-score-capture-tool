@@ -48,6 +48,8 @@ function normalizeApiDetail(detail) {
 }
 
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"]);
+const BEAT_TRACK_MODEL = "small0";
+const BEAT_TRACK_GPU_ONLY = false;
 
 function fileExtension(rawPath) {
   const normalized = String(rawPath || "").trim().replace(/\\/g, "/");
@@ -70,6 +72,7 @@ export function createAudioSeparationUi({ apiBase }) {
   let latestStemEntries = [];
   let latestSourcePayload = null;
   let latestSeparationResult = null;
+  let beatRequestId = 0;
   let markerSignature = "";
   const playback = {
     tracks: [],
@@ -89,6 +92,17 @@ export function createAudioSeparationUi({ apiBase }) {
     model: "",
     device: "",
     beatTsv: "",
+    status: "대기 중",
+  };
+  const metronome = {
+    enabled: false,
+    timerId: null,
+    bpm: 120,
+    detectedBpm: null,
+    volume: 0.55,
+    clickCount: 0,
+    userAdjustedBpm: false,
+    audioContext: null,
   };
 
   function setStatus(text) {
@@ -208,31 +222,98 @@ export function createAudioSeparationUi({ apiBase }) {
   }
 
   function setBeatStatus(text) {
-    const node = el("beatTrackStatus");
-    if (node) {
-      node.textContent = text;
+    beatState.status = String(text || "대기 중");
+    renderBeatMeta();
+  }
+
+  function setMetronomePanelVisible(visible) {
+    const panel = el("metronomePanel");
+    if (panel) {
+      panel.style.display = visible ? "block" : "none";
     }
   }
 
-  function setBeatRunEnabled(enabled) {
-    const runButton = el("beatTrackRun");
-    if (runButton) {
-      runButton.disabled = !enabled;
+  function setMetronomeButtonLabel() {
+    const toggle = el("metronomeToggle");
+    if (!toggle) {
+      return;
     }
+    toggle.textContent = metronome.enabled ? "메트로놈 끄기" : "메트로놈 켜기";
+  }
+
+  function setMetronomeControlsEnabled(enabled) {
+    const toggle = el("metronomeToggle");
+    const bpmInput = el("metronomeBpm");
+    const volumeInput = el("metronomeVolume");
+    const useDetected = el("metronomeUseDetected");
+    if (toggle) {
+      toggle.disabled = !enabled;
+    }
+    if (bpmInput) {
+      bpmInput.disabled = !enabled;
+    }
+    if (volumeInput) {
+      volumeInput.disabled = !enabled;
+    }
+    if (useDetected) {
+      useDetected.disabled = !enabled || !Number.isFinite(Number(metronome.detectedBpm));
+    }
+  }
+
+  function clampMetronomeBpm(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) {
+      return metronome.bpm;
+    }
+    return Math.max(40, Math.min(260, Math.round(num)));
+  }
+
+  function setMetronomeBpm(value, { markUser = false, updateInput = true } = {}) {
+    metronome.bpm = clampMetronomeBpm(value);
+    if (markUser) {
+      metronome.userAdjustedBpm = true;
+    }
+    if (updateInput) {
+      const bpmInput = el("metronomeBpm");
+      if (bpmInput) {
+        bpmInput.value = String(metronome.bpm);
+      }
+    }
+    renderBeatMeta();
+  }
+
+  function applyDetectedBpm(nextBpm, { force = false } = {}) {
+    const resolved = Number(nextBpm);
+    if (!Number.isFinite(resolved) || resolved <= 0) {
+      metronome.detectedBpm = null;
+      setMetronomeControlsEnabled(latestStemEntries.length > 0);
+      renderBeatMeta();
+      return;
+    }
+    metronome.detectedBpm = Math.round(resolved);
+    if (force || !metronome.userAdjustedBpm) {
+      setMetronomeBpm(metronome.detectedBpm, { markUser: false, updateInput: true });
+    } else {
+      renderBeatMeta();
+    }
+    if (metronome.enabled && playback.isPlaying) {
+      startMetronomeTicker();
+    }
+    setMetronomeControlsEnabled(latestStemEntries.length > 0);
   }
 
   function renderBeatMeta() {
-    const node = el("beatTrackMeta");
+    const node = el("metronomeMeta");
     if (!node) {
       return;
     }
-    if (!beatState.beats.length) {
-      node.textContent = "아직 비트 분석 결과가 없습니다.";
-      return;
-    }
     const lines = [];
-    lines.push(`비트 수: ${beatState.beats.length}  /  다운비트 수: ${beatState.downbeats.length}`);
-    lines.push(`예상 BPM: ${beatState.bpm == null ? "계산 불가" : beatState.bpm}`);
+    lines.push(`비트 분석 상태: ${beatState.status}`);
+    lines.push(
+      `감지 BPM: ${metronome.detectedBpm == null ? "분석 중/없음" : metronome.detectedBpm} · 현재 메트로놈 BPM: ${metronome.bpm}`,
+    );
+    lines.push(`메트로놈: ${metronome.enabled ? "ON" : "OFF"} · 클릭 볼륨: ${Math.round(metronome.volume * 100)}%`);
+    lines.push(`비트 수: ${beatState.beats.length} / 다운비트 수: ${beatState.downbeats.length}`);
     lines.push(`모델/장치: ${beatState.model || "-"} / ${beatState.device || "-"}`);
     if (beatState.beatTsv) {
       lines.push(`비트 파일: ${beatState.beatTsv}`);
@@ -249,16 +330,21 @@ export function createAudioSeparationUi({ apiBase }) {
   }
 
   function clearBeatState() {
+    beatRequestId += 1;
     beatState.beats = [];
     beatState.downbeats = [];
     beatState.bpm = null;
     beatState.model = "";
     beatState.device = "";
     beatState.beatTsv = "";
+    beatState.status = "대기 중";
+    metronome.detectedBpm = null;
+    metronome.userAdjustedBpm = false;
+    setMetronomeBpm(120, { markUser: false, updateInput: true });
     clearBeatMarkers();
     renderBeatMeta();
-    setBeatStatus("대기 중");
-    setBeatRunEnabled(latestStemEntries.length > 0);
+    setMetronomeButtonLabel();
+    setMetronomeControlsEnabled(latestStemEntries.length > 0);
   }
 
   function _sampleTimes(values, limit) {
@@ -572,6 +658,86 @@ export function createAudioSeparationUi({ apiBase }) {
     }
   }
 
+  function ensureMetronomeAudioContext() {
+    if (metronome.audioContext && metronome.audioContext.state !== "closed") {
+      return metronome.audioContext;
+    }
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) {
+      return null;
+    }
+    metronome.audioContext = new Ctx();
+    return metronome.audioContext;
+  }
+
+  function playMetronomeClick(accent = false) {
+    const context = ensureMetronomeAudioContext();
+    if (!context) {
+      return;
+    }
+    if (context.state === "suspended") {
+      context.resume().catch(() => {});
+    }
+    const now = context.currentTime;
+    const osc = context.createOscillator();
+    const gain = context.createGain();
+    osc.type = "square";
+    osc.frequency.setValueAtTime(accent ? 1550 : 1180, now);
+    const level = Math.max(0, Math.min(1, Number(metronome.volume || 0.55)));
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.02, level), now + 0.003);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.06);
+    osc.connect(gain);
+    gain.connect(context.destination);
+    osc.start(now);
+    osc.stop(now + 0.065);
+  }
+
+  function stopMetronomeTicker() {
+    if (metronome.timerId) {
+      clearInterval(metronome.timerId);
+      metronome.timerId = null;
+    }
+  }
+
+  function startMetronomeTicker() {
+    stopMetronomeTicker();
+    if (!metronome.enabled || !playback.isPlaying) {
+      return;
+    }
+    const intervalMs = Math.max(60, Math.round(60000 / Math.max(40, metronome.bpm)));
+    playMetronomeClick(metronome.clickCount % 4 === 0);
+    metronome.clickCount += 1;
+    metronome.timerId = setInterval(() => {
+      playMetronomeClick(metronome.clickCount % 4 === 0);
+      metronome.clickCount += 1;
+    }, intervalMs);
+  }
+
+  function toggleMetronome() {
+    if (!latestStemEntries.length) {
+      return;
+    }
+    metronome.enabled = !metronome.enabled;
+    if (!metronome.enabled) {
+      stopMetronomeTicker();
+    } else if (playback.isPlaying) {
+      const context = ensureMetronomeAudioContext();
+      if (context && context.state === "suspended") {
+        context.resume().catch(() => {});
+      }
+      metronome.clickCount = 0;
+      startMetronomeTicker();
+    } else {
+      const context = ensureMetronomeAudioContext();
+      if (context && context.state === "suspended") {
+        context.resume().catch(() => {});
+      }
+    }
+    setMetronomeButtonLabel();
+    renderBeatMeta();
+  }
+
   function updateTimeline() {
     const seek = el("audioSeek");
     const currentNode = el("audioCurrentTime");
@@ -635,6 +801,7 @@ export function createAudioSeparationUi({ apiBase }) {
     playback.tracks.forEach((track) => {
       track.audio.pause();
     });
+    stopMetronomeTicker();
     pauseVideoPreview();
     playback.isPlaying = false;
     updatePlayButton();
@@ -651,6 +818,7 @@ export function createAudioSeparationUi({ apiBase }) {
         }
       });
       seekVideoTo(0, { force: true });
+      metronome.clickCount = 0;
     }
     updateTimeline();
   }
@@ -671,10 +839,14 @@ export function createAudioSeparationUi({ apiBase }) {
     playback.isPlaying = true;
     updatePlayButton();
     await playVideoPreview();
+    if (metronome.enabled) {
+      startMetronomeTicker();
+    }
     startTimelineTicker();
   }
 
   function clearPlayback() {
+    stopMetronomeTicker();
     stopTimelineTicker();
     playback.tracks.forEach((track) => {
       try {
@@ -702,10 +874,8 @@ export function createAudioSeparationUi({ apiBase }) {
       mixerList.replaceChildren();
     }
     latestStemEntries = [];
-    const beatPanel = el("beatTrackPanel");
-    if (beatPanel) {
-      beatPanel.style.display = "none";
-    }
+    setMetronomePanelVisible(false);
+    setMetronomeControlsEnabled(false);
     clearBeatState();
   }
 
@@ -807,12 +977,10 @@ export function createAudioSeparationUi({ apiBase }) {
     updateTimeline();
     startTimelineTicker();
 
-    const beatPanel = el("beatTrackPanel");
-    if (beatPanel) {
-      beatPanel.style.display = "block";
-    }
-    setBeatRunEnabled(true);
-    setBeatStatus("대기 중");
+    setMetronomePanelVisible(true);
+    setMetronomeControlsEnabled(true);
+    setMetronomeButtonLabel();
+    setBeatStatus("분석 대기");
   }
 
   function clearResult() {
@@ -876,12 +1044,9 @@ export function createAudioSeparationUi({ apiBase }) {
     if (!latestStemEntries.length) {
       return null;
     }
-    const preferDrum = Boolean(el("beatTrackUseDrum")?.checked);
-    if (preferDrum) {
-      const drum = latestStemEntries.find((entry) => String(entry.name || "").toLowerCase() === "drums");
-      if (drum) {
-        return drum;
-      }
+    const drum = latestStemEntries.find((entry) => String(entry.name || "").toLowerCase() === "drums");
+    if (drum) {
+      return drum;
     }
     return latestStemEntries[0];
   }
@@ -892,13 +1057,13 @@ export function createAudioSeparationUi({ apiBase }) {
       throw new Error("비트 분석할 오디오를 찾지 못했어요. 먼저 음원 분리를 실행해 주세요.");
     }
 
-    const sourceType = selectedAudioSourceType();
+    const sourceType = String(latestSourcePayload?.source_type || selectedAudioSourceType());
     const payload = {
       source_type: sourceType,
       audio_path: String(selected.path),
       options: {
-        model: String(el("beatTrackModel")?.value || "small0"),
-        gpu_only: Boolean(el("beatTrackGpuOnly")?.checked),
+        model: BEAT_TRACK_MODEL,
+        gpu_only: BEAT_TRACK_GPU_ONLY,
         use_dbn: false,
         float16: false,
         save_tsv: true,
@@ -906,12 +1071,12 @@ export function createAudioSeparationUi({ apiBase }) {
     };
 
     if (sourceType === "file") {
-      const filePath = String(el("audioFilePath")?.value || "").trim();
+      const filePath = String(latestSourcePayload?.file_path || el("audioFilePath")?.value || "").trim();
       if (filePath) {
         payload.file_path = filePath;
       }
     } else {
-      const url = String(el("audioYoutubeUrl")?.value || "").trim();
+      const url = String(latestSourcePayload?.youtube_url || el("audioYoutubeUrl")?.value || "").trim();
       if (url) {
         payload.youtube_url = url;
       }
@@ -920,13 +1085,10 @@ export function createAudioSeparationUi({ apiBase }) {
   }
 
   async function runBeatTracking() {
-    const runButton = el("beatTrackRun");
+    const requestId = ++beatRequestId;
     try {
-      if (runButton) {
-        runButton.disabled = true;
-      }
-      setBeatStatus("분석 요청 중");
-      appendLog("비트 분석 시작");
+      setBeatStatus("자동 분석 중");
+      appendLog("비트 분석 자동 시작");
       const { payload, selected } = buildBeatPayload();
       appendLog(`비트 분석 대상: ${stemLabel(selected.name)} (${selected.path})`);
       const response = await fetch(`${apiBase}/audio/beat-track`, {
@@ -939,6 +1101,9 @@ export function createAudioSeparationUi({ apiBase }) {
         throw new Error(friendlyApiError(normalizeApiDetail(error.detail || "비트 분석 요청 실패")));
       }
       const data = await response.json();
+      if (requestId !== beatRequestId) {
+        return;
+      }
       appendBackendLogs(data.log_tail);
 
       beatState.beats = Array.isArray(data.beats) ? data.beats.map((value) => Number(value)).filter((value) => Number.isFinite(value)) : [];
@@ -947,6 +1112,7 @@ export function createAudioSeparationUi({ apiBase }) {
       beatState.model = String(data.model || payload.options.model || "");
       beatState.device = String(data.device || "");
       beatState.beatTsv = String(data.beat_tsv || "");
+      applyDetectedBpm(beatState.bpm, { force: false });
       markerSignature = "";
       renderBeatMeta();
       renderBeatMarkers();
@@ -954,12 +1120,11 @@ export function createAudioSeparationUi({ apiBase }) {
       setBeatStatus("완료");
       appendLog(`비트 분석 완료: beats=${beatState.beats.length}, downbeats=${beatState.downbeats.length}, bpm=${beatState.bpm ?? "n/a"}`);
     } catch (error) {
-      setBeatStatus("오류");
-      appendLog(`오류: ${error.message}`);
-    } finally {
-      if (runButton) {
-        runButton.disabled = latestStemEntries.length === 0;
+      if (requestId !== beatRequestId) {
+        return;
       }
+      setBeatStatus("오류");
+      appendLog(`비트 분석 오류: ${error.message}`);
     }
   }
 
@@ -1053,6 +1218,11 @@ export function createAudioSeparationUi({ apiBase }) {
       setStatus("완료");
       const count = data?.audio_stems && typeof data.audio_stems === "object" ? Object.keys(data.audio_stems).length : 0;
       appendLog(count > 1 ? `완료: ${count}개 stem 생성` : `완료: ${data.audio_stem}`);
+      if (latestStemEntries.length > 0) {
+        runBeatTracking().catch((error) => {
+          appendLog(`비트 분석 오류: ${error.message}`);
+        });
+      }
     } catch (error) {
       appendLog(`오류: ${error.message}`);
       setStatus("오류");
@@ -1182,17 +1352,54 @@ export function createAudioSeparationUi({ apiBase }) {
       });
     }
 
-    const beatRun = el("beatTrackRun");
-    if (beatRun) {
-      beatRun.addEventListener("click", runBeatTracking);
+    const metronomeToggle = el("metronomeToggle");
+    if (metronomeToggle) {
+      metronomeToggle.addEventListener("click", () => {
+        toggleMetronome();
+      });
+    }
+
+    const metronomeBpm = el("metronomeBpm");
+    if (metronomeBpm) {
+      metronomeBpm.addEventListener("change", () => {
+        setMetronomeBpm(metronomeBpm.value, { markUser: true, updateInput: true });
+        if (metronome.enabled && playback.isPlaying) {
+          startMetronomeTicker();
+        }
+      });
+    }
+
+    const metronomeVolume = el("metronomeVolume");
+    if (metronomeVolume) {
+      metronomeVolume.addEventListener("input", () => {
+        const next = Number(metronomeVolume.value || "0.55");
+        metronome.volume = Number.isFinite(next) ? Math.max(0, Math.min(1, next)) : 0.55;
+      });
+    }
+
+    const useDetectedButton = el("metronomeUseDetected");
+    if (useDetectedButton) {
+      useDetectedButton.addEventListener("click", () => {
+        if (!Number.isFinite(Number(metronome.detectedBpm))) {
+          return;
+        }
+        setMetronomeBpm(metronome.detectedBpm, { markUser: false, updateInput: true });
+        metronome.userAdjustedBpm = false;
+        if (metronome.enabled && playback.isPlaying) {
+          startMetronomeTicker();
+        }
+      });
     }
 
     updateSourceRows();
     setVideoPrepareEnabled(false);
     setVideoPanelVisible(false);
     setVideoHint("영상 입력(mp4/유튜브)일 때만 표시됩니다.");
+    setMetronomePanelVisible(false);
+    setMetronomeButtonLabel();
+    setMetronomeControlsEnabled(false);
     setMixerControlsEnabled(false);
-    setBeatRunEnabled(false);
+    setBeatStatus("대기 중");
     updatePlayButton();
     clearBeatState();
     updateTimeline();

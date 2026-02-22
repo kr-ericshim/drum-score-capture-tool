@@ -1188,7 +1188,7 @@ button.secondary {
   font-weight: 700;
 }
 
-.beat-track-panel {
+.metronome-panel {
   margin-top: 12px;
   padding: 12px;
   border: 1px solid #c9d7eb;
@@ -1199,7 +1199,7 @@ button.secondary {
     linear-gradient(160deg, #f9fdff, #eff8ff);
 }
 
-#beatTrackMeta {
+#metronomeMeta {
   min-height: 78px;
   margin: 10px 0 0;
   padding: 10px 12px;
@@ -1209,6 +1209,25 @@ button.secondary {
   color: #20334f;
   white-space: pre-wrap;
   line-height: 1.55;
+}
+
+.metronome-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+}
+
+.metronome-row + .metronome-row {
+  margin-top: 8px;
+}
+
+.metronome-row-volume {
+  justify-content: flex-start;
+}
+
+.metronome-volume {
+  min-width: min(360px, 100%);
 }
 
 .result-actions {
