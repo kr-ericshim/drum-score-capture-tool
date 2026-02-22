@@ -105,6 +105,8 @@ Windows Notes
 - 2026-02-23: 비트 분석 기본 모델이 `final0`로 변경되었습니다.
 - 2026-02-23: DBN 모드 요청 시 `madmom`이 없어도 작업이 실패하지 않도록 fallback(non-DBN) 처리됩니다.
 - 2026-02-23: `Torchaudio + Demucs` 조합 사용 시 `torchcodec`가 없으면 저장 단계에서 실패할 수 있어, UVR 사용 시 `torchcodec` 설치를 필수 권장합니다.
+- 2026-02-23: 유튜브 입력은 구간 선택/영역 선택/본 작업에서 공통 캐시(`backend/jobs/_preview_source/<hash>`)를 재사용해 중복 다운로드를 줄였습니다.
+- 2026-02-23: Stepper는 입력 데이터가 채워져도 자동으로 다음 단계를 열지 않고, 사용자가 연 단계를 유지합니다.
 
 실행/운영 체크리스트 (변경 시 반드시 확인)
 - Python은 `3.11` 기준으로 운영하세요. (3.13 환경은 일부 패키지 호환 이슈가 보고됨)
@@ -123,6 +125,7 @@ python scripts/doctor.py
 Capture Behavior
 - UI now uses `캡처 민감도` instead of direct FPS input.
 - 악보 영역 선택은 `수동 지정(드래그)` 전용입니다. 자동 영역 탐지는 제거되었습니다.
+- Stepper는 자동 넘김 없이 현재 열어둔 단계를 유지합니다.
 - `낮음`: fewer captures, strongest duplicate suppression.
 - `보통`: balanced default.
 - `높음`: more detailed capture, may produce more pages.

@@ -100,10 +100,20 @@ def preview_frame(payload: PreviewFrameRequest) -> PreviewFrameResponse:
 
         preview_workspace = jobs_root / "_preview" / str(uuid.uuid4())
         preview_workspace.mkdir(parents=True, exist_ok=True)
+        resolved_source_type = payload.source_type
+        resolved_file_path = payload.file_path
+        resolved_youtube_url = payload.youtube_url
+
+        if payload.source_type == "youtube" and payload.youtube_url:
+            cached_video, _ = _get_or_prepare_cached_youtube_video(payload.youtube_url, logger=lambda _: None)
+            resolved_source_type = "file"
+            resolved_file_path = str(cached_video)
+            resolved_youtube_url = None
+
         image_path = extract_preview_frame(
-            source_type=payload.source_type,
-            file_path=payload.file_path,
-            youtube_url=payload.youtube_url,
+            source_type=resolved_source_type,
+            file_path=resolved_file_path,
+            youtube_url=resolved_youtube_url,
             start_sec=payload.start_sec,
             workspace=preview_workspace,
             logger=lambda _: None,
@@ -135,23 +145,9 @@ def preview_source(payload: PreviewSourceRequest) -> PreviewSourceResponse:
         if payload.source_type == "youtube":
             if not payload.youtube_url:
                 raise HTTPException(status_code=400, detail="youtube_url is required when source_type is youtube")
-            cache_key = hashlib.sha1(payload.youtube_url.encode("utf-8")).hexdigest()[:16]
-            cache_dir = jobs_root / "_preview_source" / cache_key
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            cached = _find_cached_video(cache_dir)
-            if cached is not None:
-                video_url = _to_jobs_files_url(cached)
-                return PreviewSourceResponse(video_path=str(cached), video_url=video_url, from_cache=True)
-
-            video_path = prepare_preview_source(
-                source_type=payload.source_type,
-                file_path=payload.file_path,
-                youtube_url=payload.youtube_url,
-                workspace=cache_dir,
-                logger=lambda _: None,
-            )
+            video_path, from_cache = _get_or_prepare_cached_youtube_video(payload.youtube_url, logger=lambda _: None)
             video_url = _to_jobs_files_url(video_path)
-            return PreviewSourceResponse(video_path=str(video_path), video_url=video_url, from_cache=False)
+            return PreviewSourceResponse(video_path=str(video_path), video_url=video_url, from_cache=from_cache)
 
         raise HTTPException(status_code=400, detail=f"unsupported source_type: {payload.source_type}")
     except HTTPException:
@@ -187,13 +183,17 @@ def audio_separate(payload: AudioSeparateRequest) -> AudioSeparateResponse:
         workspace = jobs_root / "_audio" / str(uuid.uuid4())
         workspace.mkdir(parents=True, exist_ok=True)
         _audio_log(f"audio separation request accepted: source_type={payload.source_type}")
-        source_video = prepare_preview_source(
-            source_type=payload.source_type,
-            file_path=payload.file_path,
-            youtube_url=payload.youtube_url,
-            workspace=workspace / "source",
-            logger=_audio_log,
-        )
+        if payload.source_type == "youtube":
+            source_video, from_cache = _get_or_prepare_cached_youtube_video(payload.youtube_url or "", logger=_audio_log)
+            _audio_log("audio source cache hit: youtube preview cache reused" if from_cache else "audio source cache miss: youtube downloaded and cached")
+        else:
+            source_video = prepare_preview_source(
+                source_type=payload.source_type,
+                file_path=payload.file_path,
+                youtube_url=payload.youtube_url,
+                workspace=workspace / "source",
+                logger=_audio_log,
+            )
         _audio_log(f"audio source ready: {source_video}")
         source_video_url = _to_jobs_files_url(source_video)
         result = separate_audio_stem(
@@ -268,13 +268,17 @@ def audio_beat_track(payload: AudioBeatTrackRequest) -> AudioBeatTrackResponse:
             if payload.source_type == "youtube" and not payload.youtube_url:
                 raise HTTPException(status_code=400, detail="youtube_url is required when source_type is youtube")
 
-            source_video = prepare_preview_source(
-                source_type=payload.source_type,
-                file_path=payload.file_path,
-                youtube_url=payload.youtube_url,
-                workspace=workspace / "source",
-                logger=_beat_log,
-            )
+            if payload.source_type == "youtube":
+                source_video, from_cache = _get_or_prepare_cached_youtube_video(payload.youtube_url or "", logger=_beat_log)
+                _beat_log("beat tracking source cache hit: youtube preview cache reused" if from_cache else "beat tracking source cache miss: youtube downloaded and cached")
+            else:
+                source_video = prepare_preview_source(
+                    source_type=payload.source_type,
+                    file_path=payload.file_path,
+                    youtube_url=payload.youtube_url,
+                    workspace=workspace / "source",
+                    logger=_beat_log,
+                )
             resolved_audio_path = workspace / "input" / "source_audio.wav"
             resolved_audio_path.parent.mkdir(parents=True, exist_ok=True)
             extract_audio_for_beat_input(source_video=source_video, audio_output=resolved_audio_path)
@@ -376,6 +380,17 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
         audio_opts = options.audio
         export_opts = options.export
         runtime_capture: Dict[str, str] = {}
+        resolved_source_type = payload.source_type
+        resolved_file_path = payload.file_path
+        resolved_youtube_url = payload.youtube_url
+
+        if payload.source_type == "youtube" and payload.youtube_url:
+            cached_video, from_cache = _get_or_prepare_cached_youtube_video(payload.youtube_url, logger=lambda msg: _append(job_id, msg))
+            _append(job_id, "job source cache hit: youtube preview cache reused" if from_cache else "job source cache miss: youtube downloaded and cached")
+            resolved_source_type = "file"
+            resolved_file_path = str(cached_video)
+            resolved_youtube_url = None
+
         accel = get_runtime_acceleration(
             logger=lambda msg: _append(job_id, msg),
             ffmpeg_bin=resolve_ffmpeg_bin(),
@@ -385,9 +400,9 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
             stitch_opts.layout_hint = detect_opts.layout_hint
 
         frames = extract_frames(
-            source_type=payload.source_type,
-            file_path=payload.file_path,
-            youtube_url=payload.youtube_url,
+            source_type=resolved_source_type,
+            file_path=resolved_file_path,
+            youtube_url=resolved_youtube_url,
             options=extract_opts,
             workspace=artifact_dir,
             runtime_info=runtime_capture,
@@ -496,6 +511,33 @@ def _append(job_id: str, message: str) -> None:
 def _find_cached_video(workspace: Path) -> Path | None:
     candidates = sorted([p for p in workspace.glob("**/*") if p.is_file() and p.suffix.lower() in {".mp4", ".mkv", ".mov", ".webm", ".avi"}])
     return candidates[0] if candidates else None
+
+
+def _preview_source_cache_workspace(youtube_url: str) -> Path:
+    cache_key = hashlib.sha1(youtube_url.encode("utf-8")).hexdigest()[:16]
+    cache_dir = jobs_root / "_preview_source" / cache_key
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
+
+
+def _get_or_prepare_cached_youtube_video(youtube_url: str, *, logger) -> tuple[Path, bool]:
+    url = str(youtube_url or "").strip()
+    if not url:
+        raise ValueError("youtube_url is required when source_type is youtube")
+
+    cache_dir = _preview_source_cache_workspace(url)
+    cached = _find_cached_video(cache_dir)
+    if cached is not None:
+        return cached, True
+
+    video_path = prepare_preview_source(
+        source_type="youtube",
+        file_path=None,
+        youtube_url=url,
+        workspace=cache_dir,
+        logger=logger,
+    )
+    return video_path, False
 
 
 def _to_jobs_files_url(path: Path) -> str | None:

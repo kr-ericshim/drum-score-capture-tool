@@ -218,6 +218,16 @@ function setStepVisual(key, { done, active }) {
   }
 }
 
+function getOpenedStepFromDetails() {
+  for (const key of STEP_KEYS) {
+    const details = el(STEP_DETAIL_IDS[key]);
+    if (details?.open) {
+      return key;
+    }
+  }
+  return null;
+}
+
 function openStep(key) {
   STEP_KEYS.forEach((candidate) => {
     const details = el(STEP_DETAIL_IDS[candidate]);
@@ -321,16 +331,17 @@ function refreshCaptureWorkflowUi() {
   setStepText("roi", roiSummaryText());
   setStepText("export", exportSummaryText());
 
-  const autoStep = determineActiveStep();
+  const progressStep = determineActiveStep();
   if (runState === "running") {
     manualOpenStep = "export";
-  } else if (manualOpenStep && STEP_KEYS.indexOf(manualOpenStep) < STEP_KEYS.indexOf(autoStep)) {
-    manualOpenStep = null;
   }
-  const activeStep = manualOpenStep || autoStep;
+  if (!manualOpenStep) {
+    manualOpenStep = getOpenedStepFromDetails() || "source";
+  }
+  const activeStep = manualOpenStep;
 
   STEP_KEYS.forEach((key) => {
-    const isDone = completion[key] && STEP_KEYS.indexOf(key) < STEP_KEYS.indexOf(activeStep);
+    const isDone = completion[key] && STEP_KEYS.indexOf(key) < STEP_KEYS.indexOf(progressStep);
     setStepVisual(key, { done: isDone, active: key === activeStep });
   });
 
@@ -934,7 +945,7 @@ function bindPresetButtons() {
 
 document.querySelectorAll('input[name="sourceType"]').forEach((node) => {
   node.addEventListener("change", () => {
-    manualOpenStep = null;
+    manualOpenStep = "source";
     updateSourceRows();
   });
 });
