@@ -1,0 +1,7 @@
+# Optional dependencies for HAT (Hybrid Attention Transformer) upscale.
+# Install in the backend venv only when you plan to enable HAT.
+torch>=2.2.0
+torchvision>=0.17.0
+basicsr==1.3.4.9
+facexlib>=0.3.0
+gfpgan>=1.3.8

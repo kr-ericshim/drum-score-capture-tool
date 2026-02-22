@@ -11,6 +11,8 @@ from typing import Callable, Dict, List, Literal, Optional
 import cv2
 import numpy as np
 
+from app.pipeline.hat_runtime import get_hat_runtime
+
 
 OpencvMode = Literal["cuda", "opencl", "cpu"]
 
@@ -23,6 +25,10 @@ class RuntimeAcceleration:
     opencl_enabled: bool
     ffmpeg_hwaccel_flags: List[List[str]]
     ffmpeg_mode_order: List[str]
+    ffmpeg_scale_vt_available: bool
+    hat_available: bool
+    hat_device: str
+    hat_reason: str
     cpu_name: str
     gpu_name: Optional[str]
 
@@ -73,6 +79,8 @@ def _detect_runtime_acceleration(*, ffmpeg_bin: str) -> RuntimeAcceleration:
 
     ffmpeg_hwaccel_flags = _resolve_ffmpeg_hwaccel_flags(ffmpeg_bin=ffmpeg_bin)
     ffmpeg_mode_order = [_flags_to_name(flags) for flags in ffmpeg_hwaccel_flags]
+    ffmpeg_scale_vt_available = _ffmpeg_scale_vt_available(ffmpeg_bin)
+    hat_runtime = get_hat_runtime()
     cpu_name = _detect_cpu_name()
     gpu_name = _detect_gpu_name(cuda_device_count=cuda_device_count)
     if platform.system().lower() == "darwin":
@@ -85,6 +93,10 @@ def _detect_runtime_acceleration(*, ffmpeg_bin: str) -> RuntimeAcceleration:
         opencl_enabled=opencl_enabled,
         ffmpeg_hwaccel_flags=ffmpeg_hwaccel_flags,
         ffmpeg_mode_order=ffmpeg_mode_order,
+        ffmpeg_scale_vt_available=ffmpeg_scale_vt_available,
+        hat_available=hat_runtime.available,
+        hat_device=hat_runtime.run_device,
+        hat_reason=hat_runtime.reason,
         cpu_name=cpu_name,
         gpu_name=gpu_name,
     )
@@ -96,6 +108,10 @@ def _log_runtime_acceleration(accel: RuntimeAcceleration, logger: Callable[[str]
         f"opencv={accel.opencv_mode} "
         f"(cuda_devices={accel.cuda_device_count}, opencl_available={accel.opencl_available}, opencl_enabled={accel.opencl_enabled}) "
         f"ffmpeg_hwaccel={'/'.join(accel.ffmpeg_mode_order)} "
+        f"ffmpeg_scale_vt={accel.ffmpeg_scale_vt_available} "
+        f"hat_available={accel.hat_available} "
+        f"hat_device={accel.hat_device} "
+        f"hat_reason={accel.hat_reason} "
         f"gpu_name={accel.gpu_name or 'unavailable'} "
         f"cpu_name={accel.cpu_name}"
     )
@@ -103,7 +119,9 @@ def _log_runtime_acceleration(accel: RuntimeAcceleration, logger: Callable[[str]
 
 def runtime_public_info(accel: RuntimeAcceleration, *, ffmpeg_mode: Optional[str] = None) -> Dict[str, object]:
     active_ffmpeg_mode = ffmpeg_mode or _first_non_cpu(accel.ffmpeg_mode_order) or "cpu"
-    uses_gpu = active_ffmpeg_mode != "cpu" or accel.opencv_mode in {"cuda", "opencl"}
+    uses_gpu = active_ffmpeg_mode != "cpu" or accel.opencv_mode in {"cuda", "opencl"} or accel.hat_device in {"cuda", "mps"}
+    upscale_engine_hint = _resolve_upscale_hint(accel)
+    upscale_available = upscale_engine_hint != "none"
     return {
         "overall_mode": "gpu" if uses_gpu else "cpu",
         "ffmpeg_mode": active_ffmpeg_mode,
@@ -111,7 +129,43 @@ def runtime_public_info(accel: RuntimeAcceleration, *, ffmpeg_mode: Optional[str
         "ffmpeg_order": accel.ffmpeg_mode_order,
         "gpu_name": accel.gpu_name,
         "cpu_name": accel.cpu_name,
+        "upscale_available": upscale_available,
+        "upscale_engine_hint": upscale_engine_hint,
+        "hat_available": accel.hat_available,
+        "hat_device": accel.hat_device,
     }
+
+
+def _resolve_upscale_hint(accel: RuntimeAcceleration) -> str:
+    pref = _upscale_engine_pref()
+    candidates = _upscale_hint_order_by_pref(pref)
+    for key in candidates:
+        if key == "hat" and accel.hat_available:
+            return "hat"
+        if key == "opencv" and accel.opencv_mode == "cuda":
+            return "opencv_cuda"
+        if key == "opencv" and accel.opencv_mode == "opencl":
+            return "opencv_opencl"
+        if key == "ffmpeg" and accel.ffmpeg_scale_vt_available and platform.system().lower() == "darwin":
+            return "ffmpeg_scale_vt"
+    return "none"
+
+
+def _upscale_hint_order_by_pref(pref: str) -> List[str]:
+    if pref == "hat":
+        return ["hat", "opencv", "ffmpeg"]
+    if pref == "opencv":
+        return ["opencv", "hat", "ffmpeg"]
+    if pref == "ffmpeg":
+        return ["ffmpeg", "opencv", "hat"]
+    return ["hat", "opencv", "ffmpeg"]
+
+
+def _upscale_engine_pref() -> str:
+    value = os.getenv("DRUMSHEET_UPSCALE_ENGINE", "auto").strip().lower()
+    if value in {"hat", "opencv", "ffmpeg"}:
+        return value
+    return "auto"
 
 
 def _first_non_cpu(names: List[str]) -> Optional[str]:
@@ -278,6 +332,85 @@ def _ffmpeg_hwaccels(ffmpeg_bin: str) -> List[str]:
             continue
         names.append(line)
     return names
+
+
+def _ffmpeg_has_filter(ffmpeg_bin: str, filter_name: str) -> bool:
+    target = str(filter_name or "").strip().lower()
+    if not target:
+        return False
+
+    try:
+        result = subprocess.run(
+            [ffmpeg_bin, "-hide_banner", "-filters"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=3.5,
+        )
+    except Exception:
+        return False
+
+    if result.returncode != 0:
+        return False
+
+    for raw in result.stdout.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("-") or line.startswith("Filters:"):
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        name = parts[1].strip().lower()
+        if name == target:
+            return True
+    return False
+
+
+def _ffmpeg_scale_vt_available(ffmpeg_bin: str) -> bool:
+    if platform.system().lower() != "darwin":
+        return False
+    if not _ffmpeg_has_filter(ffmpeg_bin, "scale_vt"):
+        return False
+    return _probe_scale_vt_pipeline(ffmpeg_bin)
+
+
+def _probe_scale_vt_pipeline(ffmpeg_bin: str) -> bool:
+    # Probe a minimal upload+scale_vt chain so UI only enables when this path is truly executable.
+    cmd = [
+        ffmpeg_bin,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-init_hw_device",
+        "videotoolbox=vt",
+        "-filter_hw_device",
+        "vt",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=white:s=128x64:d=0.1",
+        "-vf",
+        "format=nv12,hwupload,scale_vt=w=256:h=128",
+        "-frames:v",
+        "1",
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=4.0,
+        )
+    except Exception:
+        return False
+    return result.returncode == 0
 
 
 def _detect_cpu_name() -> str:

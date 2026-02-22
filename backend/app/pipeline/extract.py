@@ -10,6 +10,24 @@ from app.pipeline.acceleration import get_runtime_acceleration
 from app.schemas import ExtractOptions
 
 
+def prepare_preview_source(
+    *,
+    source_type: str,
+    file_path: Optional[str],
+    youtube_url: Optional[str],
+    workspace: Path,
+    logger,
+) -> Path:
+    workspace.mkdir(parents=True, exist_ok=True)
+    return _resolve_source_video(
+        source_type=source_type,
+        file_path=file_path,
+        youtube_url=youtube_url,
+        workspace=workspace,
+        logger=logger,
+    )
+
+
 def extract_frames(
     *,
     source_type: str,
@@ -32,6 +50,8 @@ def extract_frames(
         workspace=workspace,
         logger=logger,
     )
+    if runtime_info is not None:
+        runtime_info["source_video"] = str(source_video)
 
     frames_dir = workspace / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)

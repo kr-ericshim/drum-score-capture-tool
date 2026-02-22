@@ -92,12 +92,22 @@ class ExportOptions(BaseModel):
     include_raw_frames: bool = False
 
 
+class AudioSeparationOptions(BaseModel):
+    enable: bool = False
+    engine: Literal["uvr_demucs"] = "uvr_demucs"
+    model: str = "htdemucs"
+    stem: Literal["drums"] = "drums"
+    output_format: Literal["wav", "mp3"] = "wav"
+    gpu_only: bool = False
+
+
 class JobOptions(BaseModel):
     extract: ExtractOptions = Field(default_factory=ExtractOptions)
     detect: DetectOptions = Field(default_factory=DetectOptions)
     rectify: RectifyOptions = Field(default_factory=RectifyOptions)
     stitch: StitchOptions = Field(default_factory=StitchOptions)
     upscale: UpscaleOptions = Field(default_factory=UpscaleOptions)
+    audio: AudioSeparationOptions = Field(default_factory=AudioSeparationOptions)
     export: ExportOptions = Field(default_factory=ExportOptions)
 
 
@@ -140,6 +150,77 @@ class PreviewFrameResponse(BaseModel):
     image_url: Optional[str] = None
 
 
+class PreviewSourceRequest(BaseModel):
+    source_type: Literal["file", "youtube"]
+    file_path: Optional[str] = None
+    youtube_url: Optional[str] = None
+
+
+class PreviewSourceResponse(BaseModel):
+    video_path: str
+    video_url: Optional[str] = None
+    from_cache: bool = False
+
+
+class AudioSeparateRequest(BaseModel):
+    source_type: Literal["file", "youtube"]
+    file_path: Optional[str] = None
+    youtube_url: Optional[str] = None
+    options: AudioSeparationOptions = Field(default_factory=lambda: AudioSeparationOptions(enable=True))
+
+
+class AudioSeparateResponse(BaseModel):
+    audio_stem: str
+    audio_url: Optional[str] = None
+    audio_stems: Dict[str, str] = Field(default_factory=dict)
+    audio_stem_urls: Dict[str, str] = Field(default_factory=dict)
+    audio_engine: str
+    audio_model: str
+    audio_device: str
+    output_dir: str
+    log_tail: List[str] = Field(default_factory=list)
+
+
+class BeatTrackOptions(BaseModel):
+    model: str = "small0"
+    gpu_only: bool = False
+    use_dbn: bool = False
+    float16: bool = False
+    save_tsv: bool = True
+
+
+class AudioBeatTrackRequest(BaseModel):
+    source_type: Literal["file", "youtube"] = "file"
+    file_path: Optional[str] = None
+    youtube_url: Optional[str] = None
+    audio_path: Optional[str] = None
+    options: BeatTrackOptions = Field(default_factory=BeatTrackOptions)
+
+    @model_validator(mode="after")
+    def validate_source(self):
+        if self.audio_path:
+            return self
+        if self.source_type == "file" and not self.file_path:
+            raise ValueError("file_path is required when source_type is file")
+        if self.source_type == "youtube" and not self.youtube_url:
+            raise ValueError("youtube_url is required when source_type is youtube")
+        return self
+
+
+class AudioBeatTrackResponse(BaseModel):
+    audio_path: str
+    beats: List[float] = Field(default_factory=list)
+    downbeats: List[float] = Field(default_factory=list)
+    beat_count: int = 0
+    downbeat_count: int = 0
+    bpm: Optional[float] = None
+    model: str
+    device: str
+    beat_tsv: Optional[str] = None
+    beat_tsv_url: Optional[str] = None
+    log_tail: List[str] = Field(default_factory=list)
+
+
 class RuntimeStatusResponse(BaseModel):
     overall_mode: Literal["gpu", "cpu"]
     ffmpeg_mode: str
@@ -147,3 +228,7 @@ class RuntimeStatusResponse(BaseModel):
     ffmpeg_order: List[str]
     gpu_name: Optional[str]
     cpu_name: str
+    upscale_available: bool = False
+    upscale_engine_hint: str = "none"
+    hat_available: bool = False
+    hat_device: str = "none"

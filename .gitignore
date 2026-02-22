@@ -8,6 +8,7 @@ __pycache__/
 .idea/
 backend/.uv/
 backend/.venv/
+backend/third_party/
 backend/output/
 backend/jobs/
 desktop/node_modules/
