@@ -1,7 +1,7 @@
 const path = require("path");
 const fs = require("fs");
 const { app, BrowserWindow, clipboard, dialog, ipcMain, shell } = require("electron");
-const { spawn } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 
 const BACKEND_PORT = Number(process.env.DRUMSHEET_PORT || 8000);
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
@@ -23,29 +23,79 @@ function existsFile(candidate) {
   }
 }
 
+function canLaunchCommand(command, args = ["--version"]) {
+  try {
+    const probe = spawnSync(command, args, {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    if (probe.error) {
+      return false;
+    }
+    return probe.status === 0;
+  } catch (_) {
+    return false;
+  }
+}
+
 function findPythonCommand(backendDir) {
+  const candidates = [];
   const configured = process.env.DRUMSHEET_PYTHON_BIN;
   if (configured && configured.trim()) {
-    return configured;
+    candidates.push({
+      command: configured.trim(),
+      prefixArgs: [],
+      label: "env:DRUMSHEET_PYTHON_BIN",
+    });
   }
 
   if (process.platform === "win32") {
     const venvPython = path.join(backendDir, ".venv", "Scripts", "python.exe");
     if (existsFile(venvPython)) {
-      return venvPython;
+      candidates.push({
+        command: venvPython,
+        prefixArgs: [],
+        label: "venv-python",
+      });
     }
+    candidates.push({ command: "py", prefixArgs: ["-3.11"], label: "py -3.11" });
+    candidates.push({ command: "py", prefixArgs: ["-3"], label: "py -3" });
+    candidates.push({ command: "py", prefixArgs: [], label: "py" });
+    candidates.push({ command: "python", prefixArgs: [], label: "python" });
   } else {
     const venvPython = path.join(backendDir, ".venv", "bin", "python3");
     if (existsFile(venvPython)) {
-      return venvPython;
+      candidates.push({
+        command: venvPython,
+        prefixArgs: [],
+        label: "venv-python3",
+      });
     }
     const venvPy = path.join(backendDir, ".venv", "bin", "python");
     if (existsFile(venvPy)) {
-      return venvPy;
+      candidates.push({
+        command: venvPy,
+        prefixArgs: [],
+        label: "venv-python",
+      });
+    }
+    candidates.push({ command: "python3", prefixArgs: [], label: "python3" });
+    candidates.push({ command: "python", prefixArgs: [], label: "python" });
+  }
+
+  for (const candidate of candidates) {
+    if (canLaunchCommand(candidate.command, [...candidate.prefixArgs, "--version"])) {
+      return candidate;
     }
   }
 
-  return process.platform === "win32" ? "python" : "python3";
+  const checked = candidates
+    .map((candidate) => `${candidate.label}: ${candidate.command} ${candidate.prefixArgs.join(" ")}`.trim())
+    .join("\n");
+  throw new Error(
+    `No runnable Python interpreter found.\nChecked:\n${checked}\n` +
+      "Install Python 3.11 (64-bit) or set DRUMSHEET_PYTHON_BIN to a valid python executable.",
+  );
 }
 
 function createWindow() {
@@ -94,6 +144,7 @@ function runBackend() {
     throw new Error(`Cannot find backend entrypoint: ${runPy}`);
   }
   const python = findPythonCommand(backendDir);
+  console.log(`[backend] python launcher: ${python.label} -> ${python.command} ${python.prefixArgs.join(" ")}`.trim());
 
   const env = {
     ...process.env,
@@ -102,7 +153,7 @@ function runBackend() {
     DRUMSHEET_HWACCEL: process.env.DRUMSHEET_HWACCEL || "auto",
     DRUMSHEET_OPENCV_ACCEL: process.env.DRUMSHEET_OPENCV_ACCEL || "auto",
   };
-  backendProcess = spawn(python, [runPy], {
+  backendProcess = spawn(python.command, [...python.prefixArgs, runPy], {
     cwd: backendDir,
     env,
     stdio: ["ignore", "pipe", "pipe"],
