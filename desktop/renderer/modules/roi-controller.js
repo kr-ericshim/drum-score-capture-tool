@@ -1,6 +1,7 @@
 import { clamp, el, fileUrl, parseJsonOrNull } from "./dom.js";
 
 export function createRoiController({ detectMode, onPreviewLoadError }) {
+  const HANDLE_SIZE = 10;
   let roiCanvas = null;
   let roiContext = null;
   let roiImage = null;
@@ -33,7 +34,11 @@ export function createRoiController({ detectMode, onPreviewLoadError }) {
       if (!point) {
         return;
       }
-      if (roiRect && isInsideRect(point)) {
+      const handle = getHandleAtPoint(point);
+      if (handle) {
+        roiDragMode = `resize:${handle}`;
+        roiDragStart = null;
+      } else if (roiRect && isInsideRect(point)) {
         roiDragMode = "move";
         roiDragStart = {
           x: point.x - roiRect.x1,
@@ -55,11 +60,21 @@ export function createRoiController({ detectMode, onPreviewLoadError }) {
     });
 
     roiCanvas.addEventListener("pointermove", (event) => {
-      if (!roiActive) {
-        return;
-      }
       const point = getPoint(event);
       if (!point) {
+        return;
+      }
+      if (!roiActive) {
+        const handle = getHandleAtPoint(point);
+        if (handle === "nw" || handle === "se") {
+          roiCanvas.style.cursor = "nwse-resize";
+        } else if (handle === "ne" || handle === "sw") {
+          roiCanvas.style.cursor = "nesw-resize";
+        } else if (isInsideRect(point)) {
+          roiCanvas.style.cursor = "move";
+        } else {
+          roiCanvas.style.cursor = "crosshair";
+        }
         return;
       }
       if (roiDragMode === "draw") {
@@ -77,6 +92,12 @@ export function createRoiController({ detectMode, onPreviewLoadError }) {
         roiRect.y1 = y1;
         roiRect.x2 = x1 + width;
         roiRect.y2 = y1 + height;
+        renderRoi();
+        return;
+      }
+      if (roiDragMode?.startsWith("resize:")) {
+        const handle = roiDragMode.split(":")[1];
+        resizeRectByHandle(handle, point);
         renderRoi();
       }
     });
@@ -100,6 +121,7 @@ export function createRoiController({ detectMode, onPreviewLoadError }) {
 
     roiCanvas.addEventListener("pointerleave", () => {
       if (!roiActive) {
+        roiCanvas.style.cursor = "crosshair";
         return;
       }
       roiActive = false;
@@ -112,12 +134,46 @@ export function createRoiController({ detectMode, onPreviewLoadError }) {
       }
     });
 
-    el("applyRoi").addEventListener("click", () => {
-      syncInputFromRect();
-      const manual = el("detectManual");
-      if (manual) {
-        manual.checked = true;
+    const applyRoi = el("applyRoi");
+    if (applyRoi) {
+      applyRoi.addEventListener("click", () => {
+        applyCurrentRoi();
+        const manual = el("detectManual");
+        if (manual) {
+          manual.checked = true;
+        }
+      });
+    }
+
+    window.addEventListener("keydown", (event) => {
+      if (!roiRect || detectMode() !== "manual" || !hasResultImage() || !isImageReady()) {
+        return;
       }
+      const target = event.target;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT")) {
+        return;
+      }
+
+      let dx = 0;
+      let dy = 0;
+      const delta = event.shiftKey ? 10 : 1;
+      if (event.key === "ArrowLeft") {
+        dx = -delta;
+      } else if (event.key === "ArrowRight") {
+        dx = delta;
+      } else if (event.key === "ArrowUp") {
+        dy = -delta;
+      } else if (event.key === "ArrowDown") {
+        dy = delta;
+      }
+      if (dx === 0 && dy === 0) {
+        return;
+      }
+
+      event.preventDefault();
+      nudgeRect(dx, dy);
+      applyCurrentRoi();
+      renderRoi();
     });
 
     roiBoundInitialized = true;
@@ -149,6 +205,28 @@ export function createRoiController({ detectMode, onPreviewLoadError }) {
     );
   }
 
+  function getRectHandles(rect) {
+    return {
+      nw: { x: rect.x1, y: rect.y1 },
+      ne: { x: rect.x2, y: rect.y1 },
+      se: { x: rect.x2, y: rect.y2 },
+      sw: { x: rect.x1, y: rect.y2 },
+    };
+  }
+
+  function getHandleAtPoint(point) {
+    if (!roiRect) {
+      return null;
+    }
+    const handles = getRectHandles(roiRect);
+    const hitRadius = HANDLE_SIZE + 2;
+    return Object.entries(handles).find(([, handlePoint]) => {
+      const dx = point.x - handlePoint.x;
+      const dy = point.y - handlePoint.y;
+      return Math.abs(dx) <= hitRadius && Math.abs(dy) <= hitRadius;
+    })?.[0] || null;
+  }
+
   function normalizeRoiRect(rawRect) {
     return {
       x1: Math.round(clamp(Math.min(rawRect.x1, rawRect.x2), 0, roiCanvas.width)),
@@ -172,7 +250,57 @@ export function createRoiController({ detectMode, onPreviewLoadError }) {
       return;
     }
     const normalized = normalizeRoiRect(roiRect);
-    el("roiInput").value = JSON.stringify(rectToPoints(normalized));
+    const roiInput = el("roiInput");
+    if (roiInput) {
+      roiInput.value = JSON.stringify(rectToPoints(normalized));
+      roiInput.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  }
+
+  function applyCurrentRoi() {
+    if (!roiRect) {
+      return false;
+    }
+    syncInputFromRect();
+    return true;
+  }
+
+  function resizeRectByHandle(handle, point) {
+    if (!roiRect || !roiCanvas) {
+      return;
+    }
+    const normalized = normalizeRoiRect(roiRect);
+    if (handle === "nw") {
+      normalized.x1 = clamp(point.x, 0, normalized.x2 - 1);
+      normalized.y1 = clamp(point.y, 0, normalized.y2 - 1);
+    } else if (handle === "ne") {
+      normalized.x2 = clamp(point.x, normalized.x1 + 1, roiCanvas.width);
+      normalized.y1 = clamp(point.y, 0, normalized.y2 - 1);
+    } else if (handle === "se") {
+      normalized.x2 = clamp(point.x, normalized.x1 + 1, roiCanvas.width);
+      normalized.y2 = clamp(point.y, normalized.y1 + 1, roiCanvas.height);
+    } else if (handle === "sw") {
+      normalized.x1 = clamp(point.x, 0, normalized.x2 - 1);
+      normalized.y2 = clamp(point.y, normalized.y1 + 1, roiCanvas.height);
+    }
+    roiRect = normalizeRoiRect(normalized);
+  }
+
+  function nudgeRect(dx, dy) {
+    if (!roiRect || !roiCanvas) {
+      return;
+    }
+    const normalized = normalizeRoiRect(roiRect);
+    const width = normalized.x2 - normalized.x1;
+    const height = normalized.y2 - normalized.y1;
+    const nextX1 = clamp(normalized.x1 + dx, 0, roiCanvas.width - width);
+    const nextY1 = clamp(normalized.y1 + dy, 0, roiCanvas.height - height);
+    roiRect = normalizeRoiRect({
+      x1: nextX1,
+      y1: nextY1,
+      x2: nextX1 + width,
+      y2: nextY1 + height,
+    });
   }
 
   function clearRoiCanvas() {
@@ -219,13 +347,28 @@ export function createRoiController({ detectMode, onPreviewLoadError }) {
     );
     roiContext.fillStyle = "rgba(0, 200, 162, 0.14)";
     roiContext.fillRect(normalized.x1, normalized.y1, normalized.x2 - normalized.x1, normalized.y2 - normalized.y1);
+
+    const handles = getRectHandles(normalized);
+    roiContext.fillStyle = "#00c8a2";
+    roiContext.strokeStyle = "#ffffff";
+    roiContext.lineWidth = 1.5;
+    Object.values(handles).forEach((point) => {
+      roiContext.beginPath();
+      roiContext.rect(point.x - HANDLE_SIZE / 2, point.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
+      roiContext.fill();
+      roiContext.stroke();
+    });
   }
 
   function renderManualRoiFromInput() {
     if (detectMode() !== "manual" || !roiCanvas) {
       return false;
     }
-    const parsed = parseJsonOrNull(el("roiInput").value);
+    const roiInput = el("roiInput");
+    if (!roiInput) {
+      return false;
+    }
+    const parsed = parseJsonOrNull(roiInput.value);
     if (!Array.isArray(parsed) || parsed.length !== 4) {
       return false;
     }
@@ -396,6 +539,7 @@ export function createRoiController({ detectMode, onPreviewLoadError }) {
     setRoiEditorVisibility,
     setRoiEditMode,
     clearPreview,
+    applyCurrentRoi,
     onDetectModeChange,
     onRoiInputChange,
     hasResultImage,

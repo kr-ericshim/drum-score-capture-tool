@@ -1,6 +1,6 @@
 const path = require("path");
 const fs = require("fs");
-const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, clipboard, dialog, ipcMain, shell } = require("electron");
 const { spawn } = require("child_process");
 
 const BACKEND_PORT = Number(process.env.DRUMSHEET_PORT || 8000);
@@ -150,9 +150,35 @@ function registerIpc() {
     return result.filePaths[0];
   });
 
+  ipcMain.handle("select-audio-source-file", async () => {
+    const result = await dialog.showOpenDialog({
+      title: "오디오/영상 파일 선택",
+      properties: ["openFile"],
+      filters: [
+        {
+          name: "Audio/Video Files",
+          extensions: ["mp3", "wav", "mp4"],
+        },
+      ],
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return "";
+    }
+    return result.filePaths[0];
+  });
+
   ipcMain.handle("open-path", async (_, targetPath) => {
     if (!targetPath) return;
     return shell.openPath(targetPath);
+  });
+
+  ipcMain.handle("copy-text", async (_, text) => {
+    const value = String(text || "");
+    if (!value.trim()) {
+      return false;
+    }
+    clipboard.writeText(value);
+    return true;
   });
 }
 

@@ -11,7 +11,7 @@ function roundToTenth(value) {
   return Math.round(value * 10) / 10;
 }
 
-export function createVideoRangePicker({ sourceType }) {
+export function createVideoRangePicker({ sourceType, onRangeChange = null }) {
   const container = el("localRangeHelper");
   const video = el("rangeVideo");
   const seekSlider = el("videoSeek");
@@ -30,6 +30,9 @@ export function createVideoRangePicker({ sourceType }) {
     return {
       onSourceTypeChange: () => {},
       loadLocalFile: () => {},
+      loadVideoSource: () => {},
+      clearMedia: () => {},
+      getPreviewSecond: () => null,
     };
   }
 
@@ -38,6 +41,18 @@ export function createVideoRangePicker({ sourceType }) {
   let startTouched = false;
   let endTouched = false;
   let syncing = false;
+
+  function notifyRangeChange() {
+    if (typeof onRangeChange !== "function") {
+      return;
+    }
+    onRangeChange({
+      startSec: startInput.value,
+      endSec: endInput.value,
+      hasMedia,
+      durationSec,
+    });
+  }
 
   function setHint(text) {
     if (hintLabel) {
@@ -86,6 +101,7 @@ export function createVideoRangePicker({ sourceType }) {
     startInput.value = String(safe);
     startSlider.value = String(safe);
     startTouched = true;
+    notifyRangeChange();
   }
 
   function applyEndValue(sec) {
@@ -93,6 +109,7 @@ export function createVideoRangePicker({ sourceType }) {
     endInput.value = String(safe);
     endSlider.value = String(safe);
     endTouched = true;
+    notifyRangeChange();
   }
 
   function ensureRangeOrder() {
@@ -110,6 +127,7 @@ export function createVideoRangePicker({ sourceType }) {
       if (endTouched) {
         endInput.value = String(roundToTenth(end));
       }
+      notifyRangeChange();
     }
   }
 
@@ -126,29 +144,53 @@ export function createVideoRangePicker({ sourceType }) {
     endSlider.max = "0";
     updateTimeLabels(0);
     setControlsDisabled(true);
+    notifyRangeChange();
   }
 
   function onSourceTypeChange() {
-    const isFile = sourceType() === "file";
-    container.style.display = isFile ? "block" : "none";
-    if (!isFile) {
+    const type = sourceType();
+    const isVisible = type === "file" || type === "youtube";
+    container.style.display = isVisible ? "block" : "none";
+    if (!isVisible) {
       video.pause();
       return;
     }
     if (!hasMedia) {
-      setHint("로컬 파일을 선택하면 아래 플레이어에서 시작/끝 시간을 슬라이더로 쉽게 고를 수 있어요.");
+      if (type === "youtube") {
+        setHint("유튜브 URL을 입력한 뒤 '유튜브 영상 불러오기'를 누르면 같은 방식으로 구간을 고를 수 있어요.");
+      } else {
+        setHint("로컬 파일을 선택하면 아래 플레이어에서 시작/끝 시간을 슬라이더로 쉽게 고를 수 있어요.");
+      }
     }
   }
 
-  function loadLocalFile(filePath) {
-    if (!filePath) {
+  function loadVideoSource(source) {
+    const value = String(source || "").trim();
+    if (!value) {
       return;
     }
     onSourceTypeChange();
     resetMediaState();
     setHint("영상 메타데이터를 읽는 중...");
-    video.src = fileUrl(filePath);
+    video.src =
+      value.startsWith("http://") ||
+      value.startsWith("https://") ||
+      value.startsWith("file://") ||
+      value.startsWith("data:")
+        ? value
+        : fileUrl(value);
     video.load();
+  }
+
+  function loadLocalFile(filePath) {
+    loadVideoSource(filePath);
+  }
+
+  function clearMedia() {
+    video.pause();
+    video.removeAttribute("src");
+    resetMediaState();
+    onSourceTypeChange();
   }
 
   video.addEventListener("loadedmetadata", () => {
@@ -166,6 +208,7 @@ export function createVideoRangePicker({ sourceType }) {
     updateTimeLabels(0);
     setControlsDisabled(false);
     setHint("플레이어를 재생하거나 슬라이더를 움직여 원하는 구간을 빠르게 설정하세요.");
+    notifyRangeChange();
   });
 
   video.addEventListener("timeupdate", () => {
@@ -264,6 +307,7 @@ export function createVideoRangePicker({ sourceType }) {
         startSlider.value = "0";
         endSlider.value = "0";
       }
+      notifyRangeChange();
     });
   }
 
@@ -272,6 +316,8 @@ export function createVideoRangePicker({ sourceType }) {
   return {
     onSourceTypeChange,
     loadLocalFile,
+    loadVideoSource,
+    clearMedia,
     getPreviewSecond: () => {
       if (!hasMedia) {
         return null;

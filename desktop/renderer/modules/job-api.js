@@ -97,6 +97,14 @@ export function buildPayload() {
         scale: numberOrDefault("upscaleFactor", 2.0),
         gpu_only: true,
       },
+      audio: {
+        enable: checkedValue("enableDrumSeparation", false),
+        engine: "uvr_demucs",
+        model: "htdemucs",
+        stem: "drums",
+        output_format: textValue("drumStemFormat", "wav") === "mp3" ? "mp3" : "wav",
+        gpu_only: false,
+      },
       export: {
         formats: getFormats(),
         include_raw_frames: false,
@@ -160,6 +168,38 @@ export async function getRuntimeStatus(apiBase) {
   const response = await fetch(`${apiBase}/runtime`);
   if (!response.ok) {
     throw new Error("런타임 정보 조회 실패");
+  }
+  return response.json();
+}
+
+function buildSourcePayload() {
+  const type = sourceType();
+  const payload = { source_type: type };
+
+  if (type === "file") {
+    payload.file_path = textValue("filePath", "").trim();
+    if (!payload.file_path) {
+      throw new Error("로컬 파일을 먼저 선택해 주세요.");
+    }
+  } else {
+    payload.youtube_url = textValue("youtubeUrl", "").trim();
+    if (!payload.youtube_url) {
+      throw new Error("유튜브 주소를 먼저 입력해 주세요.");
+    }
+  }
+  return payload;
+}
+
+export async function requestPreviewSource(apiBase) {
+  const payload = buildSourcePayload();
+  const response = await fetch(`${apiBase}/preview/source`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "영상 준비 실패" }));
+    throw new Error(friendlyApiError(error.detail || "영상 준비 실패"));
   }
   return response.json();
 }
