@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 import cv2
 from PIL import Image
 
-from app.pipeline.sheet_finalize import finalize_sheet_pages
+from app.pipeline.sheet_finalize import finalize_sheet_pages, finalize_sheet_sequence
 from app.schemas import ExportOptions
 
 
@@ -37,29 +37,52 @@ def export_frames(
     pdf_images: List[Image.Image] = []
     wants_png = "png" in options.formats
     wants_jpg = "jpg" in options.formats or "jpeg" in options.formats
-    export_idx = 1
-    for idx, page_path in enumerate(frame_paths, start=1):
+    source_images: List = []
+    for page_path in frame_paths:
         image = cv2.imread(str(page_path))
         if image is None:
             continue
-        finalized_pages = finalize_sheet_pages(image)
-        if not finalized_pages:
-            finalized_pages = [image]
-        if len(finalized_pages) > 1:
-            logger(f"export page split: input#{idx} -> {len(finalized_pages)} pages")
+        source_images.append(image)
 
-        for finalized in finalized_pages:
-            pdf_images.append(Image.fromarray(cv2.cvtColor(finalized, cv2.COLOR_BGR2RGB)))
-            if wants_png:
-                out = image_dir / f"page_{export_idx:04d}.png"
-                if cv2.imwrite(str(out), finalized):
-                    image_paths.append(out)
-            if wants_jpg:
-                out = image_dir / f"page_{export_idx:04d}.jpg"
-                rgb = cv2.cvtColor(finalized, cv2.COLOR_BGR2RGB)
-                Image.fromarray(rgb).save(out, quality=95)
+    finalized_pages = []
+    merged_sheet = None
+    used_frame_count = 0
+    if source_images:
+        finalized_pages, merged_sheet, used_frame_count = finalize_sheet_sequence(source_images)
+
+    if not finalized_pages:
+        for image in source_images:
+            fallback_pages = finalize_sheet_pages(image)
+            if fallback_pages:
+                finalized_pages.extend(fallback_pages)
+            else:
+                finalized_pages.append(image)
+
+    if not finalized_pages:
+        raise RuntimeError("no pages available for export")
+
+    if merged_sheet is not None and used_frame_count >= 2 and wants_png:
+        complete_out = image_dir / "sheet_complete.png"
+        if cv2.imwrite(str(complete_out), merged_sheet):
+            image_paths.append(complete_out)
+            logger(f"exported complete stitched sheet: {complete_out.name} (frames={used_frame_count})")
+
+    if len(finalized_pages) > len(source_images) and source_images:
+        logger(f"export page split: input#{len(source_images)} -> {len(finalized_pages)} pages")
+
+    export_idx = 1
+    for finalized in finalized_pages:
+        pdf_images.append(Image.fromarray(cv2.cvtColor(finalized, cv2.COLOR_BGR2RGB)))
+        if wants_png:
+            out = image_dir / f"page_{export_idx:04d}.png"
+            if cv2.imwrite(str(out), finalized):
                 image_paths.append(out)
-            export_idx += 1
+        if wants_jpg:
+            out = image_dir / f"page_{export_idx:04d}.jpg"
+            rgb = cv2.cvtColor(finalized, cv2.COLOR_BGR2RGB)
+            Image.fromarray(rgb).save(out, quality=95)
+            image_paths.append(out)
+        export_idx += 1
 
     if not image_paths and "pdf" not in options.formats and not options.include_raw_frames:
         raise RuntimeError("no images could be exported")
