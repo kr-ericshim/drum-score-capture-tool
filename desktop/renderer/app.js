@@ -18,6 +18,7 @@ let runState = "idle";
 let currentPreset = "basic";
 let manualOpenStep = null;
 let lastSourceType = sourceType();
+let previewRequestToken = 0;
 
 const STEP_KEYS = ["source", "range", "roi", "export"];
 const STEP_DETAIL_IDS = {
@@ -122,6 +123,12 @@ function isSourceReady() {
     return Boolean(String(el("filePath")?.value || "").trim());
   }
   return Boolean(String(el("youtubeUrl")?.value || "").trim());
+}
+
+function currentSourceFingerprint() {
+  const type = sourceType();
+  const value = type === "file" ? String(el("filePath")?.value || "").trim() : String(el("youtubeUrl")?.value || "").trim();
+  return `${type}:${value}`;
 }
 
 function isRangeValid() {
@@ -236,6 +243,22 @@ function openStep(key) {
     }
     details.open = candidate === key;
   });
+}
+
+function resetRoiForSourceChange({ silent = true } = {}) {
+  previewRequestToken += 1;
+  const roiInput = el("roiInput");
+  const hadRoi = Boolean(String(roiInput?.value || "").trim());
+  roiController.clearPreview();
+  if (roiInput) {
+    roiInput.value = "";
+    roiInput.dispatchEvent(new Event("input", { bubbles: true }));
+  } else {
+    refreshCaptureWorkflowUi();
+  }
+  if (!silent && hadRoi) {
+    appendLog("입력 소스가 바뀌어 이전 악보 영역을 초기화했습니다.");
+  }
 }
 
 function updateRangeHumanLabels() {
@@ -376,6 +399,7 @@ function updateSourceRows() {
   const isYoutube = currentType === "youtube";
   if (currentType !== lastSourceType) {
     videoRangePicker.clearMedia();
+    resetRoiForSourceChange({ silent: true });
   }
   lastSourceType = currentType;
   const fileRow = el("fileRow");
@@ -838,6 +862,8 @@ async function refreshRuntimeStatus() {
 
 async function onLoadPreviewForRoi() {
   const button = el("loadPreviewForRoi");
+  const requestToken = ++previewRequestToken;
+  const sourceFingerprint = currentSourceFingerprint();
   try {
     if (button) {
       button.disabled = true;
@@ -854,11 +880,15 @@ async function onLoadPreviewForRoi() {
     }
     setStatus("영역 지정용 화면을 불러오는 중");
     appendLog("영역 지정 화면 요청");
+    roiController.clearPreview();
     const previewStartSec = videoRangePicker.getPreviewSecond();
     if (previewStartSec != null) {
       appendLog(`영역 지정 시점: ${previewStartSec.toFixed(1)}초`);
     }
     const previewImagePath = await requestPreviewFrame(API_BASE, { startSecOverride: previewStartSec });
+    if (requestToken !== previewRequestToken || sourceFingerprint !== currentSourceFingerprint()) {
+      return;
+    }
     manualOpenStep = "roi";
     updateManualTools();
     roiController.showPreviewWithRoi(previewImagePath);
@@ -869,6 +899,9 @@ async function onLoadPreviewForRoi() {
     appendLog("영역 지정 화면 준비 완료");
     refreshCaptureWorkflowUi();
   } catch (error) {
+    if (requestToken !== previewRequestToken) {
+      return;
+    }
     appendLog(`오류: ${error.message}`);
     setStatus("영역 지정 화면 불러오기 실패");
   } finally {
@@ -968,7 +1001,7 @@ if (browseFileButton) {
         filePathNode.value = path;
       }
       videoRangePicker.loadLocalFile(path);
-      manualOpenStep = "range";
+      resetRoiForSourceChange({ silent: false });
       refreshCaptureWorkflowUi();
     }
   });
@@ -1054,6 +1087,9 @@ if (endSecNode) {
 const youtubeUrlNode = el("youtubeUrl");
 if (youtubeUrlNode) {
   youtubeUrlNode.addEventListener("input", () => {
+    if (sourceType() === "youtube") {
+      resetRoiForSourceChange({ silent: true });
+    }
     manualOpenStep = "source";
     refreshCaptureWorkflowUi();
   });

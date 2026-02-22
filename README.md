@@ -126,6 +126,7 @@ Capture Behavior
 - UI now uses `캡처 민감도` instead of direct FPS input.
 - 악보 영역 선택은 `수동 지정(드래그)` 전용입니다. 자동 영역 탐지는 제거되었습니다.
 - Stepper는 자동 넘김 없이 현재 열어둔 단계를 유지합니다.
+- 입력 소스(파일/유튜브 URL)를 바꾸면 이전 ROI/프리뷰는 자동 초기화됩니다. 새 소스에서 `현재 프레임 불러오기`를 다시 눌러 영역을 지정하세요.
 - `낮음`: fewer captures, strongest duplicate suppression.
 - `보통`: balanced default.
 - `높음`: more detailed capture, may produce more pages.
@@ -204,6 +205,9 @@ Troubleshooting
   - `where ffmpeg`
   - `where ffprobe`
   - 경로가 나오지 않으면 FFmpeg 설치 또는 PATH 설정이 필요합니다.
+- 새 영상인데 이전 프레임이 ROI 화면에 보이는 경우:
+  - 소스 변경 직후 이전 ROI는 자동으로 초기화됩니다.
+  - 그래도 섞여 보이면 `현재 프레임 불러오기`를 다시 눌러 새 프레임을 가져오세요.
 
 Packaging (MVP)
 - Add `electron-builder` install (already in `desktop/package.json`).
