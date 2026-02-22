@@ -7,6 +7,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict
+from urllib.parse import unquote
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -252,11 +253,26 @@ def audio_beat_track(payload: AudioBeatTrackRequest) -> AudioBeatTrackResponse:
 
         workspace = jobs_root / "_beat" / str(uuid.uuid4())
         workspace.mkdir(parents=True, exist_ok=True)
+        _beat_log(f"beat tracking workspace: {workspace}")
 
         options = payload.options
         resolved_audio_path: Path
         if payload.audio_path:
-            resolved_audio_path = Path(payload.audio_path)
+            audio_path = unquote(str(payload.audio_path).strip())
+            path_candidates: list[Path] = [Path(audio_path)]
+            if audio_path.startswith("/jobs-files/"):
+                path_candidates.insert(0, jobs_root / audio_path.removeprefix("/jobs-files/").lstrip("/"))
+            if not audio_path.startswith("/") and audio_path.startswith("jobs-files/"):
+                path_candidates.insert(0, jobs_root / audio_path.removeprefix("jobs-files/").lstrip("/"))
+
+            resolved_audio_path = None
+            for candidate in path_candidates:
+                if candidate.exists():
+                    resolved_audio_path = candidate
+                    break
+
+            if resolved_audio_path is None:
+                raise HTTPException(status_code=400, detail="audio_path does not exist")
             if not resolved_audio_path.exists():
                 raise HTTPException(status_code=400, detail="audio_path does not exist")
             _beat_log(f"beat tracking input selected: {resolved_audio_path}")

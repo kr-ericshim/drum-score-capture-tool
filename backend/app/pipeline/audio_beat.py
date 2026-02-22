@@ -5,6 +5,8 @@ import subprocess
 import time
 import platform
 from pathlib import Path
+import re
+import uuid
 from typing import Dict, Optional
 
 import numpy as np
@@ -60,7 +62,7 @@ def track_beats_for_audio(
     _ensure_beat_stack_installed(use_dbn=dbn_enabled)
 
     workspace.mkdir(parents=True, exist_ok=True)
-    prepared_audio = workspace / "beat_input.wav"
+    prepared_audio = workspace / f"{_safe_audio_stem(audio_input)}_{uuid.uuid4().hex[:8]}_beat_input.wav"
     logger("beat tracking stage: prepare audio input")
     _normalize_audio_for_inference(source_audio=audio_input, audio_output=prepared_audio)
     logger(f"beat tracking input prepared: {prepared_audio}")
@@ -131,6 +133,13 @@ def _normalize_audio_for_inference(*, source_audio: Path, audio_output: Path) ->
     if result.returncode != 0 or not audio_output.exists() or audio_output.stat().st_size <= 0:
         stderr = result.stderr.strip() if result.stderr else "unknown ffmpeg error"
         raise RuntimeError(f"Failed to prepare audio for beat tracking: {stderr}")
+
+
+def _safe_audio_stem(path: Path) -> str:
+    stem = path.stem.strip().replace(" ", "_") or "audio"
+    stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)
+    stem = re.sub(r"_+", "_", stem).strip("._-")
+    return stem or "audio"
 
 
 def _run_beat_this(
