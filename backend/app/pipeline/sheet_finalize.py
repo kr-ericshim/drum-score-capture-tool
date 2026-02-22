@@ -6,10 +6,10 @@ import cv2
 import numpy as np
 
 
-LANDSCAPE_PAGE_RATIO = 1.58  # width / height
+PORTRAIT_PAGE_RATIO = 1.0 / 1.4142  # A-series portrait, width / height ~= 0.707
 
 
-def finalize_sheet_pages(image, *, page_ratio: float = LANDSCAPE_PAGE_RATIO) -> List[np.ndarray]:
+def finalize_sheet_pages(image, *, page_ratio: float = PORTRAIT_PAGE_RATIO) -> List[np.ndarray]:
     if image is None or image.size == 0:
         return []
 
@@ -24,7 +24,7 @@ def finalize_sheet_pages(image, *, page_ratio: float = LANDSCAPE_PAGE_RATIO) -> 
 def finalize_sheet_sequence(
     images: List[np.ndarray],
     *,
-    page_ratio: float = LANDSCAPE_PAGE_RATIO,
+    page_ratio: float = PORTRAIT_PAGE_RATIO,
 ) -> Tuple[List[np.ndarray], Optional[np.ndarray], int]:
     prepared_frames: List[np.ndarray] = []
     for image in images:
@@ -186,7 +186,7 @@ def _split_long_page(image, *, page_ratio: float) -> List[np.ndarray]:
     if h <= 0 or w <= 0:
         return []
 
-    target_h = max(260, int(round(w / max(0.4, page_ratio))))
+    target_h = int(np.clip(round(w / max(0.35, page_ratio)), 900, 2600))
     if h <= int(target_h * 1.22):
         return [image]
 

@@ -132,6 +132,7 @@ Capture Behavior
   - 다중 캡처를 세로로 자연스럽게 이어붙인 `sheet_complete.png` 생성(2장 이상일 때)
   - 긴 스크롤 악보 자동 페이지 분할
   - 출력 여백/프레임 정렬로 인쇄물에 가까운 형태로 저장
+  - 기본 페이지 비율은 세로(A4 유사 비율)로 맞춰집니다.
 
 Notes
 - Electron app starts a local FastAPI server on `127.0.0.1:8000`.
