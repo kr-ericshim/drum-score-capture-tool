@@ -61,7 +61,9 @@ py -3.11 -m venv .venv
 ```powershell
 # UVR Demucs (audio separation)
 .\.venv\Scripts\python.exe -m pip install -r requirements-uvr.txt
-.\.venv\Scripts\python.exe -m pip install torch torchaudio torchcodec
+# NVIDIA GPU 사용 권장: CUDA 빌드 torch/torchaudio 설치
+.\.venv\Scripts\python.exe -m pip install --index-url https://download.pytorch.org/whl/cu128 torch torchaudio
+.\.venv\Scripts\python.exe -m pip install torchcodec
 
 # Beat tracking
 .\.venv\Scripts\python.exe -m pip install -r requirements-beat-this.txt
@@ -145,6 +147,23 @@ Troubleshooting
   - `pip install torchcodec` (inside `backend/.venv`)
 - `GPU 전용, but CUDA/MPS is not available`:
   - Disable GPU-only option or confirm torch device availability (`python scripts/doctor.py`).
+- `Audio separation requires GPU, but CUDA/MPS is not available` (Windows + NVIDIA, e.g. RTX 5080):
+  - 원인: 앱이 다른 Python을 쓰거나, 현재 venv에 CPU용 torch가 설치된 경우가 대부분입니다.
+  - PowerShell에서 아래를 순서대로 실행하세요.
+  - `cd C:\path\to\score_capture_program\backend`
+  - `.\.venv\Scripts\python.exe -c "import sys,torch;print('py=',sys.executable);print('torch=',torch.__version__);print('cuda=',torch.cuda.is_available());print('torch_cuda=',torch.version.cuda);print('gpu_count=',torch.cuda.device_count())"`
+  - `cuda=False`라면 GPU torch 재설치:
+    - `.\.venv\Scripts\python.exe -m pip uninstall -y torch torchaudio torchvision`
+    - `.\.venv\Scripts\python.exe -m pip install -U pip`
+    - `.\.venv\Scripts\python.exe -m pip install --index-url https://download.pytorch.org/whl/cu128 torch torchaudio`
+    - `.\.venv\Scripts\python.exe -m pip install torchcodec`
+    - `.\.venv\Scripts\python.exe -m pip install -r requirements-uvr.txt`
+    - `.\.venv\Scripts\python.exe scripts\doctor.py`
+  - 데스크톱 앱 실행 시 같은 Python 강제:
+    - `cd ..\desktop`
+    - `$env:DRUMSHEET_PYTHON_BIN = (Resolve-Path ..\backend\.venv\Scripts\python.exe).Path`
+    - `npm start`
+  - 참고: 에러 문구의 `MPS`는 macOS용 GPU 경로입니다. Windows에서는 `CUDA`만 확인하면 됩니다.
 
 Packaging (MVP)
 - Add `electron-builder` install (already in `desktop/package.json`).

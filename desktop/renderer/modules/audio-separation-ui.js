@@ -959,9 +959,32 @@ export function createAudioSeparationUi({ apiBase }) {
     }
   }
 
+  function hasPlaybackReachedEnd() {
+    const master = playback.tracks[0];
+    if (!master || !master.audio) {
+      return false;
+    }
+    if (master.audio.ended) {
+      return true;
+    }
+    const duration = Number(playback.duration || master.audio.duration || 0);
+    const current = Number(master.audio.currentTime || 0);
+    if (!Number.isFinite(duration) || duration <= 0) {
+      return false;
+    }
+    if (!Number.isFinite(current) || current < 0) {
+      return false;
+    }
+    return current >= duration - 0.05;
+  }
+
   function startTimelineTicker() {
     stopTimelineTicker();
     playback.timerId = setInterval(() => {
+      if (playback.isPlaying && hasPlaybackReachedEnd()) {
+        stopPlayback({ resetPosition: true });
+        return;
+      }
       updateTimeline();
       if (playback.isPlaying) {
         syncTracks(false);
@@ -1008,6 +1031,14 @@ export function createAudioSeparationUi({ apiBase }) {
         resetDetectedBeatCursor(0);
       } else {
         resetManualBeatCursor(0);
+      }
+      const seek = el("audioSeek");
+      const currentNode = el("audioCurrentTime");
+      if (seek) {
+        seek.value = "0";
+      }
+      if (currentNode) {
+        currentNode.textContent = "00:00";
       }
     }
     updateTimeline();
