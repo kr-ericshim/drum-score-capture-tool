@@ -48,8 +48,12 @@ function normalizeApiDetail(detail) {
 }
 
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"]);
-const BEAT_TRACK_MODEL = "small0";
+const BEAT_TRACK_MODEL = "final0";
 const BEAT_TRACK_GPU_ONLY = false;
+const BEAT_TRACK_USE_DBN = true;
+const METRONOME_SCHEDULER_INTERVAL_MS = 25;
+const METRONOME_LOOKAHEAD_SEC = 0.25;
+const METRONOME_LATE_TOLERANCE_SEC = 0.045;
 
 function fileExtension(rawPath) {
   const normalized = String(rawPath || "").trim().replace(/\\/g, "/");
@@ -103,6 +107,11 @@ export function createAudioSeparationUi({ apiBase }) {
     clickCount: 0,
     userAdjustedBpm: false,
     audioContext: null,
+    nextBeatIndex: 0,
+    nextManualBeatSec: 0,
+    lastPlaybackTime: 0,
+    downbeatCentis: new Set(),
+    offsetMs: 0,
   };
 
   function setStatus(text) {
@@ -245,6 +254,7 @@ export function createAudioSeparationUi({ apiBase }) {
     const toggle = el("metronomeToggle");
     const bpmInput = el("metronomeBpm");
     const volumeInput = el("metronomeVolume");
+    const offsetInput = el("metronomeOffset");
     const useDetected = el("metronomeUseDetected");
     if (toggle) {
       toggle.disabled = !enabled;
@@ -254,6 +264,9 @@ export function createAudioSeparationUi({ apiBase }) {
     }
     if (volumeInput) {
       volumeInput.disabled = !enabled;
+    }
+    if (offsetInput) {
+      offsetInput.disabled = !enabled;
     }
     if (useDetected) {
       useDetected.disabled = !enabled || !Number.isFinite(Number(metronome.detectedBpm));
@@ -280,6 +293,58 @@ export function createAudioSeparationUi({ apiBase }) {
       }
     }
     renderBeatMeta();
+  }
+
+  function setMetronomeOffsetMs(value, { updateInput = true } = {}) {
+    const num = Number(value);
+    const resolved = Number.isFinite(num) ? Math.max(-220, Math.min(220, Math.round(num))) : 0;
+    metronome.offsetMs = resolved;
+    if (updateInput) {
+      const offsetInput = el("metronomeOffset");
+      if (offsetInput) {
+        offsetInput.value = String(resolved);
+      }
+    }
+    renderBeatMeta();
+    if (metronome.enabled && playback.isPlaying) {
+      startMetronomeTicker();
+    }
+  }
+
+  function shouldUseDetectedBeatSchedule() {
+    return !metronome.userAdjustedBpm && beatState.beats.length >= 2;
+  }
+
+  function metronomeOffsetSec() {
+    return Number(metronome.offsetMs || 0) / 1000;
+  }
+
+  function isDownbeatTime(sec) {
+    const key = Math.round(Number(sec) * 100);
+    return metronome.downbeatCentis.has(key);
+  }
+
+  function resetDetectedBeatCursor(currentTime = 0) {
+    const now = Number.isFinite(currentTime) ? Math.max(0, currentTime) : 0;
+    const beats = Array.isArray(beatState.beats) ? beatState.beats : [];
+    if (!beats.length) {
+      metronome.nextBeatIndex = 0;
+      metronome.lastPlaybackTime = now;
+      return;
+    }
+    let idx = beats.findIndex((time) => Number(time) >= now - 0.02);
+    if (idx < 0) {
+      idx = beats.length;
+    }
+    metronome.nextBeatIndex = idx;
+    metronome.lastPlaybackTime = now;
+  }
+
+  function resetManualBeatCursor(currentTime = 0) {
+    const now = Number.isFinite(currentTime) ? Math.max(0, currentTime) : 0;
+    metronome.nextManualBeatSec = now;
+    metronome.clickCount = 0;
+    metronome.lastPlaybackTime = now;
   }
 
   function applyDetectedBpm(nextBpm, { force = false } = {}) {
@@ -312,6 +377,7 @@ export function createAudioSeparationUi({ apiBase }) {
     lines.push(
       `감지 BPM: ${metronome.detectedBpm == null ? "분석 중/없음" : metronome.detectedBpm} · 현재 메트로놈 BPM: ${metronome.bpm}`,
     );
+    lines.push(`동기 모드: ${shouldUseDetectedBeatSchedule() ? "감지 비트 추종(final0)" : "수동 BPM"} · 보정: ${metronome.offsetMs}ms`);
     lines.push(`메트로놈: ${metronome.enabled ? "ON" : "OFF"} · 클릭 볼륨: ${Math.round(metronome.volume * 100)}%`);
     lines.push(`비트 수: ${beatState.beats.length} / 다운비트 수: ${beatState.downbeats.length}`);
     lines.push(`모델/장치: ${beatState.model || "-"} / ${beatState.device || "-"}`);
@@ -340,6 +406,11 @@ export function createAudioSeparationUi({ apiBase }) {
     beatState.status = "대기 중";
     metronome.detectedBpm = null;
     metronome.userAdjustedBpm = false;
+    metronome.nextBeatIndex = 0;
+    metronome.nextManualBeatSec = 0;
+    metronome.lastPlaybackTime = 0;
+    metronome.downbeatCentis = new Set();
+    setMetronomeOffsetMs(0, { updateInput: true });
     setMetronomeBpm(120, { markUser: false, updateInput: true });
     clearBeatMarkers();
     renderBeatMeta();
@@ -523,6 +594,11 @@ export function createAudioSeparationUi({ apiBase }) {
       }
     });
     seekVideoTo(safe);
+    if (shouldUseDetectedBeatSchedule()) {
+      resetDetectedBeatCursor(safe);
+    } else {
+      resetManualBeatCursor(safe);
+    }
   }
 
   function syncVideoToMaster(force = false) {
@@ -670,7 +746,7 @@ export function createAudioSeparationUi({ apiBase }) {
     return metronome.audioContext;
   }
 
-  function playMetronomeClick(accent = false) {
+  function playMetronomeClick(accent = false, whenSec = null) {
     const context = ensureMetronomeAudioContext();
     if (!context) {
       return;
@@ -679,18 +755,32 @@ export function createAudioSeparationUi({ apiBase }) {
       context.resume().catch(() => {});
     }
     const now = context.currentTime;
+    const when = Number.isFinite(whenSec) ? Math.max(now + 0.001, Number(whenSec)) : now;
     const osc = context.createOscillator();
     const gain = context.createGain();
     osc.type = "square";
-    osc.frequency.setValueAtTime(accent ? 1550 : 1180, now);
+    osc.frequency.setValueAtTime(accent ? 1550 : 1180, when);
     const level = Math.max(0, Math.min(1, Number(metronome.volume || 0.55)));
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(Math.max(0.02, level), now + 0.003);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.06);
+    gain.gain.setValueAtTime(0.0001, when);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.02, level), when + 0.003);
+    gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.06);
     osc.connect(gain);
     gain.connect(context.destination);
-    osc.start(now);
-    osc.stop(now + 0.065);
+    osc.start(when);
+    osc.stop(when + 0.065);
+  }
+
+  function playbackSnapshot() {
+    const master = playback.tracks[0];
+    if (!master) {
+      return null;
+    }
+    const mediaNow = Number(master.audio.currentTime || 0);
+    if (!Number.isFinite(mediaNow)) {
+      return null;
+    }
+    const playbackRate = Math.max(0.1, Number(master.audio.playbackRate || 1));
+    return { mediaNow, playbackRate };
   }
 
   function stopMetronomeTicker() {
@@ -700,18 +790,113 @@ export function createAudioSeparationUi({ apiBase }) {
     }
   }
 
+  function scheduleDetectedBeats(snapshot, contextNow) {
+    if (!shouldUseDetectedBeatSchedule()) {
+      return;
+    }
+    const beats = beatState.beats;
+    if (!Array.isArray(beats) || beats.length === 0) {
+      return;
+    }
+    const lookaheadMedia = METRONOME_LOOKAHEAD_SEC * snapshot.playbackRate;
+    const offsetSec = metronomeOffsetSec();
+    let index = Math.max(0, Math.min(metronome.nextBeatIndex, beats.length));
+    while (index < beats.length) {
+      const beatSec = Number(beats[index]);
+      if (!Number.isFinite(beatSec)) {
+        index += 1;
+        continue;
+      }
+      const targetSec = beatSec + offsetSec;
+      const deltaMedia = targetSec - snapshot.mediaNow;
+      if (deltaMedia > lookaheadMedia) {
+        break;
+      }
+      if (deltaMedia < -METRONOME_LATE_TOLERANCE_SEC) {
+        index += 1;
+        continue;
+      }
+      const when = contextNow + deltaMedia / snapshot.playbackRate;
+      playMetronomeClick(isDownbeatTime(beatSec), when);
+      index += 1;
+    }
+    metronome.nextBeatIndex = index;
+  }
+
+  function scheduleManualBeats(snapshot, contextNow) {
+    const intervalSec = 60 / Math.max(40, metronome.bpm);
+    const lookaheadMedia = METRONOME_LOOKAHEAD_SEC * snapshot.playbackRate;
+    const offsetSec = metronomeOffsetSec();
+
+    if (!Number.isFinite(metronome.nextManualBeatSec)) {
+      resetManualBeatCursor(snapshot.mediaNow);
+    }
+
+    while (metronome.nextManualBeatSec <= snapshot.mediaNow + lookaheadMedia) {
+      const targetSec = metronome.nextManualBeatSec + offsetSec;
+      const deltaMedia = targetSec - snapshot.mediaNow;
+      if (deltaMedia >= -METRONOME_LATE_TOLERANCE_SEC) {
+        const when = contextNow + deltaMedia / snapshot.playbackRate;
+        playMetronomeClick(metronome.clickCount % 4 === 0, when);
+      }
+      metronome.clickCount += 1;
+      metronome.nextManualBeatSec += intervalSec;
+    }
+  }
+
+  function runMetronomeSchedulerTick() {
+    if (!metronome.enabled || !playback.isPlaying) {
+      return;
+    }
+    const snapshot = playbackSnapshot();
+    if (!snapshot) {
+      return;
+    }
+    const context = ensureMetronomeAudioContext();
+    if (!context) {
+      return;
+    }
+    if (context.state === "suspended") {
+      context.resume().catch(() => {});
+    }
+
+    const prevTime = Number(metronome.lastPlaybackTime || 0);
+    if (Number.isFinite(prevTime)) {
+      const jumpedBackward = snapshot.mediaNow + 0.04 < prevTime;
+      const jumpedForward = Math.abs(snapshot.mediaNow - prevTime) > 1.4;
+      if (jumpedBackward || jumpedForward) {
+        if (shouldUseDetectedBeatSchedule()) {
+          resetDetectedBeatCursor(snapshot.mediaNow);
+        } else {
+          resetManualBeatCursor(snapshot.mediaNow);
+        }
+      }
+    }
+
+    if (shouldUseDetectedBeatSchedule()) {
+      scheduleDetectedBeats(snapshot, context.currentTime);
+    } else {
+      scheduleManualBeats(snapshot, context.currentTime);
+    }
+    metronome.lastPlaybackTime = snapshot.mediaNow;
+  }
+
   function startMetronomeTicker() {
     stopMetronomeTicker();
     if (!metronome.enabled || !playback.isPlaying) {
       return;
     }
-    const intervalMs = Math.max(60, Math.round(60000 / Math.max(40, metronome.bpm)));
-    playMetronomeClick(metronome.clickCount % 4 === 0);
-    metronome.clickCount += 1;
-    metronome.timerId = setInterval(() => {
-      playMetronomeClick(metronome.clickCount % 4 === 0);
-      metronome.clickCount += 1;
-    }, intervalMs);
+    const snapshot = playbackSnapshot();
+    if (!snapshot) {
+      return;
+    }
+    if (shouldUseDetectedBeatSchedule()) {
+      resetDetectedBeatCursor(snapshot.mediaNow);
+    } else {
+      resetManualBeatCursor(snapshot.mediaNow);
+    }
+    runMetronomeSchedulerTick();
+    metronome.timerId = setInterval(runMetronomeSchedulerTick, METRONOME_SCHEDULER_INTERVAL_MS);
   }
 
   function toggleMetronome() {
@@ -782,7 +967,7 @@ export function createAudioSeparationUi({ apiBase }) {
         syncTracks(false);
         syncVideoToMaster(false);
       }
-    }, 180);
+    }, 80);
   }
 
   function setPlaybackRate(rateValue) {
@@ -819,6 +1004,11 @@ export function createAudioSeparationUi({ apiBase }) {
       });
       seekVideoTo(0, { force: true });
       metronome.clickCount = 0;
+      if (shouldUseDetectedBeatSchedule()) {
+        resetDetectedBeatCursor(0);
+      } else {
+        resetManualBeatCursor(0);
+      }
     }
     updateTimeline();
   }
@@ -840,6 +1030,12 @@ export function createAudioSeparationUi({ apiBase }) {
     updatePlayButton();
     await playVideoPreview();
     if (metronome.enabled) {
+      const masterTime = Number(playback.tracks[0]?.audio?.currentTime || 0);
+      if (shouldUseDetectedBeatSchedule()) {
+        resetDetectedBeatCursor(masterTime);
+      } else {
+        resetManualBeatCursor(masterTime);
+      }
       startMetronomeTicker();
     }
     startTimelineTicker();
@@ -1064,7 +1260,7 @@ export function createAudioSeparationUi({ apiBase }) {
       options: {
         model: BEAT_TRACK_MODEL,
         gpu_only: BEAT_TRACK_GPU_ONLY,
-        use_dbn: false,
+        use_dbn: BEAT_TRACK_USE_DBN,
         float16: false,
         save_tsv: true,
       },
@@ -1112,7 +1308,14 @@ export function createAudioSeparationUi({ apiBase }) {
       beatState.model = String(data.model || payload.options.model || "");
       beatState.device = String(data.device || "");
       beatState.beatTsv = String(data.beat_tsv || "");
+      metronome.downbeatCentis = new Set(beatState.downbeats.map((value) => Math.round(Number(value) * 100)));
       applyDetectedBpm(beatState.bpm, { force: false });
+      const currentTime = Number(playback.tracks[0]?.audio?.currentTime || 0);
+      if (shouldUseDetectedBeatSchedule()) {
+        resetDetectedBeatCursor(currentTime);
+      } else {
+        resetManualBeatCursor(currentTime);
+      }
       markerSignature = "";
       renderBeatMeta();
       renderBeatMarkers();
@@ -1305,6 +1508,11 @@ export function createAudioSeparationUi({ apiBase }) {
             // no-op
           }
         });
+        if (shouldUseDetectedBeatSchedule()) {
+          resetDetectedBeatCursor(nextTime);
+        } else {
+          resetManualBeatCursor(nextTime);
+        }
         updateTimeline();
       });
       video.addEventListener("ended", () => {
@@ -1374,6 +1582,13 @@ export function createAudioSeparationUi({ apiBase }) {
       metronomeVolume.addEventListener("input", () => {
         const next = Number(metronomeVolume.value || "0.55");
         metronome.volume = Number.isFinite(next) ? Math.max(0, Math.min(1, next)) : 0.55;
+      });
+    }
+
+    const metronomeOffset = el("metronomeOffset");
+    if (metronomeOffset) {
+      metronomeOffset.addEventListener("change", () => {
+        setMetronomeOffsetMs(metronomeOffset.value, { updateInput: true });
       });
     }
 
