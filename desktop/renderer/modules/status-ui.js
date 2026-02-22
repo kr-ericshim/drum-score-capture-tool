@@ -31,28 +31,37 @@ export function clearResultMeta() {
   }
 }
 
-const PIPELINE_IDS = ["pipeDownload", "pipeExtract", "pipeDetect", "pipeRectify", "pipeExport"];
+const PIPELINE_IDS = ["pipeDownload", "pipeExtract", "pipeAudio", "pipeDetect", "pipeRectify", "pipeUpscale", "pipeExport"];
 
 function resolvePipelineIndex(currentStep, progress, isYoutubeSource) {
   const step = String(currentStep || "").toLowerCase();
   const pct = Number.isFinite(progress) ? progress : 0;
   if (step === "done") {
-    return 4;
+    return PIPELINE_IDS.length - 1;
   }
   if (step === "initializing" || step === "queued") {
     return isYoutubeSource ? 0 : 1;
   }
   if (step === "detecting") {
-    if (pct < 0.26) {
+    if (pct < 0.36) {
       return 1;
     }
+    return 3;
+  }
+  if (step === "separating_audio") {
     return 2;
   }
   if (step === "rectifying" || step === "stitching" || step === "upscaling") {
-    return 3;
+    if (step === "rectifying") {
+      return 3;
+    }
+    if (step === "stitching") {
+      return 4;
+    }
+    return 5;
   }
   if (step === "exporting") {
-    return 4;
+    return 6;
   }
   return 0;
 }

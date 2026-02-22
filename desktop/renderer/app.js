@@ -17,6 +17,7 @@ let activeMode = "capture";
 let runState = "idle";
 let currentPreset = "basic";
 let manualOpenStep = null;
+let lastSourceFingerprint = currentSourceFingerprint();
 let lastSourceType = sourceType();
 let previewRequestToken = 0;
 
@@ -261,6 +262,26 @@ function resetRoiForSourceChange({ silent = true } = {}) {
   }
 }
 
+function resetForSourceChange({ silent = true } = {}) {
+  previewRequestToken += 1;
+  if (activePoll) {
+    clearInterval(activePoll);
+    activePoll = null;
+  }
+
+  runState = "idle";
+  resetRoiForSourceChange({ silent });
+  videoRangePicker.clearMedia();
+  videoRangePicker.clearRangeState();
+  resetResultView();
+  manualOpenStep = "source";
+  setPipelineState({ currentStep: "queued", progress: 0, status: "queued", isYoutubeSource: sourceType() === "youtube" });
+  if (!silent) {
+    appendLog("새로운 소스로 전환되어 기존 결과와 미리보기 상태를 초기화했습니다.");
+  }
+  setStatus("대기 중");
+}
+
 function updateRangeHumanLabels() {
   const { start, end } = getRangeValues();
   const startHuman = el("startHuman");
@@ -355,9 +376,6 @@ function refreshCaptureWorkflowUi() {
   setStepText("export", exportSummaryText());
 
   const progressStep = determineActiveStep();
-  if (runState === "running") {
-    manualOpenStep = "export";
-  }
   if (!manualOpenStep) {
     manualOpenStep = getOpenedStepFromDetails() || "source";
   }
@@ -397,11 +415,15 @@ function updateSourceRows() {
   const currentType = sourceType();
   const isFile = currentType === "file";
   const isYoutube = currentType === "youtube";
-  if (currentType !== lastSourceType) {
+  const currentFingerprint = currentSourceFingerprint();
+  if (currentFingerprint !== lastSourceFingerprint) {
+    resetForSourceChange({ silent: true });
+  } else if (currentType !== lastSourceType) {
     videoRangePicker.clearMedia();
     resetRoiForSourceChange({ silent: true });
   }
   lastSourceType = currentType;
+  lastSourceFingerprint = currentFingerprint;
   const fileRow = el("fileRow");
   const youtubeRow = el("youtubeRow");
   if (fileRow) {
@@ -805,7 +827,6 @@ async function onRun() {
       return;
     }
 
-    manualOpenStep = "export";
     runState = "running";
     resetResultView();
     setProgress(0);

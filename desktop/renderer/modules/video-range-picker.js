@@ -193,6 +193,27 @@ export function createVideoRangePicker({ sourceType, onRangeChange = null }) {
     onSourceTypeChange();
   }
 
+  function clearRangeState() {
+    startTouched = false;
+    endTouched = false;
+    if (!hasMedia) {
+      startInput.value = "";
+      endInput.value = "";
+      startSlider.value = "0";
+      endSlider.value = "0";
+      startSlider.max = "0";
+      endSlider.max = "0";
+      setControlsDisabled(true);
+      notifyRangeChange();
+      return;
+    }
+    startInput.value = "";
+    endInput.value = "";
+    startSlider.value = "0";
+    endSlider.value = String(roundToTenth(durationSec));
+    notifyRangeChange();
+  }
+
   video.addEventListener("loadedmetadata", () => {
     if (!Number.isFinite(video.duration) || video.duration <= 0) {
       resetMediaState();
@@ -318,6 +339,7 @@ export function createVideoRangePicker({ sourceType, onRangeChange = null }) {
     loadLocalFile,
     loadVideoSource,
     clearMedia,
+    clearRangeState,
     getPreviewSecond: () => {
       if (!hasMedia) {
         return null;

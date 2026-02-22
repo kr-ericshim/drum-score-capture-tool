@@ -424,7 +424,7 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
                 logger=lambda msg: _append(job_id, msg),
             )
             result.update(audio_result)
-            job_store.set_state(job_id, JobStatus.RUNNING, 0.38, "detecting", "audio separation completed")
+            job_store.set_state(job_id, JobStatus.RUNNING, 0.38, "rectifying", "audio separation completed")
 
         if not frames:
             raise RuntimeError("No frames were extracted from source")
