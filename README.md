@@ -22,6 +22,11 @@ If you are not familiar with terminal commands, use the launcher files in projec
 - macOS: double click `run_app_mac.command`
 - Windows: double click `run_app_windows.bat`
 
+3. In-app one-click recovery (new)
+- If backend is not connected, open the app and use:
+- `초보자용 원클릭 설치/복구` -> `원클릭 설치/복구`
+- You can also click `백엔드 다시 연결`.
+
 Notes
 - First setup can take time (torch/demucs/beat dependencies are large).
 - On Windows with NVIDIA GPU, setup script installs CUDA torch build automatically when `nvidia-smi` is available.

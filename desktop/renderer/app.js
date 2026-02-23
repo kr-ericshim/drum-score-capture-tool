@@ -20,6 +20,14 @@ let manualOpenStep = null;
 let lastSourceFingerprint = currentSourceFingerprint();
 let lastSourceType = sourceType();
 let previewRequestToken = 0;
+let setupRunning = false;
+let backendBridgeState = {
+  ready: false,
+  starting: true,
+  running: false,
+  error: "",
+  setupRunning: false,
+};
 
 const STEP_KEYS = ["source", "range", "roi", "export"];
 const STEP_DETAIL_IDS = {
@@ -110,6 +118,168 @@ function formatSecToMmss(sec) {
   const min = Math.floor(safe / 60);
   const rem = safe - min * 60;
   return `${String(min).padStart(2, "0")}:${rem.toFixed(1).padStart(4, "0")}`;
+}
+
+function nowTimeLabel() {
+  const now = new Date();
+  return now.toLocaleTimeString("ko-KR", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function appendSetupLogLine(text) {
+  const logNode = el("setupLog");
+  if (!logNode) {
+    return;
+  }
+  const line = String(text || "").trim();
+  if (!line) {
+    return;
+  }
+  const merged = `${logNode.textContent}\n[${nowTimeLabel()}] ${line}`.trim();
+  const maxLines = 140;
+  const rows = merged.split("\n");
+  logNode.textContent = rows.length > maxLines ? rows.slice(rows.length - maxLines).join("\n") : merged;
+  logNode.scrollTop = logNode.scrollHeight;
+}
+
+function compactErrorText(raw, fallback = "오류 원인을 확인하지 못했습니다.") {
+  const value = String(raw || "").trim();
+  if (!value) {
+    return fallback;
+  }
+  return value.length > 180 ? `${value.slice(0, 177)}...` : value;
+}
+
+function renderBackendBridgeState() {
+  const chip = el("backendBridgeChip");
+  const text = el("backendBridgeText");
+  const setupButton = el("runGuidedSetup");
+  const restartButton = el("restartBackend");
+
+  if (!chip || !text) {
+    return;
+  }
+
+  chip.classList.remove("setup-chip-ok", "setup-chip-running", "setup-chip-warn", "setup-chip-error");
+
+  if (setupRunning || backendBridgeState.setupRunning) {
+    chip.classList.add("setup-chip-running");
+    chip.textContent = "설치/복구 진행 중";
+    text.textContent = "원클릭 설치/복구가 진행 중입니다. 완료될 때까지 잠시만 기다려 주세요.";
+  } else if (backendBridgeState.ready) {
+    chip.classList.add("setup-chip-ok");
+    chip.textContent = "엔진 연결 완료";
+    text.textContent = "로컬 처리 엔진이 정상 연결되었습니다. 바로 작업을 시작할 수 있어요.";
+  } else if (backendBridgeState.starting) {
+    chip.classList.add("setup-chip-running");
+    chip.textContent = "엔진 시작 중";
+    text.textContent = "로컬 처리 엔진을 시작하고 있습니다. 잠시 후 자동으로 연결됩니다.";
+  } else if (backendBridgeState.error) {
+    chip.classList.add("setup-chip-error");
+    chip.textContent = "엔진 연결 실패";
+    text.textContent = compactErrorText(backendBridgeState.error, "엔진 연결에 실패했습니다. 원클릭 설치/복구를 눌러 복구해 주세요.");
+  } else {
+    chip.classList.add("setup-chip-warn");
+    chip.textContent = "엔진 대기";
+    text.textContent = "로컬 처리 엔진이 아직 연결되지 않았습니다. 백엔드 다시 연결 또는 설치/복구를 눌러 주세요.";
+  }
+
+  if (setupButton) {
+    setupButton.disabled = setupRunning || backendBridgeState.setupRunning;
+    setupButton.textContent = setupRunning || backendBridgeState.setupRunning ? "설치/복구 진행 중..." : "원클릭 설치/복구";
+  }
+  if (restartButton) {
+    restartButton.disabled = setupRunning || backendBridgeState.setupRunning || backendBridgeState.starting;
+  }
+}
+
+async function refreshBackendBridgeState() {
+  if (!window.drumSheetAPI || typeof window.drumSheetAPI.getBackendState !== "function") {
+    return;
+  }
+  try {
+    const state = await window.drumSheetAPI.getBackendState();
+    backendBridgeState = {
+      ready: Boolean(state?.ready),
+      starting: Boolean(state?.starting),
+      running: Boolean(state?.running),
+      error: String(state?.error || ""),
+      setupRunning: Boolean(state?.setupRunning),
+    };
+    renderBackendBridgeState();
+    refreshCaptureWorkflowUi();
+  } catch (error) {
+    appendSetupLogLine(`오류: 엔진 상태 확인 실패 (${compactErrorText(error?.message)})`);
+  }
+}
+
+async function onRunGuidedSetup() {
+  if (!window.drumSheetAPI || typeof window.drumSheetAPI.runGuidedSetup !== "function") {
+    appendSetupLogLine("오류: 현재 앱에서 원클릭 설치/복구 기능을 지원하지 않습니다.");
+    return;
+  }
+  if (setupRunning) {
+    return;
+  }
+
+  const proceed = window.confirm(
+    "원클릭 설치/복구를 시작할까요?\n\n백엔드를 잠시 멈추고 Python/패키지/npm 상태를 자동으로 정리합니다.",
+  );
+  if (!proceed) {
+    return;
+  }
+
+  try {
+    setupRunning = true;
+    renderBackendBridgeState();
+    refreshCaptureWorkflowUi();
+    appendSetupLogLine("원클릭 설치/복구 요청");
+    const result = await window.drumSheetAPI.runGuidedSetup();
+    if (result?.ok) {
+      appendSetupLogLine("설치/복구 완료");
+      appendLog("설치/복구 완료: 로컬 엔진이 다시 연결되었습니다.");
+      await refreshRuntimeStatus();
+    } else {
+      const message = compactErrorText(result?.error, "설치/복구 작업이 실패했습니다.");
+      appendSetupLogLine(`오류: ${message}`);
+      appendLog(`오류: 설치/복구 실패 (${message})`);
+    }
+  } catch (error) {
+    const message = compactErrorText(error?.message, "설치/복구 실행 실패");
+    appendSetupLogLine(`오류: ${message}`);
+    appendLog(`오류: ${message}`);
+  } finally {
+    setupRunning = false;
+    await refreshBackendBridgeState();
+    refreshCaptureWorkflowUi();
+  }
+}
+
+async function onRestartBackend() {
+  if (!window.drumSheetAPI || typeof window.drumSheetAPI.restartBackend !== "function") {
+    appendSetupLogLine("오류: 백엔드 다시 연결 기능을 지원하지 않습니다.");
+    return;
+  }
+
+  try {
+    appendSetupLogLine("백엔드 다시 연결 요청");
+    const result = await window.drumSheetAPI.restartBackend();
+    if (result?.ok) {
+      appendSetupLogLine("백엔드 연결 성공");
+      await refreshRuntimeStatus();
+    } else {
+      appendSetupLogLine(`오류: ${compactErrorText(result?.error, "백엔드 다시 연결 실패")}`);
+    }
+  } catch (error) {
+    appendSetupLogLine(`오류: ${compactErrorText(error?.message, "백엔드 다시 연결 실패")}`);
+  } finally {
+    await refreshBackendBridgeState();
+    refreshCaptureWorkflowUi();
+  }
 }
 
 function getRangeValues() {
@@ -309,6 +479,17 @@ function updateRunCta() {
   }
 
   const ready = isSourceReady() && isRangeValid() && isRoiReady() && isExportReady();
+
+  if (!backendBridgeState.ready) {
+    runButton.textContent = setupRunning || backendBridgeState.setupRunning ? "설치/복구 진행 중..." : "로컬 엔진 연결 필요";
+    runButton.disabled = true;
+    cancelButton.style.display = "none";
+    const errorText = compactErrorText(backendBridgeState.error, "");
+    hint.textContent = errorText
+      ? `엔진 오류: ${errorText}`
+      : "상단의 원클릭 설치/복구 또는 백엔드 다시 연결 버튼을 사용해 주세요.";
+    return;
+  }
 
   if (runState === "running") {
     runButton.textContent = "처리 중...";
@@ -822,6 +1003,13 @@ async function onRun() {
       activePoll = null;
     }
 
+    if (!backendBridgeState.ready) {
+      appendLog("오류: 로컬 엔진이 연결되지 않았습니다. 상단 원클릭 설치/복구를 먼저 실행해 주세요.");
+      setStatus("엔진 연결 필요");
+      refreshCaptureWorkflowUi();
+      return;
+    }
+
     if (!isSourceReady() || !isRangeValid() || !isRoiReady() || !isExportReady()) {
       refreshCaptureWorkflowUi();
       return;
@@ -875,9 +1063,18 @@ async function refreshRuntimeStatus() {
     latestRuntime = await getRuntimeStatus(API_BASE);
     renderRuntimeStatus(latestRuntime);
     applyUpscaleAvailability(latestRuntime);
+    backendBridgeState = {
+      ...backendBridgeState,
+      ready: true,
+      starting: false,
+      running: true,
+      error: "",
+    };
+    renderBackendBridgeState();
   } catch (_) {
     renderRuntimeError();
     applyUpscaleAvailability(latestRuntime);
+    await refreshBackendBridgeState();
   }
 }
 
@@ -1206,6 +1403,62 @@ if (tabAudio) {
   tabAudio.addEventListener("click", () => setActiveMode("audio"));
 }
 
+const runGuidedSetupButton = el("runGuidedSetup");
+if (runGuidedSetupButton) {
+  runGuidedSetupButton.addEventListener("click", onRunGuidedSetup);
+}
+
+const restartBackendButton = el("restartBackend");
+if (restartBackendButton) {
+  restartBackendButton.addEventListener("click", onRestartBackend);
+}
+
+const clearSetupLogButton = el("clearSetupLog");
+if (clearSetupLogButton) {
+  clearSetupLogButton.addEventListener("click", () => {
+    const logNode = el("setupLog");
+    if (logNode) {
+      logNode.textContent = "[안내] 로그를 지웠습니다.";
+    }
+  });
+}
+
+if (window.drumSheetAPI && typeof window.drumSheetAPI.onSetupLog === "function") {
+  window.drumSheetAPI.onSetupLog((payload) => {
+    const line = String(payload?.line || "").trim();
+    if (!line) {
+      return;
+    }
+    appendSetupLogLine(line);
+  });
+}
+
+if (window.drumSheetAPI && typeof window.drumSheetAPI.onSetupState === "function") {
+  window.drumSheetAPI.onSetupState((payload) => {
+    setupRunning = Boolean(payload?.running);
+    backendBridgeState = {
+      ...backendBridgeState,
+      setupRunning,
+    };
+    renderBackendBridgeState();
+    refreshCaptureWorkflowUi();
+  });
+}
+
+if (window.drumSheetAPI && typeof window.drumSheetAPI.onBackendState === "function") {
+  window.drumSheetAPI.onBackendState((payload) => {
+    backendBridgeState = {
+      ready: Boolean(payload?.ready),
+      starting: Boolean(payload?.starting),
+      running: Boolean(payload?.running),
+      error: String(payload?.error || ""),
+      setupRunning: Boolean(payload?.setupRunning),
+    };
+    renderBackendBridgeState();
+    refreshCaptureWorkflowUi();
+  });
+}
+
 bindStepNavigation();
 bindPresetButtons();
 updateSourceRows();
@@ -1215,6 +1468,8 @@ updateCaptureSensitivityHelp();
 updateUpscaleUi();
 applyCapturePreset("basic", { withLog: false });
 refreshRuntimeStatus();
+refreshBackendBridgeState();
+renderBackendBridgeState();
 setActiveMode("capture");
 setPipelineState({ currentStep: "queued", progress: 0, status: "queued", isYoutubeSource: sourceType() === "youtube" });
 

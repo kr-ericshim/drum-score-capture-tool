@@ -26,12 +26,27 @@
         <button id="tabAudio" class="mode-tab" type="button">드럼 음원 분리</button>
       </section>
 
-      <section class="panel panel-runtime capture-panel runtime-toolbar-panel">
+      <section class="panel panel-runtime runtime-toolbar-panel">
         <div class="runtime-toolbar">
           <span id="runtimeOverallChip" class="runtime-chip runtime-chip-cpu">확인 중</span>
           <span class="runtime-mini-badge">GPU: <strong id="runtimeGpuMini">확인 중</strong></span>
           <span class="runtime-mini-badge">Engine: <strong id="runtimeEngineMini">확인 중</strong></span>
         </div>
+        <details class="runtime-details setup-details">
+          <summary>초보자용 원클릭 설치/복구</summary>
+          <div class="setup-panel">
+            <div class="setup-head">
+              <span id="backendBridgeChip" class="setup-chip setup-chip-warn">엔진 확인 중</span>
+              <p id="backendBridgeText" class="setup-desc">로컬 엔진 연결 상태를 확인하고 있습니다.</p>
+            </div>
+            <div class="result-actions setup-actions">
+              <button id="runGuidedSetup" type="button">원클릭 설치/복구</button>
+              <button id="restartBackend" type="button" class="secondary">백엔드 다시 연결</button>
+              <button id="clearSetupLog" type="button" class="secondary">로그 지우기</button>
+            </div>
+            <pre id="setupLog" class="setup-log">[안내] 문제가 생기면 여기 로그를 보고 원인을 빠르게 확인할 수 있어요.</pre>
+          </div>
+        </details>
         <details class="runtime-details">
           <summary>가속 상세 보기</summary>
           <div class="runtime-grid">
