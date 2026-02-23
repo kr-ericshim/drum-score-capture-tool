@@ -15,6 +15,7 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
+`requirements.txt`는 `opencv-python-headless`를 사용합니다. (GUI 창 없이도 cv2 기능 동작)
 
 Optional: UVR-style drum stem separation
 ```bash
@@ -240,6 +241,11 @@ npm run dist
 cd desktop
 npm run dist:full
 ```
+- 크기 최적화(full-compact) 패키지: HAT 비활성 자산(실험 체크포인트/불필요 메타데이터)만 제거해 용량을 낮춥니다.
+```bash
+cd desktop
+npm run dist:compact
+```
 - 축소(lean) 패키지: `.venv`와 `third_party`를 번들에서 제외해서 용량 감소 (실행 시 사용자 Python에 의존)
 ```bash
 cd desktop
@@ -248,7 +254,7 @@ npm run dist:lean
 - Output:
   - Windows: `.exe` installer from `../dist`
   - macOS: `.dmg` from `../dist`
-- 참고: 현재 기준으로 full 빌드 예시가 약 1.2GB, lean 빌드는 환경에 따라 300~500MB 수준으로 내려갈 수 있음.
+- 참고: 현재 기준으로 full 빌드 예시가 약 1.2GB, compact full은 일반적으로 800~1.0GB 수준, lean은 300~500MB 수준으로 내려갑니다.
 
 Backend Runtime
 - The desktop app currently expects a local Python runtime and will try:

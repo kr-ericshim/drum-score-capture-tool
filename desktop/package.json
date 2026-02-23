@@ -8,9 +8,11 @@
     "pack": "node scripts/run-builder.js pack full",
     "pack:lean": "node scripts/run-builder.js pack lean",
     "pack:full": "node scripts/run-builder.js pack full",
+    "pack:compact": "node scripts/run-builder.js pack compact",
     "dist": "node scripts/run-builder.js dist full",
     "dist:lean": "node scripts/run-builder.js dist lean",
-    "dist:full": "node scripts/run-builder.js dist full"
+    "dist:full": "node scripts/run-builder.js dist full",
+    "dist:compact": "node scripts/run-builder.js dist compact"
   },
   "dependencies": {},
   "devDependencies": {

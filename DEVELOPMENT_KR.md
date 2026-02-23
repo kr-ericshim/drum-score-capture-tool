@@ -100,6 +100,12 @@
   - `desktop/package.json`의 기본 `npm run dist`로 빌드
   - `.venv` + `third_party`를 포함해 동작성 최상
   - 대략 1GB대 크기
+- 크기 최적화(full-compact) 빌드:
+  - `npm run dist:compact` 또는 `npm run pack:compact`
+  - `.venv`는 유지하면서 HAT 실험체크포인트/불필요 메타데이터만 제외
+  - 목표: 기본 full 대비 체감 15~35% 축소
+- `dist:compact`를 쓰더라도 업스케일, 오디오 분리, 비트 분석 기본 플래그는 동일하게 동작
+- 다만 HAT 기본 가중치 파일은 기본 번들에서 제외될 수 있어 최초 실행 시 별도 다운로드/세팅이 필요할 수 있음
 - 경량(lean) 빌드:
   - `npm run dist:lean` 또는 `npm run pack:lean`
   - `.venv`, `third_party`, `requirements*`, `scripts`를 제외해 설치본 크기 축소

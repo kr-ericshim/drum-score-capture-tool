@@ -6,8 +6,14 @@ const { spawnSync } = require("child_process");
 const [, , target = "dist", profileArg] = process.argv;
 const profile = (profileArg || process.env.DRUMSHEET_DIST_PROFILE || "full").toLowerCase();
 const action = target === "pack" ? "pack" : "dist";
+const supportedProfiles = new Set(["full", "compact", "lean"]);
 if (!["pack", "dist"].includes(action)) {
-  console.error("usage: node scripts/run-builder.js <pack|dist> <full|lean>");
+  console.error("usage: node scripts/run-builder.js <pack|dist> <full|compact|lean>");
+  process.exit(1);
+}
+if (!supportedProfiles.has(profile)) {
+  console.error(`[run-builder] unsupported profile: ${profile}`);
+  console.error("supported profiles: full | compact | lean");
   process.exit(1);
 }
 
