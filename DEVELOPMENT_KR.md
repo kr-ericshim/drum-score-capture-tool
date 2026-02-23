@@ -95,7 +95,18 @@
 - 비트 분석 추가:
   - `pip install -r backend/requirements-beat-this.txt`
 
-## 6. 우선순위 백로그
+## 6. 배포 용량 최적화
+- 기본(full) 빌드:
+  - `desktop/package.json`의 기본 `npm run dist`로 빌드
+  - `.venv` + `third_party`를 포함해 동작성 최상
+  - 대략 1GB대 크기
+- 경량(lean) 빌드:
+  - `npm run dist:lean` 또는 `npm run pack:lean`
+  - `.venv`, `third_party`, `requirements*`, `scripts`를 제외해 설치본 크기 축소
+  - 동작 전제: 사용자 시스템 Python에서 필요한 패키지가 별도 설치되어 있어야 함
+  - 경량 빌드에서 음원 분리/비트 분석은 `.venv` 미포함 환경에서는 의존성 오류 없이 실행되지 않으므로 배포 노트에 의존성 안내 필요
+
+## 8. 우선순위 백로그
 | ID | 우선순위 | 항목 | 상태 | 담당 |
 |---|---|---|---|---|
 | B-001 | P0 | 오디오 분리 페이지에 실시간 진행률(큐/실행/완료) 추가 | 진행 중 | 공동 |
@@ -106,13 +117,13 @@
 | B-006 | P2 | 프로젝트 저장/재열기 기능 | 대기 | 공동 |
 | B-007 | P0 | 비트 분석 결과를 타임라인 마커와 A-B 반복 연습으로 확장 | 진행 중 | 공동 |
 
-## 7. 결정 사항 (Decision Log)
+## 9. 결정 사항 (Decision Log)
 - D-001: 악보 캡처와 오디오 분리는 탭으로 분리해 UX 복잡도를 낮춘다.
 - D-002: 업스케일은 GPU 우선 원칙을 유지하고, 실행 불가 경로는 UI에서 비활성 처리한다.
 - D-003: 유튜브도 로컬과 동일하게 미니 플레이어 기반 구간 선택 흐름을 제공한다.
 - D-004: 유지보수를 위해 기능 모듈 분리를 우선한다. (단일 파일 집중 금지)
 
-## 8. 변경 이력
+## 10. 변경 이력
 | 날짜 | 작성 | 변경 내용 |
 |---|---|---|
 | 2026-02-22 | AI | 초기 문서 생성, 현재 기능/백로그/결정 사항 반영 |
@@ -123,12 +134,12 @@
 | 2026-02-22 | AI | 유튜브 다운로드 캐시를 preview/frame·jobs·audio/beat에 공통 적용, Stepper 자동 단계 이동 제거 |
 | 2026-02-22 | AI | ROI 프리뷰 요청 토큰 가드 및 소스 변경 시 ROI 초기화로 이전 영상 프레임이 섞이는 문제 완화 |
 
-## 9. 다음 액션
+## 11. 다음 액션
 - 1) 비트 마커 기반 A-B 반복 연습 기능 추가
 - 2) 비트 분석 모델 선택 가이드(정확도/속도) UI 문구 추가
 - 3) 오디오 분리 진행률/로그를 Job 방식으로 확장
 
-## 10. 자주 나오는 오류와 대응
+## 12. 자주 나오는 오류와 대응
 - `npm error enoent Could not read package.json`
   - 원인: `desktop` 폴더가 아닌 상위 폴더에서 실행
   - 조치: `cd score_capture_program/desktop && npm start`
@@ -153,7 +164,7 @@
       - `DRUMSHEET_FFPROBE_BIN=<절대경로>\ffprobe.exe`
     - `python scripts/doctor.py`에서 `ffmpeg_resolved`, `ffprobe_resolved` 값 확인
 
-## 11. 점검 스크립트
+## 13. 점검 스크립트
 - 경로: `backend/scripts/doctor.py`
 - 목적: 명령어(ffmpeg/ffprobe/yt-dlp), 필수/옵션 모듈, torch 장치, 앱 런타임 가속 상태를 한 번에 점검
 - 실행:

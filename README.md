@@ -235,9 +235,20 @@ Packaging (MVP)
 cd desktop
 npm run dist
 ```
+- 기본(full) 패키지: Python 런타임(.venv)과 HAT 연동 소스 모두 포함 (용량 큼)
+```bash
+cd desktop
+npm run dist:full
+```
+- 축소(lean) 패키지: `.venv`와 `third_party`를 번들에서 제외해서 용량 감소 (실행 시 사용자 Python에 의존)
+```bash
+cd desktop
+npm run dist:lean
+```
 - Output:
   - Windows: `.exe` installer from `../dist`
   - macOS: `.dmg` from `../dist`
+- 참고: 현재 기준으로 full 빌드 예시가 약 1.2GB, lean 빌드는 환경에 따라 300~500MB 수준으로 내려갈 수 있음.
 
 Backend Runtime
 - The desktop app currently expects a local Python runtime and will try:

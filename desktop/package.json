@@ -5,8 +5,12 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "pack": "electron-builder --dir",
-    "dist": "electron-builder"
+    "pack": "node scripts/run-builder.js pack full",
+    "pack:lean": "node scripts/run-builder.js pack lean",
+    "pack:full": "node scripts/run-builder.js pack full",
+    "dist": "node scripts/run-builder.js dist full",
+    "dist:lean": "node scripts/run-builder.js dist lean",
+    "dist:full": "node scripts/run-builder.js dist full"
   },
   "dependencies": {},
   "devDependencies": {
@@ -23,7 +27,43 @@
     "extraResources": [
       {
         "from": "../backend",
-        "to": "backend"
+        "to": "backend",
+        "filter": [
+          "**/*",
+          "!jobs",
+          "!jobs/**/*",
+          "!output",
+          "!output/**/*",
+          "!**/__pycache__",
+          "!**/__pycache__/**",
+          "!**/.pytest_cache",
+          "!**/.pytest_cache/**",
+          "!**/*.log",
+          "!**/.git",
+          "!**/.git/**",
+          "!third_party/HAT/results",
+          "!third_party/HAT/results/**",
+          "!third_party/BasicSR/.github",
+          "!third_party/BasicSR/.github/**",
+          "!third_party/BasicSR/docs",
+          "!third_party/BasicSR/docs/**",
+          "!third_party/BasicSR/assets",
+          "!third_party/BasicSR/assets/**",
+          "!third_party/BasicSR/colab",
+          "!third_party/BasicSR/colab/**",
+          "!third_party/BasicSR/experiments",
+          "!third_party/BasicSR/experiments/**",
+          "!third_party/BasicSR/sets",
+          "!third_party/BasicSR/sets/**",
+          "!third_party/BasicSR/scripts",
+          "!third_party/BasicSR/scripts/**",
+          "!third_party/BasicSR/tests",
+          "!third_party/BasicSR/tests/**",
+          "!third_party/BasicSR/test_scripts",
+          "!third_party/BasicSR/test_scripts/**",
+          "!third_party/BasicSR/datasets",
+          "!third_party/BasicSR/datasets/**"
+        ]
       }
     ],
     "directories": {
