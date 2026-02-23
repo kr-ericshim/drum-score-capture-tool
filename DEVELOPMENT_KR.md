@@ -1,6 +1,6 @@
 # Drum Score Capture Tool 개발 운영 문서
 
-마지막 갱신: 2026-02-22  
+마지막 갱신: 2026-02-23  
 문서 목적: 현재 개발 상태, 결정 사항, 개선 백로그를 한 곳에서 관리하기 위한 공용 문서
 
 ## 1. 사용 규칙
@@ -40,6 +40,7 @@
 - 수동 ROI 편집 위치를 옵션 카드 근처로 이동
 - 상단 가속 상태 카드 추가 (CPU/GPU/장치명/엔진 표시)
 - 탭형 메뉴 추가 (`악보 캡처`, `드럼 음원 분리`)
+- 초보자용 원클릭 설치/실행 런처 추가 (`easy_setup_*.command/.bat`, `run_app_*.command/.bat`)
 
 ### 3-3. 가속/성능
 - FFmpeg: GPU 우선, 실패 시 CPU 폴백
@@ -87,6 +88,12 @@
 - 유튜브 입력은 정책/네트워크/코덱 이슈로 실패 가능성이 있다.
 
 ## 5. 필수 설치 체크
+- 초보자 원클릭 설치 진입점:
+  - macOS: `easy_setup_mac.command` 실행
+  - Windows: `easy_setup_windows.bat` 실행
+- 초보자 원클릭 실행:
+  - macOS: `run_app_mac.command` 실행
+  - Windows: `run_app_windows.bat` 실행
 - 기본 백엔드:
   - `pip install -r backend/requirements.txt`
 - 오디오 분리 추가:
@@ -139,6 +146,7 @@
 | 2026-02-22 | AI | torch 런타임 진단 추가(오디오 GPU 분리 표기), CUDA 미탐지 원인 코드(`torch_gpu_reason`) 노출 |
 | 2026-02-22 | AI | 유튜브 다운로드 캐시를 preview/frame·jobs·audio/beat에 공통 적용, Stepper 자동 단계 이동 제거 |
 | 2026-02-22 | AI | ROI 프리뷰 요청 토큰 가드 및 소스 변경 시 ROI 초기화로 이전 영상 프레임이 섞이는 문제 완화 |
+| 2026-02-23 | AI | 컴맹 모드 원클릭 설치/실행 스크립트 추가(macOS/Windows) + README 초간단 설치 동선 추가 |
 
 ## 11. 다음 액션
 - 1) 비트 마커 기반 A-B 반복 연습 기능 추가

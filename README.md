@@ -6,6 +6,26 @@ Architecture
 - `desktop/`: Electron app (renderer + main process, plain HTML/CSS/JS for MVP UI)
 - `backend/`: FastAPI processing engine (Python 3.11+, OpenCV + FFmpeg)
 
+Beginner One-Click Setup (recommended)
+
+If you are not familiar with terminal commands, use the launcher files in project root.
+
+0. Install prerequisites once
+- Python `3.11` (64-bit)
+- Node.js `LTS` (includes `npm`)
+
+1. Setup (one time)
+- macOS: double click `easy_setup_mac.command`
+- Windows: double click `easy_setup_windows.bat`
+
+2. Run app
+- macOS: double click `run_app_mac.command`
+- Windows: double click `run_app_windows.bat`
+
+Notes
+- First setup can take time (torch/demucs/beat dependencies are large).
+- On Windows with NVIDIA GPU, setup script installs CUDA torch build automatically when `nvidia-smi` is available.
+
 Quick Start
 
 1. Install backend dependencies
