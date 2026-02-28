@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld("drumSheetAPI", {
   selectAudioSourceFile: () => ipcRenderer.invoke("select-audio-source-file"),
   openPath: (targetPath) => ipcRenderer.invoke("open-path", targetPath),
   copyText: (text) => ipcRenderer.invoke("copy-text", text),
+  setAlwaysOnTop: (enabled) => ipcRenderer.invoke("set-always-on-top", enabled),
+  getAlwaysOnTop: () => ipcRenderer.invoke("get-always-on-top"),
   getBackendState: () => ipcRenderer.invoke("get-backend-state"),
   restartBackend: () => ipcRenderer.invoke("restart-backend"),
   runGuidedSetup: () => ipcRenderer.invoke("run-guided-setup"),

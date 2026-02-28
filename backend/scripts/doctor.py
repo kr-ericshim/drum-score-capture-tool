@@ -197,11 +197,6 @@ def main() -> int:
     for module in uvr_modules:
         print_item(module, "ok" if has_module(module) else "missing")
 
-    print_section("옵션 모듈 - 비트 분석")
-    beat_modules = ["beat_this", "soxr", "rotary_embedding_torch", "torchcodec", "torchaudio", "soundfile"]
-    for module in beat_modules:
-        print_item(module, "ok" if has_module(module) else "missing")
-
     print_section("Torch 장치")
     check_torch()
     check_torchaudio_smoke()

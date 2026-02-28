@@ -64,24 +64,9 @@
   - 재생 속도 조절
   - stem별 볼륨 믹서
 
-### 3-5. 비트 분석 (Beat This!)
-- 비트 분석 API: `POST /audio/beat-track`
-- 입력:
-  - 분리된 stem 경로 직접 분석(권장)
-  - 또는 원본 소스(file/youtube)에서 오디오 추출 후 분석
-- 출력:
-  - beats/downbeats 시각(초)
-  - 추정 BPM
-  - `.beats` 파일 저장(옵션)
-- UI:
-  - `비트 분석 실행` 버튼
-  - 모델 선택(`small0`, `final0`)
-  - 타임라인 비트/다운비트 마커 표시
-
 ## 4. 현재 제약/주의 사항
 - 오디오 분리는 `demucs`, `torch`, `torchaudio` 설치가 필요하다.
 - 오디오 분리는 `torchcodec`도 필요하다.
-- 비트 분석은 `beat_this`, `soxr`, `rotary-embedding-torch` 설치가 필요하다.
 - `GPU 전용` 옵션 사용 시 CUDA/MPS 미감지 환경에서 작업 실패가 정상이다.
 - 상단 런타임의 GPU 감지(FFmpeg/OpenCV)와 오디오 분리 GPU(torch CUDA/MPS)는 기준이 다를 수 있다.
 - macOS 환경에서도 `scale_vt`가 시스템/ffmpeg 빌드 상태에 따라 비활성일 수 있다.
@@ -100,8 +85,6 @@
 - 오디오 분리 추가:
   - `pip install -r backend/requirements-uvr.txt`
   - `pip install torch torchaudio torchcodec`
-- 비트 분석 추가:
-  - `pip install -r backend/requirements-beat-this.txt`
 
 ## 6. 배포 용량 최적화
 - 기본(full) 빌드:
@@ -112,13 +95,13 @@
   - `npm run dist:compact` 또는 `npm run pack:compact`
   - `.venv`는 유지하면서 HAT 실험체크포인트/불필요 메타데이터만 제외
   - 목표: 기본 full 대비 체감 15~35% 축소
-- `dist:compact`를 쓰더라도 업스케일, 오디오 분리, 비트 분석 기본 플래그는 동일하게 동작
+- `dist:compact`를 쓰더라도 업스케일, 오디오 분리 기본 플래그는 동일하게 동작
 - 다만 HAT 기본 가중치 파일은 기본 번들에서 제외될 수 있어 최초 실행 시 별도 다운로드/세팅이 필요할 수 있음
 - 경량(lean) 빌드:
   - `npm run dist:lean` 또는 `npm run pack:lean`
   - `.venv`, `third_party`, `requirements*`, `scripts`를 제외해 설치본 크기 축소
   - 동작 전제: 사용자 시스템 Python에서 필요한 패키지가 별도 설치되어 있어야 함
-  - 경량 빌드에서 음원 분리/비트 분석은 `.venv` 미포함 환경에서는 의존성 오류 없이 실행되지 않으므로 배포 노트에 의존성 안내 필요
+  - 경량 빌드에서 음원 분리는 `.venv` 미포함 환경에서는 의존성 오류 없이 실행되지 않으므로 배포 노트에 의존성 안내 필요
 
 ## 8. 우선순위 백로그
 | ID | 우선순위 | 항목 | 상태 | 담당 |
@@ -129,7 +112,6 @@
 | B-004 | P1 | 캡처 결과 이미지 품질 튜닝 프리셋(선명/균형/원본) | 대기 | 공동 |
 | B-005 | P1 | 수동 ROI 편집을 모달화(스크롤 최소화) | 대기 | 공동 |
 | B-006 | P2 | 프로젝트 저장/재열기 기능 | 대기 | 공동 |
-| B-007 | P0 | 비트 분석 결과를 타임라인 마커와 A-B 반복 연습으로 확장 | 진행 중 | 공동 |
 
 ## 9. 결정 사항 (Decision Log)
 - D-001: 악보 캡처와 오디오 분리는 탭으로 분리해 UX 복잡도를 낮춘다.
@@ -141,19 +123,18 @@
 | 날짜 | 작성 | 변경 내용 |
 |---|---|---|
 | 2026-02-22 | AI | 초기 문서 생성, 현재 기능/백로그/결정 사항 반영 |
-| 2026-02-22 | AI | 내장 stem 플레이어(속도/볼륨) 및 Beat This! 비트 분석 API/UI 반영 |
+| 2026-02-22 | AI | 내장 stem 플레이어(속도/볼륨) UI 반영 |
 | 2026-02-22 | AI | null.value 방어 패치, 환경 점검 스크립트(`doctor.py`) 및 오류 대응 가이드 추가 |
 | 2026-02-22 | AI | ffmpeg/ffprobe 절대 경로 resolver 추가(Windows 상대 경로 오류 대응), 오디오/추출/업스케일 호출부 공통 적용 |
 | 2026-02-22 | AI | torch 런타임 진단 추가(오디오 GPU 분리 표기), CUDA 미탐지 원인 코드(`torch_gpu_reason`) 노출 |
-| 2026-02-22 | AI | 유튜브 다운로드 캐시를 preview/frame·jobs·audio/beat에 공통 적용, Stepper 자동 단계 이동 제거 |
+| 2026-02-22 | AI | 유튜브 다운로드 캐시를 preview/frame·jobs·audio/separate에 공통 적용, Stepper 자동 단계 이동 제거 |
 | 2026-02-22 | AI | ROI 프리뷰 요청 토큰 가드 및 소스 변경 시 ROI 초기화로 이전 영상 프레임이 섞이는 문제 완화 |
 | 2026-02-23 | AI | 컴맹 모드 원클릭 설치/실행 스크립트 추가(macOS/Windows) + README 초간단 설치 동선 추가 |
 | 2026-02-23 | AI | 앱 내부 GUI 원클릭 설치/복구 및 백엔드 재연결 버튼 추가, 로그/상태 표시 연동 |
 
 ## 11. 다음 액션
-- 1) 비트 마커 기반 A-B 반복 연습 기능 추가
-- 2) 비트 분석 모델 선택 가이드(정확도/속도) UI 문구 추가
-- 3) 오디오 분리 진행률/로그를 Job 방식으로 확장
+- 1) 오디오 분리 진행률/로그를 Job 방식으로 확장
+- 2) 오디오 분리 모델별 품질/속도 가이드 문구 고도화
 
 ## 12. 자주 나오는 오류와 대응
 - `npm error enoent Could not read package.json`
@@ -168,7 +149,7 @@
   - 조치: `pip install -r backend/requirements-uvr.txt` (반드시 `backend/.venv` 활성 상태)
 - `TorchCodec is required for save_with_torchcodec`
   - 조치: `pip install torchcodec`
-- `Audio/Beat GPU 전용, but CUDA/MPS is not available`
+- `Audio GPU 전용, but CUDA/MPS is not available`
   - 조치:
     - GPU 전용 옵션 해제 후 실행
     - `python scripts/doctor.py`에서 `torch.mps.is_available` 또는 `torch.cuda.is_available` 확인

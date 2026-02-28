@@ -1,4 +1,0 @@
-soxr>=1.0.0
-rotary-embedding-torch>=0.8.0
-beat-this @ git+https://github.com/CPJKU/beat_this.git
-soundfile>=0.12.0

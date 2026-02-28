@@ -61,6 +61,20 @@ class JobStore:
         with self._lock:
             return self._jobs.get(job_id)
 
+    def active_job_ids(self) -> List[str]:
+        with self._lock:
+            return [
+                job_id
+                for job_id, job in self._jobs.items()
+                if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}
+            ]
+
+    def clear_all(self) -> int:
+        with self._lock:
+            count = len(self._jobs)
+            self._jobs.clear()
+            return count
+
     def log(self, job_id: str, message: str) -> None:
         with self._lock:
             job = self._jobs.get(job_id)

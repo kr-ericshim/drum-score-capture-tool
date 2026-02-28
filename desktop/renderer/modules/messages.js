@@ -8,7 +8,7 @@ export function friendlyStepName(step) {
     detecting: "영역 적용 중",
     rectifying: "화면 보정 중",
     stitching: "페이지 정리 중",
-    separating_audio: "드럼 음원 분리 중",
+    separating_audio: "악보 처리 중",
     upscaling: "해상도 올리는 중",
     exporting: "파일 저장 중",
     failed: "실패",
@@ -40,8 +40,8 @@ export function friendlyMessage(message) {
     .replace("running ffmpeg extract (", "ffmpeg 프레임 추출 (")
     .replace("running ffmpeg preview extraction", "ffmpeg 미리보기 추출 시작")
     .replace("frame extraction completed", "영상 장면 추출 완료")
-    .replace("starting audio separation", "드럼 음원 분리 시작")
-    .replace("audio separation completed", "드럼 음원 분리 완료")
+    .replace("starting audio separation", "추가 처리 시작")
+    .replace("audio separation completed", "추가 처리 완료")
     .replace("audio separation request accepted:", "오디오 분리 요청 접수:")
     .replace("audio source ready:", "오디오 입력 준비 완료:")
     .replace("audio source cache hit: youtube preview cache reused", "오디오 소스: 유튜브 캐시 재사용")
@@ -70,23 +70,6 @@ export function friendlyMessage(message) {
     .replace("demucs is not installed. Install optional dependency and retry.", "demucs가 설치되지 않았어요. optional dependency 설치 후 다시 시도해 주세요.")
     .replace("torch is not installed. Install torch for demucs and retry.", "torch가 설치되지 않았어요. demucs용 torch를 설치해 주세요.")
     .replace("torchcodec is not installed. Install torchcodec and retry.", "torchcodec이 설치되지 않았어요. backend 가상환경에 torchcodec 설치 후 다시 시도해 주세요.")
-    .replace("beat_this is not installed. Install optional dependency and retry.", "beat_this가 설치되지 않았어요. requirements-beat-this 설치 후 다시 시도해 주세요.")
-    .replace("soxr is not installed. Install soxr and retry.", "soxr가 설치되지 않았어요. soxr 설치 후 다시 시도해 주세요.")
-    .replace("rotary-embedding-torch is not installed. Install it and retry.", "rotary-embedding-torch가 설치되지 않았어요. 설치 후 다시 시도해 주세요.")
-    .replace("Beat tracking requires GPU, but CUDA/MPS is not available.", "GPU 전용 모드인데 비트 분석용 GPU(CUDA/MPS)를 찾지 못했어요.")
-    .replace("beat tracking stage: prepare audio input", "비트 분석 단계: 오디오 입력 준비")
-    .replace("beat tracking input prepared:", "비트 분석 입력 준비 완료:")
-    .replace("beat tracking stage: run model inference", "비트 분석 단계: 모델 추론 실행")
-    .replace("beat tracking torch runtime:", "비트 분석 torch 상태:")
-    .replace("beat tracking inference completed in", "비트 분석 추론 완료(소요)")
-    .replace("beat tracking tsv saved:", "비트 분석 파일 저장:")
-    .replace("beat tracking input selected:", "비트 분석 입력 선택:")
-    .replace("beat tracking source audio extracted:", "비트 분석용 오디오 추출 완료:")
-    .replace("beat tracking source cache hit: youtube preview cache reused", "비트 분석 소스: 유튜브 캐시 재사용")
-    .replace("beat tracking source cache miss: youtube downloaded and cached", "비트 분석 소스: 유튜브 다운로드 후 캐시 저장")
-    .replace("beat tracking model=", "비트 분석 설정: model=")
-    .replace("beat tracking result:", "비트 분석 결과:")
-    .replace("beat_this import failed:", "beat_this 로드 실패:")
     .replace("Audio separation requires GPU, but CUDA/MPS is not available.", "GPU 전용 모드인데 GPU(CUDA/MPS)를 찾지 못했어요. GPU 전용을 끄고 다시 실행해 주세요.")
     .replace("gpu_reason=cuda_build_missing", "원인: CUDA 빌드가 아닌 torch 설치")
     .replace("gpu_reason=cuda_no_visible_device", "원인: CUDA 장치가 torch에 보이지 않음")
@@ -143,6 +126,9 @@ export function friendlyMessage(message) {
     .replace("rectification completed", "화면 보정 완료")
     .replace("stitching completed", "페이지 정리 완료")
     .replace("export finished", "파일 저장 완료")
+    .replace("review export finished", "검토 반영 저장 완료")
+    .replace("review export saved:", "검토 반영 저장:")
+    .replace("capture crop saved", "캡쳐 자르기 저장 완료")
     .replace("job failed:", "작업 실패:")
     .replace("job failed", "작업 실패")
     .replace("job source cache hit: youtube preview cache reused", "작업 소스: 유튜브 캐시 재사용")
@@ -169,7 +155,20 @@ export function friendlyMessage(message) {
 export function friendlyStatusText(step, message) {
   const stepText = friendlyStepName(step);
   const msgText = friendlyMessage(message);
-  return msgText ? `${stepText}: ${msgText}` : stepText;
+  const guideMap = {
+    queued: "작업 순서를 기다리고 있어요.",
+    initializing: "영상 정보를 읽고 있어요.",
+    detecting: "영상에서 필요한 장면을 고르고 있어요.",
+    rectifying: "악보 모양을 가지런하게 맞추고 있어요.",
+    stitching: "페이지를 이어붙이고 겹침을 정리하고 있어요.",
+    upscaling: "글자를 더 또렷하게 만들고 있어요.",
+    exporting: "파일로 저장하고 있어요.",
+    done: "완료됐어요. 결과를 확인해 보세요.",
+    failed: "중간에 문제가 생겼어요. 안내 문구를 확인해 주세요.",
+  };
+  const technicalPattern = /(ffmpeg|opencv|torch|cuda|mps|demucs|layout|hat_|scale_vt|gpu|cpu|runtime|engine|profile|dedupe|threshold|roi|fps|cache)/i;
+  const detail = msgText && !technicalPattern.test(msgText) ? msgText : guideMap[String(step || "").toLowerCase()] || "";
+  return detail ? `${stepText}: ${detail}` : stepText;
 }
 
 export function friendlyApiError(detail) {
@@ -227,13 +226,14 @@ export function friendlyApiError(detail) {
     "demucs is not installed. Install optional dependency and retry.": "demucs가 설치되지 않았어요. optional dependency 설치 후 다시 시도해 주세요.",
     "torch is not installed. Install torch for demucs and retry.": "torch가 설치되지 않았어요. demucs용 torch를 설치해 주세요.",
     "torchcodec is not installed. Install torchcodec and retry.": "torchcodec이 설치되지 않았어요. backend 가상환경에 torchcodec 설치 후 다시 시도해 주세요.",
-    "beat_this is not installed. Install optional dependency and retry.": "beat_this가 설치되지 않았어요. requirements-beat-this 설치 후 다시 시도해 주세요.",
-    "soxr is not installed. Install soxr and retry.": "soxr가 설치되지 않았어요. soxr 설치 후 다시 시도해 주세요.",
-    "rotary-embedding-torch is not installed. Install it and retry.": "rotary-embedding-torch가 설치되지 않았어요. 설치 후 다시 시도해 주세요.",
-    "Beat tracking requires GPU, but CUDA/MPS is not available.": "GPU 전용 모드인데 비트 분석용 GPU(CUDA/MPS)를 찾지 못했어요.",
-    "audio_path does not exist": "선택된 분석 오디오 파일을 찾을 수 없어요. 음원 분리를 다시 실행해 주세요.",
     "audio separation supports only mp3, wav, mp4 for local files": "오디오 분리는 로컬 파일 기준 mp3, wav, mp4만 지원해요.",
-    "soundfile is not installed. Install soundfile and retry.": "soundfile이 설치되지 않았어요. requirements-beat-this 또는 `pip install soundfile`로 설치 후 다시 시도해 주세요.",
+    "keep_captures must include at least one capture": "검토 반영할 캡쳐를 최소 1개 선택해 주세요.",
+    "no valid captures selected": "선택한 캡쳐를 찾지 못했어요. 다시 선택해 주세요.",
+    "roi is too small for capture crop": "영역이 너무 작아요. 캡쳐에서 조금 더 크게 지정해 주세요.",
+    "capture crop produced empty image": "선택한 영역에서 이미지를 만들지 못했어요. 영역을 다시 지정해 주세요.",
+    "failed to save cropped capture": "자른 캡쳐 저장에 실패했어요. 다시 시도해 주세요.",
+    "job is still running": "작업이 아직 진행 중이라 검토 반영을 할 수 없어요. 완료 후 다시 시도해 주세요.",
+    "cache clear is blocked while jobs are running": "작업이 진행 중일 때는 캐시를 비울 수 없어요. 완료 후 다시 시도해 주세요.",
   };
 
   if (typeof detail === "string" && detail.startsWith("preview frame extraction failed:")) {
@@ -246,10 +246,18 @@ export function friendlyApiError(detail) {
     const reason = detail.replace("audio separation failed:", "").trim();
     return reason ? `오디오 분리 실패: ${reason}` : "오디오 분리에 실패했어요.";
   }
-  if (typeof detail === "string" && detail.startsWith("beat tracking failed:")) {
-    const reason = detail.replace("beat tracking failed:", "").trim();
-    return reason ? `비트 분석 실패: ${reason}` : "비트 분석에 실패했어요.";
+  if (typeof detail === "string" && detail.startsWith("review export failed:")) {
+    const reason = detail.replace("review export failed:", "").trim();
+    return reason ? `검토 반영 저장 실패: ${reason}` : "검토 반영 저장에 실패했어요.";
   }
-
+  if (typeof detail === "string" && detail.startsWith("capture path must be inside this job directory:")) {
+    return "현재 작업에서 생성된 캡쳐만 다시 자를 수 있어요. 결과를 새로고침한 뒤 다시 시도해 주세요.";
+  }
+  if (typeof detail === "string" && detail.startsWith("capture file not found:")) {
+    return "선택한 캡쳐 파일을 찾지 못했어요. 결과를 다시 생성한 뒤 시도해 주세요.";
+  }
+  if (typeof detail === "string" && detail.startsWith("unsupported capture format:")) {
+    return "이 캡쳐 형식은 다시 자르기를 지원하지 않습니다. PNG/JPG 결과에서 시도해 주세요.";
+  }
   return map[detail] || detail;
 }

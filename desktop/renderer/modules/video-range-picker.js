@@ -25,6 +25,9 @@ export function createVideoRangePicker({ sourceType, onRangeChange = null }) {
   const setStartButton = el("setStartAtCurrent");
   const setEndButton = el("setEndAtCurrent");
   const clearRangeButton = el("clearRange");
+  const playPauseButton = el("videoPlayPause");
+  const back5Button = el("videoBack5");
+  const forward5Button = el("videoForward5");
 
   if (!container || !video || !seekSlider || !startSlider || !endSlider || !startInput || !endInput) {
     return {
@@ -41,6 +44,39 @@ export function createVideoRangePicker({ sourceType, onRangeChange = null }) {
   let startTouched = false;
   let endTouched = false;
   let syncing = false;
+
+  function updatePlayPauseLabel() {
+    if (!playPauseButton) {
+      return;
+    }
+    playPauseButton.textContent = video.paused ? "재생" : "일시정지";
+  }
+
+  function seekBy(deltaSec) {
+    if (!hasMedia) {
+      return;
+    }
+    const next = clamp((video.currentTime || 0) + deltaSec, 0, durationSec || 0);
+    video.currentTime = next;
+    seekSlider.value = String(next);
+    updateTimeLabels(next);
+  }
+
+  async function togglePlayPause() {
+    if (!hasMedia) {
+      return;
+    }
+    if (video.paused) {
+      try {
+        await video.play();
+      } catch (_) {
+        // ignore autoplay failure; user can retry with an explicit click.
+      }
+    } else {
+      video.pause();
+    }
+    updatePlayPauseLabel();
+  }
 
   function notifyRangeChange() {
     if (typeof onRangeChange !== "function") {
@@ -61,7 +97,7 @@ export function createVideoRangePicker({ sourceType, onRangeChange = null }) {
   }
 
   function setControlsDisabled(disabled) {
-    video.controls = !disabled;
+    video.controls = false;
     seekSlider.disabled = disabled;
     startSlider.disabled = disabled;
     endSlider.disabled = disabled;
@@ -74,6 +110,19 @@ export function createVideoRangePicker({ sourceType, onRangeChange = null }) {
     if (clearRangeButton) {
       clearRangeButton.disabled = disabled;
     }
+    if (playPauseButton) {
+      playPauseButton.disabled = disabled;
+    }
+    if (back5Button) {
+      back5Button.disabled = disabled;
+    }
+    if (forward5Button) {
+      forward5Button.disabled = disabled;
+    }
+    if (disabled) {
+      video.pause();
+    }
+    updatePlayPauseLabel();
   }
 
   function updateTimeLabels(current) {
@@ -153,6 +202,7 @@ export function createVideoRangePicker({ sourceType, onRangeChange = null }) {
     container.style.display = isVisible ? "block" : "none";
     if (!isVisible) {
       video.pause();
+      updatePlayPauseLabel();
       return;
     }
     if (!hasMedia) {
@@ -228,6 +278,7 @@ export function createVideoRangePicker({ sourceType, onRangeChange = null }) {
     endSlider.value = String(durationSec);
     updateTimeLabels(0);
     setControlsDisabled(false);
+    updatePlayPauseLabel();
     setHint("플레이어를 재생하거나 슬라이더를 움직여 원하는 구간을 빠르게 설정하세요.");
     notifyRangeChange();
   });
@@ -239,6 +290,13 @@ export function createVideoRangePicker({ sourceType, onRangeChange = null }) {
   video.addEventListener("error", () => {
     resetMediaState();
     setHint("이 영상은 미리보기 재생이 어렵습니다. 시작/끝 시간을 직접 입력해 주세요.");
+  });
+
+  video.addEventListener("play", updatePlayPauseLabel);
+  video.addEventListener("pause", updatePlayPauseLabel);
+  video.addEventListener("ended", updatePlayPauseLabel);
+  video.addEventListener("click", () => {
+    togglePlayPause();
   });
 
   seekSlider.addEventListener("input", () => {
@@ -329,6 +387,24 @@ export function createVideoRangePicker({ sourceType, onRangeChange = null }) {
         endSlider.value = "0";
       }
       notifyRangeChange();
+    });
+  }
+
+  if (playPauseButton) {
+    playPauseButton.addEventListener("click", () => {
+      togglePlayPause();
+    });
+  }
+
+  if (back5Button) {
+    back5Button.addEventListener("click", () => {
+      seekBy(-5);
+    });
+  }
+
+  if (forward5Button) {
+    forward5Button.addEventListener("click", () => {
+      seekBy(5);
     });
   }
 

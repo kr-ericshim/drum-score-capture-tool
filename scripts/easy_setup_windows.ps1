@@ -60,9 +60,8 @@ function Install-Backend {
   Write-Host "[2/4] Core backend dependencies" -ForegroundColor Yellow
   & $venvPython -m pip install -r (Join-Path $BackendDir "requirements.txt")
 
-  Write-Host "[3/4] Optional audio/beat dependencies" -ForegroundColor Yellow
+  Write-Host "[3/4] Optional audio dependencies" -ForegroundColor Yellow
   & $venvPython -m pip install -r (Join-Path $BackendDir "requirements-uvr.txt")
-  & $venvPython -m pip install -r (Join-Path $BackendDir "requirements-beat-this.txt")
 
   $hasNvidia = $false
   try {

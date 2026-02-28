@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 LayoutHint = Literal["auto", "bottom_bar", "full_scroll", "page_turn"]
 CaptureSensitivity = Literal["low", "medium", "high"]
 DedupeLevel = Literal["aggressive", "normal", "sensitive"]
+PageFillMode = Literal["balanced", "performance"]
 
 
 class ExtractOptions(BaseModel):
@@ -80,6 +81,7 @@ class ExportOptions(BaseModel):
     formats: List[Literal["png", "jpg", "jpeg", "pdf"]] = Field(default_factory=lambda: ["png", "pdf"])
     output_dir: Optional[str] = None
     include_raw_frames: bool = False
+    page_fill_mode: PageFillMode = "performance"
 
 
 class AudioSeparationOptions(BaseModel):
@@ -128,6 +130,30 @@ class JobFileResponse(BaseModel):
     pdf: Optional[str]
 
 
+class JobReviewExportRequest(BaseModel):
+    keep_captures: List[str] = Field(default_factory=list)
+    keep_images: List[str] = Field(default_factory=list)
+    formats: Optional[List[Literal["png", "jpg", "jpeg", "pdf"]]] = None
+
+
+class JobReviewExportResponse(BaseModel):
+    images: List[str] = Field(default_factory=list)
+    pdf: Optional[str] = None
+    output_dir: str
+    kept_count: int = 0
+
+
+class CaptureCropRequest(BaseModel):
+    capture_path: str
+    roi: List[List[float]] = Field(default_factory=list)
+
+
+class CaptureCropResponse(BaseModel):
+    capture_path: str
+    width: int
+    height: int
+
+
 class PreviewFrameRequest(BaseModel):
     source_type: Literal["file", "youtube"]
     file_path: Optional[str] = None
@@ -173,46 +199,6 @@ class AudioSeparateResponse(BaseModel):
     log_tail: List[str] = Field(default_factory=list)
 
 
-class BeatTrackOptions(BaseModel):
-    model: str = "small0"
-    gpu_only: bool = False
-    use_dbn: bool = False
-    float16: bool = False
-    save_tsv: bool = True
-
-
-class AudioBeatTrackRequest(BaseModel):
-    source_type: Literal["file", "youtube"] = "file"
-    file_path: Optional[str] = None
-    youtube_url: Optional[str] = None
-    audio_path: Optional[str] = None
-    options: BeatTrackOptions = Field(default_factory=BeatTrackOptions)
-
-    @model_validator(mode="after")
-    def validate_source(self):
-        if self.audio_path:
-            return self
-        if self.source_type == "file" and not self.file_path:
-            raise ValueError("file_path is required when source_type is file")
-        if self.source_type == "youtube" and not self.youtube_url:
-            raise ValueError("youtube_url is required when source_type is youtube")
-        return self
-
-
-class AudioBeatTrackResponse(BaseModel):
-    audio_path: str
-    beats: List[float] = Field(default_factory=list)
-    downbeats: List[float] = Field(default_factory=list)
-    beat_count: int = 0
-    downbeat_count: int = 0
-    bpm: Optional[float] = None
-    model: str
-    device: str
-    beat_tsv: Optional[str] = None
-    beat_tsv_url: Optional[str] = None
-    log_tail: List[str] = Field(default_factory=list)
-
-
 class RuntimeStatusResponse(BaseModel):
     overall_mode: Literal["gpu", "cpu"]
     ffmpeg_mode: str
@@ -234,3 +220,17 @@ class RuntimeStatusResponse(BaseModel):
     torch_mps_available: bool = False
     torch_python: Optional[str] = None
     torch_gpu_reason: str = "unknown"
+
+
+class CacheClearResponse(BaseModel):
+    cleared_paths: int = 0
+    cleared_jobs: int = 0
+    reclaimed_bytes: int = 0
+    reclaimed_human: str = "0 B"
+    skipped_paths: List[str] = Field(default_factory=list)
+
+
+class CacheUsageResponse(BaseModel):
+    total_paths: int = 0
+    total_bytes: int = 0
+    total_human: str = "0 B"

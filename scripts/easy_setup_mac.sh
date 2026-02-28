@@ -54,9 +54,8 @@ install_backend() {
   echo "[2/4] Core backend dependencies"
   "${venv_py}" -m pip install -r "${BACKEND_DIR}/requirements.txt"
 
-  echo "[3/4] Optional audio/beat dependencies"
+  echo "[3/4] Optional audio dependencies"
   "${venv_py}" -m pip install -r "${BACKEND_DIR}/requirements-uvr.txt"
-  "${venv_py}" -m pip install -r "${BACKEND_DIR}/requirements-beat-this.txt"
   "${venv_py}" -m pip install torch torchaudio torchcodec "soundfile>=0.12.0"
 
   echo "[4/4] Runtime check"

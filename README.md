@@ -28,7 +28,7 @@ If you are not familiar with terminal commands, use the launcher files in projec
 - You can also click `백엔드 다시 연결`.
 
 Notes
-- First setup can take time (torch/demucs/beat dependencies are large).
+- First setup can take time (torch/demucs dependencies are large).
 - On Windows with NVIDIA GPU, setup script installs CUDA torch build automatically when `nvidia-smi` is available.
 
 Quick Start
@@ -48,17 +48,6 @@ cd score_capture_program/backend
 source .venv/bin/activate
 python -m pip install -r requirements-uvr.txt
 python -m pip install torch torchaudio torchcodec
-```
-
-Optional: Beat tracking (Beat This!)
-```bash
-cd score_capture_program/backend
-source .venv/bin/activate
-python -m pip install -r requirements-beat-this.txt
-# 일부 환경에서 soundfile이 누락될 수 있어 함께 설치하세요.
-python -m pip install soundfile>=0.12.0
-# Optional (higher DBN precision on supported env)
-python -m pip install madmom
 ```
 
 2. Install desktop dependencies
@@ -93,12 +82,6 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --index-url https://download.pytorch.org/whl/cu128 torch torchaudio
 .\.venv\Scripts\python.exe -m pip install torchcodec
 
-# Beat tracking
-.\.venv\Scripts\python.exe -m pip install -r requirements-beat-this.txt
-# 일부 환경에서 soundfile이 누락될 수 있어 함께 설치하세요.
-.\.venv\Scripts\python.exe -m pip install soundfile>=0.12.0
-# Optional (DBN precision on supported env)
-.\.venv\Scripts\python.exe -m pip install madmom
 ```
 
 3. Move to desktop and install Node packages
@@ -134,9 +117,6 @@ Windows Notes
 - Always run `npm start` inside `score_capture_program\\desktop`.
 
 운영 영향 변경사항 (최근)
-- 2026-02-23: 오디오 분리 완료 후 `비트 분석`이 자동으로 시작됩니다.
-- 2026-02-23: 비트 분석 기본 모델이 `final0`로 변경되었습니다.
-- 2026-02-23: DBN 모드 요청 시 `madmom`이 없어도 작업이 실패하지 않도록 fallback(non-DBN) 처리됩니다.
 - 2026-02-23: `Torchaudio + Demucs` 조합 사용 시 `torchcodec`가 없으면 저장 단계에서 실패할 수 있어, UVR 사용 시 `torchcodec` 설치를 필수 권장합니다.
 - 2026-02-23: 유튜브 입력은 구간 선택/영역 선택/본 작업에서 공통 캐시(`backend/jobs/_preview_source/<hash>`)를 재사용해 중복 다운로드를 줄였습니다.
 - 2026-02-23: Stepper는 입력 데이터가 채워져도 자동으로 다음 단계를 열지 않고, 사용자가 연 단계를 유지합니다.
@@ -144,7 +124,6 @@ Windows Notes
 실행/운영 체크리스트 (변경 시 반드시 확인)
 - Python은 `3.11` 기준으로 운영하세요. (3.13 환경은 일부 패키지 호환 이슈가 보고됨)
 - 오디오 분리 기능을 쓰려면 같은 venv(`backend/.venv`)에 `requirements-uvr.txt` + `torch/torchaudio/torchcodec`가 설치되어 있어야 합니다.
-- DBN 정밀 모드를 반드시 쓰고 싶다면 `madmom` 설치 상태를 확인하세요. 미설치 시에도 앱은 fallback으로 진행됩니다.
 - 의존성 설치/업데이트 후에는 `npm start`로 띄운 앱(백엔드 포함)을 완전히 재시작하세요.
 - 배포/운영 전 `python scripts/doctor.py`로 런타임(GPU/FFmpeg/torch 디바이스) 점검을 먼저 수행하세요.
 
@@ -168,13 +147,16 @@ Capture Behavior
 - `드럼 음원 분리 (UVR Demucs)` 옵션을 켜면 입력 영상에서 드럼 stem(wav/mp3)을 추출해 함께 저장합니다.
 - 드럼 분리는 기본값이 `GPU 우선 + CPU 자동 전환`이며, `GPU 전용`을 켜면 GPU가 없을 때 중단됩니다.
 - 오디오 탭에서 분리 완료 후 앱 안에서 바로 재생할 수 있고, stem별 볼륨/재생 속도 조절이 가능합니다.
-- 오디오 탭의 `비트 분석 (Beat This!)`로 비트/다운비트를 감지하고 타임라인 마커로 확인할 수 있습니다.
+- 상단 `자동 설치/복구` 패널의 `캐시 정리` 버튼으로 `backend/jobs` 하위의 이전 결과/캐시(악보/음원/미리보기)를 한 번에 비울 수 있습니다.
+- 캐시 정리 버튼에는 현재 캐시 용량(예: `약 320MB`)이 함께 표시됩니다.
 - 최종 내보내기 단계에서 악보 이미지를 자동으로 정리합니다.
   - 내용 영역 자동 트림 + 배경 톤 정리
   - 다중 캡처를 세로로 자연스럽게 이어붙인 `sheet_complete.png` 생성(2장 이상일 때)
   - 긴 스크롤 악보 자동 페이지 분할
+  - 기본값은 `연주 모드(페이지 넘김 최소화)`이며 페이지 채움률을 우선합니다.
   - 출력 여백/프레임 정렬로 인쇄물에 가까운 형태로 저장
   - 기본 페이지 비율은 세로(A4 유사 비율)로 맞춰집니다.
+  - PDF는 자동 압축/리사이즈 최적화로 용량을 줄여 저장합니다.
 
 Notes
 - Electron app starts a local FastAPI server on `127.0.0.1:8000`.
@@ -195,11 +177,6 @@ Troubleshooting
   - `pip install torchcodec` (inside `backend/.venv`)
 - `soundfile is not installed`:
   - `pip install soundfile>=0.12.0` (inside `backend/.venv`)
-- `beat_this` 실행 시 `torchcodec` 로딩/ffmpeg DLL 오류(Windows)로 실패:
-  - 앱 실행 전에 `backend/bin` 또는 FFmpeg 폴더를 PATH에 넣거나,
-  - 아래처럼 백엔드 Python에서 직접 진단해 주세요.
-  - `cd backend` → `.\.venv\Scripts\python.exe scripts\doctor.py`
-  - `backend/bin` 경로가 PATH/런타임 DLL 경로에 누락된 경우 `backend\\.venv` 기준으로 경로 재설정 후 앱 재시작.
 - `ffmpeg ... not found` / `override path not found`:
   - 윈도우에서 ffmpeg 경로가 틀린 경우 새로 생긴 진단 메시지입니다.
   - 절대 경로 지정:
@@ -295,13 +272,14 @@ API contract (local)
 - `GET /runtime` → active acceleration modes and detected device names
 - `POST /preview/source` → source video for mini player (local passthrough / youtube cached download)
 - `POST /audio/separate` → drum stem separation only (UVR Demucs path)
-- `POST /audio/beat-track` → beat/downbeat analysis for selected audio input (Beat This!)
+- `POST /maintenance/clear-cache` → clear saved jobs/cache files under `backend/jobs` (blocked while jobs are running)
+- `GET /maintenance/cache-usage` → cache usage summary for UI (`total_bytes`, `total_human`)
 
 GPU / Acceleration (auto with CPU fallback)
 - This app tries GPU first and falls back to CPU automatically when unavailable.
 - FFmpeg decode acceleration order is chosen by OS (e.g., `videotoolbox` on macOS, `cuda`/`d3d11va` on Windows).
 - OpenCV acceleration uses `CUDA` if available, then `OpenCL`, otherwise `CPU`.
-- Audio separation/beat tracking GPU는 PyTorch(CUDA/MPS) 기준이며 FFmpeg/OpenCV 감지와 별개입니다.
+- Audio separation GPU는 PyTorch(CUDA/MPS) 기준이며 FFmpeg/OpenCV 감지와 별개입니다.
 - On macOS (Apple Silicon), upscale can use FFmpeg `scale_vt` (VideoToolbox/Metal path) when available.
 - `scale_vt` is enabled only after a runtime self-test passes (to avoid exposing a broken GPU path).
 - Current default upscale is interpolation-based (not AI super-resolution), tuned for better text/sheet clarity.

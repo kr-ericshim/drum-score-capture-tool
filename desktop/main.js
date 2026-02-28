@@ -320,14 +320,6 @@ async function performGuidedSetup() {
     env,
   });
 
-  await runCommandWithLogs({
-    label: "backend-beat",
-    command: venvPython,
-    args: ["-m", "pip", "install", "-r", path.join(backendDir, "requirements-beat-this.txt")],
-    cwd: backendDir,
-    env,
-  });
-
   const useCudaTorch = hasNvidiaGpu();
   if (useCudaTorch) {
     emitSetupLog("NVIDIA GPU 감지: CUDA torch 패키지를 설치합니다.");
@@ -640,6 +632,22 @@ function registerIpc() {
     }
     clipboard.writeText(value);
     return true;
+  });
+
+  ipcMain.handle("set-always-on-top", async (_, enabled) => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return false;
+    }
+    const next = Boolean(enabled);
+    mainWindow.setAlwaysOnTop(next, "floating");
+    return mainWindow.isAlwaysOnTop();
+  });
+
+  ipcMain.handle("get-always-on-top", async () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return false;
+    }
+    return mainWindow.isAlwaysOnTop();
   });
 
   ipcMain.handle("get-backend-state", async () => getBackendStatePayload());

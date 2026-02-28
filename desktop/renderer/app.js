@@ -1,7 +1,18 @@
 import { el, fileUrl, parseJsonOrNull } from "./modules/dom.js";
-import { createJob, getFormats, getJob, getRuntimeStatus, requestPreviewFrame, requestPreviewSource, sourceType } from "./modules/job-api.js";
+import {
+  clearCache,
+  createJob,
+  cropCapture,
+  getCacheUsage,
+  getFormats,
+  getJob,
+  getRuntimeStatus,
+  requestPreviewFrame,
+  requestPreviewSource,
+  reviewExport,
+  sourceType,
+} from "./modules/job-api.js";
 import { createAudioSeparationUi } from "./modules/audio-separation-ui.js";
-import { friendlyLayoutLabel, selectedLayoutHint, updateLayoutHintUi } from "./modules/layout-presets.js";
 import { friendlyMessage, friendlyStatusText, friendlyStepName } from "./modules/messages.js";
 import { createRoiController } from "./modules/roi-controller.js";
 import { renderRuntimeError, renderRuntimeStatus } from "./modules/runtime-status-ui.js";
@@ -12,6 +23,26 @@ const API_BASE = window.drumSheetAPI.apiBase || "http://127.0.0.1:8000";
 let activePoll = null;
 let outputDir = "";
 let outputPdf = "";
+let activeCaptureJobId = "";
+let currentPreviewImagePath = "";
+let resultImagePaths = [];
+let excludedResultIndices = new Set();
+let reviewApplyRunning = false;
+let captureCropState = {
+  open: false,
+  imagePath: "",
+  imageIndex: -1,
+  rect: null,
+  naturalWidth: 0,
+  naturalHeight: 0,
+  canvasWidth: 0,
+  canvasHeight: 0,
+  dragStart: null,
+  drawing: false,
+  loaded: false,
+  applyRunning: false,
+};
+const captureRenderVersion = new Map();
 let latestRuntime = null;
 let activeMode = "capture";
 let runState = "idle";
@@ -21,6 +52,11 @@ let lastSourceFingerprint = currentSourceFingerprint();
 let lastSourceType = sourceType();
 let previewRequestToken = 0;
 let setupRunning = false;
+let cacheClearRunning = false;
+let cacheUsageText = "";
+let cacheUsageLoading = false;
+let lastCacheUsageFetchAt = 0;
+let alwaysOnTopEnabled = false;
 let backendBridgeState = {
   ready: false,
   starting: true,
@@ -57,8 +93,7 @@ const STEP_BAR_BUTTON_IDS = {
 
 const PRESET_CONFIG = {
   basic: {
-    hint: "대부분 영상은 기본(추천)으로 충분합니다. 결과가 아쉬울 때만 다른 프리셋을 선택하세요.",
-    layoutHint: "auto",
+    hint: "페이지 넘김을 줄이는 연주용 기본값입니다. 대부분 이 모드 그대로 쓰면 됩니다.",
     captureSensitivity: "medium",
     enableStitch: false,
     overlapThreshold: 0.2,
@@ -66,17 +101,15 @@ const PRESET_CONFIG = {
     upscaleFactor: "2.0",
   },
   scroll: {
-    hint: "스크롤 악보가 위/아래로 흐르는 영상에 맞춘 프리셋입니다. 스티칭과 중복 억제를 강화합니다.",
-    layoutHint: "full_scroll",
-    captureSensitivity: "medium",
+    hint: "스크롤 영상에서 줄이 이어지게 맞추는 모드입니다. 긴 스크롤 악보에 유리합니다.",
+    captureSensitivity: "low",
     enableStitch: true,
-    overlapThreshold: 0.24,
+    overlapThreshold: 0.26,
     enableUpscale: false,
     upscaleFactor: "2.0",
   },
   quality: {
-    hint: "출력 선명도를 우선합니다. 처리 시간과 리소스 사용량이 증가합니다.",
-    layoutHint: "auto",
+    hint: "글자 선명도를 더 높이는 모드입니다. 처리 시간이 더 걸릴 수 있습니다.",
     captureSensitivity: "high",
     enableStitch: false,
     overlapThreshold: 0.2,
@@ -105,8 +138,51 @@ function truncateMiddle(text, maxLen = 60) {
   return `${value.slice(0, head)}…${value.slice(-tail)}`;
 }
 
+function bumpCaptureRenderVersion(pathValue) {
+  const key = String(pathValue || "").trim();
+  if (!key) {
+    return;
+  }
+  const current = Number(captureRenderVersion.get(key) || 0);
+  captureRenderVersion.set(key, current + 1);
+}
+
+function pathWithVersion(pathValue) {
+  const key = String(pathValue || "").trim();
+  if (!key) {
+    return "";
+  }
+  if (key.startsWith("/jobs-files/")) {
+    const version = Number(captureRenderVersion.get(key) || 0);
+    if (version <= 0) {
+      return `${API_BASE}${key}`;
+    }
+    return `${API_BASE}${key}?v=${version}`;
+  }
+  if (key.startsWith("jobs-files/")) {
+    const normalized = `/${key}`;
+    const version = Number(captureRenderVersion.get(key) || 0);
+    if (version <= 0) {
+      return `${API_BASE}${normalized}`;
+    }
+    return `${API_BASE}${normalized}?v=${version}`;
+  }
+  const base =
+    key.startsWith("http://") || key.startsWith("https://") || key.startsWith("file://") ? key : fileUrl(key);
+  const version = Number(captureRenderVersion.get(key) || 0);
+  if (version <= 0) {
+    return base;
+  }
+  const separator = base.includes("?") ? "&" : "?";
+  return `${base}${separator}v=${version}`;
+}
+
 function toNumberOrNull(raw) {
-  const value = Number(String(raw || "").trim());
+  const text = String(raw ?? "").trim();
+  if (text === "") {
+    return null;
+  }
+  const value = Number(text);
   return Number.isFinite(value) ? value : null;
 }
 
@@ -159,6 +235,7 @@ function renderBackendBridgeState() {
   const text = el("backendBridgeText");
   const setupButton = el("runGuidedSetup");
   const restartButton = el("restartBackend");
+  const clearCacheButton = el("clearCacheFiles");
 
   if (!chip || !text) {
     return;
@@ -169,7 +246,7 @@ function renderBackendBridgeState() {
   if (setupRunning || backendBridgeState.setupRunning) {
     chip.classList.add("setup-chip-running");
     chip.textContent = "설치/복구 진행 중";
-    text.textContent = "원클릭 설치/복구가 진행 중입니다. 완료될 때까지 잠시만 기다려 주세요.";
+    text.textContent = "자동 설치/복구가 진행 중입니다. 완료될 때까지 잠시만 기다려 주세요.";
   } else if (backendBridgeState.ready) {
     chip.classList.add("setup-chip-ok");
     chip.textContent = "엔진 연결 완료";
@@ -181,7 +258,7 @@ function renderBackendBridgeState() {
   } else if (backendBridgeState.error) {
     chip.classList.add("setup-chip-error");
     chip.textContent = "엔진 연결 실패";
-    text.textContent = compactErrorText(backendBridgeState.error, "엔진 연결에 실패했습니다. 원클릭 설치/복구를 눌러 복구해 주세요.");
+    text.textContent = compactErrorText(backendBridgeState.error, "엔진 연결에 실패했습니다. 자동 설치/복구를 눌러 복구해 주세요.");
   } else {
     chip.classList.add("setup-chip-warn");
     chip.textContent = "엔진 대기";
@@ -190,10 +267,87 @@ function renderBackendBridgeState() {
 
   if (setupButton) {
     setupButton.disabled = setupRunning || backendBridgeState.setupRunning;
-    setupButton.textContent = setupRunning || backendBridgeState.setupRunning ? "설치/복구 진행 중..." : "원클릭 설치/복구";
+    setupButton.textContent = setupRunning || backendBridgeState.setupRunning ? "설치/복구 진행 중..." : "자동 설치/복구";
   }
   if (restartButton) {
     restartButton.disabled = setupRunning || backendBridgeState.setupRunning || backendBridgeState.starting;
+  }
+  if (clearCacheButton) {
+    const disabled =
+      setupRunning ||
+      backendBridgeState.setupRunning ||
+      backendBridgeState.starting ||
+      !backendBridgeState.ready ||
+      runState === "running" ||
+      reviewApplyRunning ||
+      cacheClearRunning;
+    clearCacheButton.disabled = disabled;
+    if (cacheClearRunning) {
+      clearCacheButton.textContent = "캐시 정리 중...";
+    } else if (cacheUsageLoading && !cacheUsageText) {
+      clearCacheButton.textContent = "캐시 용량 확인 중...";
+    } else if (cacheUsageText) {
+      clearCacheButton.textContent = `캐시 정리 (${cacheUsageText})`;
+    } else {
+      clearCacheButton.textContent = "캐시 정리";
+    }
+  }
+}
+
+function refreshAlwaysOnTopButton() {
+  const button = el("toggleAlwaysOnTop");
+  if (!button) {
+    return;
+  }
+  button.textContent = alwaysOnTopEnabled ? "연습 고정: 켬" : "연습 고정: 끔";
+}
+
+async function syncAlwaysOnTopState() {
+  if (!window.drumSheetAPI || typeof window.drumSheetAPI.getAlwaysOnTop !== "function") {
+    return;
+  }
+  try {
+    alwaysOnTopEnabled = Boolean(await window.drumSheetAPI.getAlwaysOnTop());
+  } catch (_) {
+    alwaysOnTopEnabled = false;
+  }
+  refreshAlwaysOnTopButton();
+}
+
+async function onToggleAlwaysOnTop() {
+  if (!window.drumSheetAPI || typeof window.drumSheetAPI.setAlwaysOnTop !== "function") {
+    return;
+  }
+  try {
+    alwaysOnTopEnabled = Boolean(await window.drumSheetAPI.setAlwaysOnTop(!alwaysOnTopEnabled));
+    refreshAlwaysOnTopButton();
+    appendLog(alwaysOnTopEnabled ? "연습 고정 켬: 창을 항상 위에 유지합니다." : "연습 고정 끔");
+  } catch (_) {
+    appendLog("오류: 창 고정 상태를 바꾸지 못했습니다.");
+  }
+}
+
+async function refreshCacheUsage({ force = false } = {}) {
+  if (!backendBridgeState.ready || cacheClearRunning) {
+    return;
+  }
+  const now = Date.now();
+  if (!force && now - lastCacheUsageFetchAt < 8000) {
+    return;
+  }
+  lastCacheUsageFetchAt = now;
+  try {
+    cacheUsageLoading = true;
+    renderBackendBridgeState();
+    const usage = await getCacheUsage(API_BASE);
+    const totalBytes = Number(usage?.total_bytes || 0);
+    const totalHuman = String(usage?.total_human || "0 B");
+    cacheUsageText = totalBytes > 0 ? `약 ${totalHuman}` : "약 0 B";
+  } catch (_) {
+    cacheUsageText = "";
+  } finally {
+    cacheUsageLoading = false;
+    renderBackendBridgeState();
   }
 }
 
@@ -211,6 +365,9 @@ async function refreshBackendBridgeState() {
       setupRunning: Boolean(state?.setupRunning),
     };
     renderBackendBridgeState();
+    if (backendBridgeState.ready) {
+      void refreshCacheUsage();
+    }
     refreshCaptureWorkflowUi();
   } catch (error) {
     appendSetupLogLine(`오류: 엔진 상태 확인 실패 (${compactErrorText(error?.message)})`);
@@ -219,7 +376,7 @@ async function refreshBackendBridgeState() {
 
 async function onRunGuidedSetup() {
   if (!window.drumSheetAPI || typeof window.drumSheetAPI.runGuidedSetup !== "function") {
-    appendSetupLogLine("오류: 현재 앱에서 원클릭 설치/복구 기능을 지원하지 않습니다.");
+    appendSetupLogLine("오류: 현재 앱에서 자동 설치/복구 기능을 지원하지 않습니다.");
     return;
   }
   if (setupRunning) {
@@ -227,7 +384,7 @@ async function onRunGuidedSetup() {
   }
 
   const proceed = window.confirm(
-    "원클릭 설치/복구를 시작할까요?\n\n백엔드를 잠시 멈추고 Python/패키지/npm 상태를 자동으로 정리합니다.",
+    "자동 설치/복구를 시작할까요?\n\n백엔드를 잠시 멈추고 Python/패키지/npm 상태를 자동으로 정리합니다.",
   );
   if (!proceed) {
     return;
@@ -237,7 +394,7 @@ async function onRunGuidedSetup() {
     setupRunning = true;
     renderBackendBridgeState();
     refreshCaptureWorkflowUi();
-    appendSetupLogLine("원클릭 설치/복구 요청");
+    appendSetupLogLine("자동 설치/복구 요청");
     const result = await window.drumSheetAPI.runGuidedSetup();
     if (result?.ok) {
       appendSetupLogLine("설치/복구 완료");
@@ -278,6 +435,43 @@ async function onRestartBackend() {
     appendSetupLogLine(`오류: ${compactErrorText(error?.message, "백엔드 다시 연결 실패")}`);
   } finally {
     await refreshBackendBridgeState();
+    refreshCaptureWorkflowUi();
+  }
+}
+
+async function onClearCacheFiles() {
+  if (cacheClearRunning) {
+    return;
+  }
+  const usageHint = cacheUsageText ? `\n현재 임시 파일: ${cacheUsageText}` : "";
+  const proceed = window.confirm(
+    `캐시/결과 파일을 정리할까요?\n\n이전 악보 추출/음원 분리 결과와 중간 파일이 삭제됩니다.${usageHint}\n이 작업은 되돌릴 수 없습니다.`,
+  );
+  if (!proceed) {
+    return;
+  }
+
+  try {
+    cacheClearRunning = true;
+    renderBackendBridgeState();
+    appendSetupLogLine("캐시 정리 요청");
+    const result = await clearCache(API_BASE);
+    const reclaimed = String(result?.reclaimed_human || "0 B");
+    const clearedPaths = Number(result?.cleared_paths || 0);
+    const skipped = Array.isArray(result?.skipped_paths) ? result.skipped_paths.length : 0;
+    appendSetupLogLine(`캐시 정리 완료: 항목 ${clearedPaths}개, 확보 용량 ${reclaimed}${skipped > 0 ? `, 건너뜀 ${skipped}개` : ""}`);
+    appendLog(`캐시 정리 완료: ${reclaimed} 확보`);
+    setStatus("캐시 정리 완료");
+    cacheUsageText = "약 0 B";
+    resetResultView();
+  } catch (error) {
+    appendSetupLogLine(`오류: ${compactErrorText(error?.message, "캐시 정리 실패")}`);
+    appendLog(`오류: ${error.message}`);
+    setStatus("캐시 정리 실패");
+  } finally {
+    cacheClearRunning = false;
+    renderBackendBridgeState();
+    void refreshCacheUsage({ force: true });
     refreshCaptureWorkflowUi();
   }
 }
@@ -325,19 +519,19 @@ function isExportReady() {
 function sourceSummaryText() {
   if (sourceType() === "file") {
     const value = String(el("filePath")?.value || "").trim();
-    return value ? `파일: ${pathBaseName(value)}` : "파일 선택 대기";
+    return value ? `선택됨: ${pathBaseName(value)}` : "영상 파일을 골라주세요";
   }
   const value = String(el("youtubeUrl")?.value || "").trim();
-  return value ? `URL: ${truncateMiddle(value, 42)}` : "URL 입력 대기";
+  return value ? `URL 입력됨` : "유튜브 주소를 넣어주세요";
 }
 
 function rangeSummaryText() {
   const { start, end } = getRangeValues();
   if (!isRangeValid()) {
-    return "구간 값 오류";
+    return "시작/끝 확인 필요";
   }
   if (start == null && end == null) {
-    return "전체 구간";
+    return "전체 구간 (권장)";
   }
   const startText = start == null ? "시작" : formatSecToMmss(start);
   const endText = end == null ? "끝" : formatSecToMmss(end);
@@ -345,17 +539,17 @@ function rangeSummaryText() {
 }
 
 function roiSummaryText() {
-  return isRoiReady() ? "영역 지정 완료" : "영역 지정 필요";
+  return isRoiReady() ? "영역 지정 완료" : "악보 영역 지정 필요";
 }
 
 function presetLabel(name = currentPreset) {
   if (name === "scroll") {
-    return "스크롤 최적화";
+    return "스크롤 맞춤";
   }
   if (name === "quality") {
-    return "고해상도";
+    return "선명도 우선";
   }
-  return "기본";
+  return "연주 기본";
 }
 
 function exportSummaryText() {
@@ -386,6 +580,15 @@ function setStepText(key, text) {
   if (barSummary) {
     barSummary.textContent = text;
   }
+}
+
+function setStepSummaryTone(key, tone = "need") {
+  const cardSummary = el(STEP_CARD_SUMMARY_IDS[key]);
+  if (!cardSummary) {
+    return;
+  }
+  cardSummary.classList.remove("is-ready", "is-need", "is-alert");
+  cardSummary.classList.add(`is-${tone}`);
 }
 
 function setStepVisual(key, { done, active }) {
@@ -481,13 +684,13 @@ function updateRunCta() {
   const ready = isSourceReady() && isRangeValid() && isRoiReady() && isExportReady();
 
   if (!backendBridgeState.ready) {
-    runButton.textContent = setupRunning || backendBridgeState.setupRunning ? "설치/복구 진행 중..." : "로컬 엔진 연결 필요";
+    runButton.textContent = setupRunning || backendBridgeState.setupRunning ? "설치/복구 진행 중..." : "먼저 엔진 연결이 필요해요";
     runButton.disabled = true;
     cancelButton.style.display = "none";
     const errorText = compactErrorText(backendBridgeState.error, "");
     hint.textContent = errorText
-      ? `엔진 오류: ${errorText}`
-      : "상단의 원클릭 설치/복구 또는 백엔드 다시 연결 버튼을 사용해 주세요.";
+      ? `엔진 연결 문제: ${errorText}`
+      : "상단의 자동 설치/복구 또는 엔진 다시 연결 버튼을 눌러주세요.";
     return;
   }
 
@@ -509,23 +712,23 @@ function updateRunCta() {
   }
 
   if (!isSourceReady()) {
-    runButton.textContent = "파일/URL을 선택해 주세요";
+    runButton.textContent = "1단계에서 영상을 선택해 주세요";
     runButton.disabled = true;
-    hint.textContent = "먼저 입력 소스를 선택해 주세요.";
+    hint.textContent = "로컬 파일이나 유튜브 URL 중 하나를 먼저 입력해 주세요.";
     return;
   }
 
   if (!isRangeValid()) {
-    runButton.textContent = "구간 값을 확인해 주세요";
+    runButton.textContent = "시작/끝 시간을 확인해 주세요";
     runButton.disabled = true;
     hint.textContent = "끝 시간이 시작 시간보다 커야 합니다.";
     return;
   }
 
   if (!isRoiReady()) {
-    runButton.textContent = "악보 영역을 지정해 주세요";
+    runButton.textContent = "3단계에서 악보 영역을 잡아주세요";
     runButton.disabled = true;
-    hint.textContent = "3단계에서 미리보기 화면을 불러와 드래그로 악보 영역을 지정해 주세요.";
+    hint.textContent = "악보 화면 열기 버튼을 누른 뒤, 악보 부분을 마우스로 드래그해 주세요.";
     return;
   }
 
@@ -536,9 +739,9 @@ function updateRunCta() {
     return;
   }
 
-  runButton.textContent = ready ? "처리 시작" : "처리 준비 중";
+  runButton.textContent = ready ? "처리 시작" : "입력 확인 중";
   runButton.disabled = !ready;
-  hint.textContent = "준비 완료. 처리 시작을 누르면 바로 작업합니다.";
+  hint.textContent = "준비 완료. 처리 시작을 누르면 바로 진행됩니다.";
 }
 
 function refreshCaptureWorkflowUi() {
@@ -555,6 +758,10 @@ function refreshCaptureWorkflowUi() {
   setStepText("range", rangeSummaryText());
   setStepText("roi", roiSummaryText());
   setStepText("export", exportSummaryText());
+  setStepSummaryTone("source", completion.source ? "ready" : "need");
+  setStepSummaryTone("range", completion.range ? "ready" : "alert");
+  setStepSummaryTone("roi", completion.roi ? "ready" : "need");
+  setStepSummaryTone("export", completion.export ? "ready" : "need");
 
   const progressStep = determineActiveStep();
   if (!manualOpenStep) {
@@ -637,9 +844,9 @@ function updateCaptureSensitivityHelp() {
   }
 
   const map = {
-    low: "중복 캡처를 가장 강하게 줄입니다. 처리 속도는 빠르고 결과 장수는 적습니다.",
-    medium: "대부분 영상에 권장됩니다.",
-    high: "미세 변화까지 최대한 반영합니다. 대신 중복 캡처가 늘 수 있습니다.",
+    low: "같은 장면이 반복 저장되는 것을 강하게 줄입니다. 대부분 이 옵션이 깔끔합니다.",
+    medium: "균형형 옵션입니다. 처음 사용할 때 추천합니다.",
+    high: "미세한 변화까지 민감하게 잡습니다. 대신 비슷한 장면이 더 많이 저장될 수 있습니다.",
   };
   help.textContent = map[select.value] || map.medium;
 }
@@ -711,7 +918,6 @@ function applyCapturePreset(name, { withLog = true } = {}) {
   currentPreset = PRESET_CONFIG[name] ? name : "basic";
 
   const sensitivity = el("captureSensitivity");
-  const layoutHintNode = el("layoutHint");
   const enableStitch = el("enableStitch");
   const overlap = el("overlapThreshold");
   const enableUpscale = el("enableUpscale");
@@ -720,9 +926,6 @@ function applyCapturePreset(name, { withLog = true } = {}) {
 
   if (sensitivity) {
     sensitivity.value = preset.captureSensitivity;
-  }
-  if (layoutHintNode) {
-    layoutHintNode.value = preset.layoutHint;
   }
   if (enableStitch) {
     enableStitch.checked = Boolean(preset.enableStitch);
@@ -742,7 +945,6 @@ function applyCapturePreset(name, { withLog = true } = {}) {
   }
 
   updatePresetButtons();
-  updateLayoutHintUi({ applyDefaults: false });
   updateCaptureSensitivityHelp();
   updateUpscaleUi();
   refreshCaptureWorkflowUi();
@@ -769,6 +971,60 @@ function clearResultThumbnails() {
   if (grid) {
     grid.replaceChildren();
   }
+  resultImagePaths = [];
+  captureRenderVersion.clear();
+  excludedResultIndices.clear();
+  syncResultReviewUi();
+}
+
+function pruneExcludedResultIndices() {
+  const max = resultImagePaths.length;
+  for (const index of Array.from(excludedResultIndices)) {
+    if (!Number.isInteger(index) || index < 0 || index >= max) {
+      excludedResultIndices.delete(index);
+    }
+  }
+}
+
+function includedResultImagePaths() {
+  pruneExcludedResultIndices();
+  return resultImagePaths.filter((_, idx) => !excludedResultIndices.has(idx));
+}
+
+function firstIncludedImagePath() {
+  const kept = includedResultImagePaths();
+  return kept.length > 0 ? kept[0] : "";
+}
+
+function syncResultReviewUi() {
+  const reviewBar = el("resultReviewBar");
+  const summary = el("resultReviewSummary");
+  const keepAllButton = el("resultKeepAll");
+  const applyButton = el("resultApplyReview");
+
+  const total = resultImagePaths.length;
+  const kept = includedResultImagePaths().length;
+  const excluded = Math.max(0, total - kept);
+
+  if (reviewBar) {
+    reviewBar.style.display = total > 0 ? "flex" : "none";
+  }
+  if (summary) {
+    if (total <= 0) {
+      summary.textContent = "캡쳐 결과를 검토해 제외할 항목을 선택해 주세요.";
+    } else if (excluded > 0) {
+      summary.textContent = `전체 캡쳐 ${total}개 중 ${excluded}개 제외 예정입니다. 반영 버튼으로 페이지를 다시 생성하세요.`;
+    } else {
+      summary.textContent = `전체 캡쳐 ${total}개 포함 상태입니다. 중복/오류 캡쳐가 있으면 체크를 해제해 주세요.`;
+    }
+  }
+  if (keepAllButton) {
+    keepAllButton.disabled = total <= 0 || reviewApplyRunning;
+  }
+  if (applyButton) {
+    applyButton.disabled = reviewApplyRunning || !activeCaptureJobId || total <= 0 || kept <= 0 || excluded <= 0;
+    applyButton.textContent = reviewApplyRunning ? "반영 중..." : "선택 반영 후 페이지 다시 생성";
+  }
 }
 
 function renderResultThumbnails(imagePaths = []) {
@@ -777,27 +1033,44 @@ function renderResultThumbnails(imagePaths = []) {
     return;
   }
   grid.replaceChildren();
-  if (!Array.isArray(imagePaths) || imagePaths.length === 0) {
+  resultImagePaths = Array.isArray(imagePaths) ? imagePaths.slice() : [];
+  pruneExcludedResultIndices();
+  if (resultImagePaths.length === 0) {
+    syncResultReviewUi();
     return;
   }
 
   const fragment = document.createDocumentFragment();
-  imagePaths.slice(0, 60).forEach((imagePath, idx) => {
+  resultImagePaths.forEach((imagePath, idx) => {
+    const isExcluded = excludedResultIndices.has(idx);
     const card = document.createElement("article");
-    card.className = "result-thumb";
+    card.className = isExcluded ? "result-thumb is-excluded" : "result-thumb";
 
     const preview = document.createElement("img");
-    preview.src = imagePath.startsWith("file://") ? imagePath : fileUrl(imagePath);
+    preview.src = pathWithVersion(imagePath);
     preview.alt = `result page ${idx + 1}`;
     preview.addEventListener("click", () => {
+      renderResultPreview(imagePath);
+    });
+    preview.addEventListener("dblclick", () => {
       window.drumSheetAPI.openPath(imagePath);
     });
 
     const meta = document.createElement("div");
     meta.className = "result-thumb-meta";
 
-    const label = document.createElement("span");
-    label.textContent = `페이지 ${idx + 1}`;
+    const checkLabel = document.createElement("label");
+    checkLabel.className = "result-thumb-check";
+    const includeCheck = document.createElement("input");
+    includeCheck.type = "checkbox";
+    includeCheck.checked = !isExcluded;
+    const checkText = document.createElement("span");
+    checkText.textContent = `캡쳐 ${idx + 1}`;
+    checkLabel.append(includeCheck, checkText);
+
+    const state = document.createElement("span");
+    state.className = "result-thumb-state";
+    state.textContent = isExcluded ? "제외 예정" : "포함";
 
     const openButton = document.createElement("button");
     openButton.type = "button";
@@ -807,12 +1080,363 @@ function renderResultThumbnails(imagePaths = []) {
       window.drumSheetAPI.openPath(imagePath);
     });
 
-    meta.append(label, openButton);
+    const recropButton = document.createElement("button");
+    recropButton.type = "button";
+    recropButton.className = "secondary";
+    recropButton.textContent = "다시 자르기";
+    recropButton.addEventListener("click", () => {
+      openCaptureCropModal(imagePath, idx);
+    });
+
+    includeCheck.addEventListener("change", () => {
+      if (includeCheck.checked) {
+        excludedResultIndices.delete(idx);
+        card.classList.remove("is-excluded");
+        state.textContent = "포함";
+      } else {
+        excludedResultIndices.add(idx);
+        card.classList.add("is-excluded");
+        state.textContent = "제외 예정";
+        if (currentPreviewImagePath === imagePath) {
+          renderResultPreview(firstIncludedImagePath());
+        }
+      }
+      syncResultReviewUi();
+    });
+
+    const left = document.createElement("div");
+    left.className = "result-thumb-left";
+    left.append(checkLabel, state);
+
+    const actions = document.createElement("div");
+    actions.className = "result-thumb-actions";
+    actions.append(recropButton, openButton);
+
+    meta.append(left, actions);
     card.append(preview, meta);
     fragment.append(card);
   });
 
   grid.append(fragment);
+  syncResultReviewUi();
+}
+
+function clampNumber(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function getCaptureCropElements() {
+  return {
+    modal: el("captureCropModal"),
+    image: el("captureCropImage"),
+    canvas: el("captureCropCanvas"),
+    close: el("captureCropClose"),
+    reset: el("captureCropReset"),
+    apply: el("captureCropApply"),
+  };
+}
+
+function canvasPointFromEvent(event, canvas) {
+  const rect = canvas.getBoundingClientRect();
+  const x = clampNumber(event.clientX - rect.left, 0, rect.width);
+  const y = clampNumber(event.clientY - rect.top, 0, rect.height);
+  return { x, y };
+}
+
+function normalizeRectFromPoints(start, end, width, height) {
+  const x1 = clampNumber(Math.min(start.x, end.x), 0, width);
+  const y1 = clampNumber(Math.min(start.y, end.y), 0, height);
+  const x2 = clampNumber(Math.max(start.x, end.x), 0, width);
+  const y2 = clampNumber(Math.max(start.y, end.y), 0, height);
+  return {
+    x: x1,
+    y: y1,
+    w: Math.max(0, x2 - x1),
+    h: Math.max(0, y2 - y1),
+  };
+}
+
+function drawCaptureCropOverlay() {
+  const { canvas } = getCaptureCropElements();
+  if (!canvas) {
+    return;
+  }
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return;
+  }
+
+  const width = canvas.width;
+  const height = canvas.height;
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = "rgba(9, 24, 41, 0.45)";
+  ctx.fillRect(0, 0, width, height);
+
+  const rect = captureCropState.rect;
+  if (!rect || rect.w <= 0 || rect.h <= 0) {
+    return;
+  }
+
+  ctx.clearRect(rect.x, rect.y, rect.w, rect.h);
+  ctx.strokeStyle = "#31d5c8";
+  ctx.lineWidth = 2;
+  ctx.setLineDash([]);
+  ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, Math.max(0, rect.w - 1), Math.max(0, rect.h - 1));
+}
+
+function resetCaptureCropRectToFull() {
+  if (!captureCropState.canvasWidth || !captureCropState.canvasHeight) {
+    captureCropState.rect = null;
+    drawCaptureCropOverlay();
+    return;
+  }
+  captureCropState.rect = {
+    x: 0,
+    y: 0,
+    w: captureCropState.canvasWidth,
+    h: captureCropState.canvasHeight,
+  };
+  drawCaptureCropOverlay();
+}
+
+function resizeCaptureCropCanvas() {
+  const { image, canvas } = getCaptureCropElements();
+  if (!image || !canvas) {
+    return;
+  }
+  const rect = image.getBoundingClientRect();
+  const width = Math.max(1, Math.floor(rect.width));
+  const height = Math.max(1, Math.floor(rect.height));
+  if (width <= 1 || height <= 1) {
+    return;
+  }
+
+  const prevRect = captureCropState.rect;
+  const prevWidth = captureCropState.canvasWidth;
+  const prevHeight = captureCropState.canvasHeight;
+
+  canvas.width = width;
+  canvas.height = height;
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+  captureCropState.canvasWidth = width;
+  captureCropState.canvasHeight = height;
+
+  if (prevRect && prevWidth > 0 && prevHeight > 0) {
+    captureCropState.rect = {
+      x: (prevRect.x / prevWidth) * width,
+      y: (prevRect.y / prevHeight) * height,
+      w: (prevRect.w / prevWidth) * width,
+      h: (prevRect.h / prevHeight) * height,
+    };
+  } else {
+    resetCaptureCropRectToFull();
+    return;
+  }
+
+  drawCaptureCropOverlay();
+}
+
+function setCaptureCropApplyBusy(running) {
+  const { apply, reset } = getCaptureCropElements();
+  captureCropState.applyRunning = Boolean(running);
+  if (apply) {
+    apply.disabled = captureCropState.applyRunning || !captureCropState.loaded;
+    apply.textContent = captureCropState.applyRunning ? "저장 중..." : "이 캡쳐에 반영";
+  }
+  if (reset) {
+    reset.disabled = captureCropState.applyRunning || !captureCropState.loaded;
+  }
+}
+
+function closeCaptureCropModal() {
+  const { modal, image, canvas } = getCaptureCropElements();
+  if (modal) {
+    modal.style.display = "none";
+    modal.setAttribute("aria-hidden", "true");
+  }
+  if (image) {
+    image.removeAttribute("src");
+  }
+  if (canvas) {
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+  }
+  captureCropState = {
+    open: false,
+    imagePath: "",
+    imageIndex: -1,
+    rect: null,
+    naturalWidth: 0,
+    naturalHeight: 0,
+    canvasWidth: 0,
+    canvasHeight: 0,
+    dragStart: null,
+    drawing: false,
+    loaded: false,
+    applyRunning: false,
+  };
+  setCaptureCropApplyBusy(false);
+}
+
+function openCaptureCropModal(imagePath, index) {
+  const path = String(imagePath || "").trim();
+  if (!path) {
+    appendLog("오류: 자를 캡쳐 경로를 찾지 못했습니다.");
+    return;
+  }
+  const { modal, image } = getCaptureCropElements();
+  if (!modal || !image) {
+    appendLog("오류: 캡쳐 편집 창을 열 수 없습니다.");
+    return;
+  }
+
+  captureCropState = {
+    open: true,
+    imagePath: path,
+    imageIndex: Number.isInteger(index) ? index : -1,
+    rect: null,
+    naturalWidth: 0,
+    naturalHeight: 0,
+    canvasWidth: 0,
+    canvasHeight: 0,
+    dragStart: null,
+    drawing: false,
+    loaded: false,
+    applyRunning: false,
+  };
+  setCaptureCropApplyBusy(false);
+
+  modal.style.display = "flex";
+  modal.setAttribute("aria-hidden", "false");
+  setStatus("캡쳐 다시 자르기: 영역을 드래그해 주세요");
+
+  image.onload = () => {
+    if (!captureCropState.open) {
+      return;
+    }
+    captureCropState.loaded = true;
+    captureCropState.naturalWidth = image.naturalWidth || 0;
+    captureCropState.naturalHeight = image.naturalHeight || 0;
+    window.requestAnimationFrame(() => {
+      resizeCaptureCropCanvas();
+      setCaptureCropApplyBusy(false);
+    });
+  };
+  image.onerror = () => {
+    appendLog("오류: 캡쳐 이미지를 불러오지 못했습니다.");
+    closeCaptureCropModal();
+  };
+  image.src = pathWithVersion(path);
+}
+
+function onCaptureCropPointerDown(event) {
+  if (!captureCropState.open || !captureCropState.loaded || captureCropState.applyRunning) {
+    return;
+  }
+  const { canvas } = getCaptureCropElements();
+  if (!canvas) {
+    return;
+  }
+  const point = canvasPointFromEvent(event, canvas);
+  captureCropState.drawing = true;
+  captureCropState.dragStart = point;
+  captureCropState.rect = { x: point.x, y: point.y, w: 0, h: 0 };
+  drawCaptureCropOverlay();
+}
+
+function onCaptureCropPointerMove(event) {
+  if (!captureCropState.drawing || !captureCropState.dragStart) {
+    return;
+  }
+  const { canvas } = getCaptureCropElements();
+  if (!canvas) {
+    return;
+  }
+  const point = canvasPointFromEvent(event, canvas);
+  captureCropState.rect = normalizeRectFromPoints(captureCropState.dragStart, point, canvas.width, canvas.height);
+  drawCaptureCropOverlay();
+}
+
+function onCaptureCropPointerUp() {
+  if (!captureCropState.drawing) {
+    return;
+  }
+  captureCropState.drawing = false;
+  captureCropState.dragStart = null;
+  if (!captureCropState.rect || captureCropState.rect.w < 3 || captureCropState.rect.h < 3) {
+    resetCaptureCropRectToFull();
+  } else {
+    drawCaptureCropOverlay();
+  }
+}
+
+function buildCropRoiFromState() {
+  const rect = captureCropState.rect;
+  if (!rect || rect.w <= 0 || rect.h <= 0) {
+    return null;
+  }
+  if (
+    captureCropState.canvasWidth <= 0 ||
+    captureCropState.canvasHeight <= 0 ||
+    captureCropState.naturalWidth <= 0 ||
+    captureCropState.naturalHeight <= 0
+  ) {
+    return null;
+  }
+  const scaleX = captureCropState.naturalWidth / captureCropState.canvasWidth;
+  const scaleY = captureCropState.naturalHeight / captureCropState.canvasHeight;
+  const x1 = clampNumber(Math.round(rect.x * scaleX), 0, captureCropState.naturalWidth);
+  const y1 = clampNumber(Math.round(rect.y * scaleY), 0, captureCropState.naturalHeight);
+  const x2 = clampNumber(Math.round((rect.x + rect.w) * scaleX), 0, captureCropState.naturalWidth);
+  const y2 = clampNumber(Math.round((rect.y + rect.h) * scaleY), 0, captureCropState.naturalHeight);
+  if (x2 <= x1 || y2 <= y1) {
+    return null;
+  }
+  return [
+    [x1, y1],
+    [x2, y1],
+    [x2, y2],
+    [x1, y2],
+  ];
+}
+
+async function onApplyCaptureCrop() {
+  if (captureCropState.applyRunning) {
+    return;
+  }
+  if (!activeCaptureJobId) {
+    appendLog("오류: 현재 작업을 찾지 못해 캡쳐 자르기를 저장할 수 없습니다.");
+    return;
+  }
+  const roi = buildCropRoiFromState();
+  if (!roi) {
+    appendLog("안내: 먼저 캡쳐에서 남길 영역을 드래그해 주세요.");
+    return;
+  }
+
+  try {
+    setCaptureCropApplyBusy(true);
+    const targetPath = captureCropState.imagePath;
+    const response = await cropCapture(API_BASE, activeCaptureJobId, {
+      capturePath: targetPath,
+      roi,
+    });
+    bumpCaptureRenderVersion(targetPath);
+    renderResultThumbnails(resultImagePaths);
+    if (currentPreviewImagePath === targetPath) {
+      renderResultPreview(targetPath);
+    }
+    appendLog(`캡쳐 다시 자르기 저장: ${pathBaseName(response.capture_path)} (${response.width}x${response.height})`);
+    setStatus("캡쳐 자르기 저장 완료");
+    closeCaptureCropModal();
+  } catch (error) {
+    appendLog(`오류: ${error.message}`);
+    setStatus("캡쳐 자르기 저장 실패");
+    setCaptureCropApplyBusy(false);
+  }
 }
 
 async function copyTextToClipboard(value) {
@@ -837,7 +1461,7 @@ async function copyTextToClipboard(value) {
 
 const roiController = createRoiController({
   onPreviewLoadError: () => {
-    appendLog("오류: 미리보기 이미지를 불러오지 못했습니다.");
+    appendLog("오류: 미리보기 이미지를 불러오지 못했습니다. 시작 시간을 살짝 옮겨 다시 눌러 주세요.");
     setStatus("영역 지정 화면 표시 실패");
   },
 });
@@ -852,11 +1476,17 @@ const videoRangePicker = createVideoRangePicker({
 const audioSeparationUi = createAudioSeparationUi({ apiBase: API_BASE });
 
 function resetResultView() {
+  if (captureCropState.open) {
+    closeCaptureCropModal();
+  }
   roiController.clearPreview();
   clearResultMeta();
   clearResultThumbnails();
   outputDir = "";
   outputPdf = "";
+  activeCaptureJobId = "";
+  currentPreviewImagePath = "";
+  reviewApplyRunning = false;
 
   const openOutputDir = el("openOutputDir");
   const stickyOpenOutput = el("stickyOpenOutput");
@@ -882,6 +1512,7 @@ function resetResultView() {
     previewImage.style.display = "none";
     previewImage.removeAttribute("src");
   }
+  syncResultReviewUi();
 }
 
 function renderResultPreview(imagePath) {
@@ -891,13 +1522,14 @@ function renderResultPreview(imagePath) {
   }
   const path = String(imagePath || "").trim();
   if (!path) {
+    currentPreviewImagePath = "";
     previewImage.style.display = "none";
     previewImage.removeAttribute("src");
     return;
   }
-  const src = path.startsWith("http://") || path.startsWith("https://") || path.startsWith("file://") ? path : fileUrl(path);
-  previewImage.src = src;
+  previewImage.src = pathWithVersion(path);
   previewImage.style.display = "block";
+  currentPreviewImagePath = path;
 }
 
 function appendRecoveryHint(job) {
@@ -922,6 +1554,8 @@ function renderResult(job) {
   const meta = renderResultMeta(job, friendlyStepName);
   outputDir = meta.outputDir || "";
   outputPdf = meta.pdfPath || "";
+  activeCaptureJobId = String(job?.job_id || activeCaptureJobId || "");
+  excludedResultIndices.clear();
 
   const openOutputDir = el("openOutputDir");
   const stickyOpenOutput = el("stickyOpenOutput");
@@ -942,8 +1576,10 @@ function renderResult(job) {
   }
 
   setPathChip(outputDir);
-  renderResultThumbnails(meta.imagePaths || []);
-  renderResultPreview(meta.firstImagePath);
+  const reviewPaths = Array.isArray(meta.capturePaths) && meta.capturePaths.length ? meta.capturePaths : meta.imagePaths || [];
+  renderResultThumbnails(reviewPaths);
+  const previewPath = firstIncludedImagePath() || meta.firstImagePath;
+  renderResultPreview(previewPath);
 
   if (job?.result?.runtime) {
     latestRuntime = job.result.runtime;
@@ -951,14 +1587,58 @@ function renderResult(job) {
     applyUpscaleAvailability(latestRuntime);
   }
 
-  const canEditRoi = meta.hasResultImage;
-  if (canEditRoi && meta.firstImagePath) {
-    roiController.showPreviewWithRoi(meta.firstImagePath);
-  }
-  roiController.setRoiEditorVisibility(canEditRoi);
-  roiController.setRoiEditMode(canEditRoi);
-
   refreshCaptureWorkflowUi();
+}
+
+function onKeepAllResultPages() {
+  if (reviewApplyRunning || !resultImagePaths.length) {
+    return;
+  }
+  excludedResultIndices.clear();
+  renderResultThumbnails(resultImagePaths);
+  appendLog("결과 검토: 모든 캡쳐를 포함 상태로 되돌렸습니다.");
+}
+
+async function onApplyResultReview() {
+  if (reviewApplyRunning) {
+    return;
+  }
+  if (!activeCaptureJobId) {
+    appendLog("오류: 검토 반영할 완료 작업을 찾지 못했습니다.");
+    return;
+  }
+
+  const keepImages = includedResultImagePaths();
+  if (keepImages.length <= 0) {
+    appendLog("안내: 최소 1개 캡쳐는 포함 상태로 남겨야 저장할 수 있습니다.");
+    return;
+  }
+  if (keepImages.length === resultImagePaths.length) {
+    appendLog("안내: 제외된 캡쳐가 없습니다. 체크 해제 후 다시 반영해 주세요.");
+    return;
+  }
+
+  reviewApplyRunning = true;
+  syncResultReviewUi();
+  setStatus("검토 반영 중");
+  appendLog(`검토 반영 시작: 전체 캡쳐 ${resultImagePaths.length}개 중 ${keepImages.length}개 유지`);
+  try {
+    await reviewExport(API_BASE, activeCaptureJobId, {
+      keepCaptures: keepImages,
+      formats: getFormats(),
+    });
+    const refreshed = await getJob(API_BASE, activeCaptureJobId);
+    renderResult(refreshed);
+    appendLog("검토 반영 완료: 선택한 캡쳐로 페이지를 다시 생성했습니다.");
+    setStatus("검토 반영 완료");
+  } catch (error) {
+    appendLog(`오류: ${error.message}`);
+    setStatus("검토 반영 실패");
+  } finally {
+    reviewApplyRunning = false;
+    syncResultReviewUi();
+    refreshCaptureWorkflowUi();
+  }
 }
 
 async function poll(jobId) {
@@ -1004,7 +1684,7 @@ async function onRun() {
     }
 
     if (!backendBridgeState.ready) {
-      appendLog("오류: 로컬 엔진이 연결되지 않았습니다. 상단 원클릭 설치/복구를 먼저 실행해 주세요.");
+      appendLog("오류: 로컬 엔진이 연결되지 않았습니다. 상단 자동 설치/복구를 먼저 실행해 주세요.");
       setStatus("엔진 연결 필요");
       refreshCaptureWorkflowUi();
       return;
@@ -1021,10 +1701,10 @@ async function onRun() {
     setPipelineState({ currentStep: "queued", progress: 0, status: "queued", isYoutubeSource: sourceType() === "youtube" });
     setStatus("작업을 시작하고 있어요");
     appendLog("작업 시작");
-    appendLog(`영상 형태: ${friendlyLayoutLabel(selectedLayoutHint())}`);
     refreshCaptureWorkflowUi();
 
     const jobId = await createJob(API_BASE);
+    activeCaptureJobId = String(jobId || "");
     setStatus("작업 대기 중");
     activePoll = setInterval(() => {
       poll(jobId).catch((error) => {
@@ -1071,6 +1751,7 @@ async function refreshRuntimeStatus() {
       error: "",
     };
     renderBackendBridgeState();
+    void refreshCacheUsage();
   } catch (_) {
     renderRuntimeError();
     applyUpscaleAvailability(latestRuntime);
@@ -1096,16 +1777,28 @@ async function onLoadPreviewForRoi() {
         videoRangePicker.loadLocalFile(pickedPath);
       }
     }
-    setStatus("영역 지정용 화면을 불러오는 중");
-    appendLog("영역 지정 화면 요청");
+    setStatus("악보 화면을 준비 중입니다");
+    appendLog("악보 영역 지정 화면 요청");
     roiController.clearPreview();
     const previewStartSec = videoRangePicker.getPreviewSecond();
     if (previewStartSec != null) {
       appendLog(`영역 지정 시점: ${previewStartSec.toFixed(1)}초`);
     }
-    const previewImagePath = await requestPreviewFrame(API_BASE, { startSecOverride: previewStartSec });
+    let previewImagePath = "";
+    try {
+      previewImagePath = await requestPreviewFrame(API_BASE, { startSecOverride: previewStartSec });
+    } catch (firstError) {
+      if (previewStartSec != null && previewStartSec > 0.25) {
+        appendLog("안내: 선택 시점 프레임 추출에 실패해 영상 시작 기준으로 한 번 더 시도합니다.");
+        previewImagePath = await requestPreviewFrame(API_BASE, { startSecOverride: 0 });
+      } else {
+        throw firstError;
+      }
+    }
     if (requestToken !== previewRequestToken || sourceFingerprint !== currentSourceFingerprint()) {
-      return;
+      appendLog("안내: 입력 값이 바뀌어 영역 지정 화면 요청이 취소되었습니다. 다시 눌러 주세요.");
+      setStatus("입력 변경으로 요청 취소됨");
+      return false;
     }
     manualOpenStep = "roi";
     updateManualTools();
@@ -1116,12 +1809,14 @@ async function onLoadPreviewForRoi() {
     setStatus("화면 준비 완료. 악보 부분을 드래그해 주세요");
     appendLog("영역 지정 화면 준비 완료");
     refreshCaptureWorkflowUi();
+    return true;
   } catch (error) {
     if (requestToken !== previewRequestToken) {
-      return;
+      return false;
     }
     appendLog(`오류: ${error.message}`);
-    setStatus("영역 지정 화면 불러오기 실패");
+    setStatus("악보 화면을 불러오지 못했습니다");
+    return false;
   } finally {
     if (button) {
       button.disabled = false;
@@ -1130,13 +1825,37 @@ async function onLoadPreviewForRoi() {
 }
 
 async function onLockRoiFrame() {
-  await onLoadPreviewForRoi();
-  if (typeof roiController.applyCurrentRoi === "function") {
-    const applied = roiController.applyCurrentRoi();
-    if (applied) {
-      appendLog("현재 프레임 기준 ROI를 고정했습니다.");
-    }
+  const reloaded = await onLoadPreviewForRoi();
+  if (reloaded) {
+    appendLog("현재 시점 프레임을 다시 불러왔습니다.");
+    setStatus("현재 시점 프레임으로 갱신됨");
   }
+  refreshCaptureWorkflowUi();
+}
+
+function onApplyRoiSelection() {
+  if (typeof roiController.applyCurrentRoi !== "function") {
+    return;
+  }
+  const applied = roiController.applyCurrentRoi();
+  if (!applied) {
+    appendLog("안내: 먼저 악보 화면에서 영역을 드래그해 주세요.");
+    setStatus("영역 지정 필요");
+    return;
+  }
+  const applyButton = el("applyRoi");
+  if (applyButton) {
+    const original = "이 영역으로 진행";
+    applyButton.textContent = "영역 저장됨";
+    applyButton.disabled = true;
+    window.setTimeout(() => {
+      applyButton.disabled = false;
+      applyButton.textContent = original;
+    }, 850);
+  }
+  manualOpenStep = "export";
+  appendLog("영역 저장 완료: 이 범위로 캡쳐를 진행합니다.");
+  setStatus("영역 저장 완료");
   refreshCaptureWorkflowUi();
 }
 
@@ -1149,7 +1868,7 @@ async function onPrepareYoutubeVideo() {
     if (button) {
       button.disabled = true;
     }
-    setStatus("유튜브 영상 준비 중");
+    setStatus("유튜브 영상을 준비 중입니다");
     appendLog("유튜브 영상 준비 요청");
     const prepared = await requestPreviewSource(API_BASE);
     const playable = prepared.video_url ? `${API_BASE}${prepared.video_url}` : prepared.video_path;
@@ -1162,7 +1881,7 @@ async function onPrepareYoutubeVideo() {
     refreshCaptureWorkflowUi();
   } catch (error) {
     appendLog(`오류: ${error.message}`);
-    setStatus("유튜브 영상 준비 실패");
+    setStatus("유튜브 영상 준비에 실패했습니다");
   } finally {
     if (button) {
       button.disabled = false;
@@ -1230,6 +1949,11 @@ if (loadPreviewForRoiButton) {
   loadPreviewForRoiButton.addEventListener("click", onLoadPreviewForRoi);
 }
 
+const applyRoiButton = el("applyRoi");
+if (applyRoiButton) {
+  applyRoiButton.addEventListener("click", onApplyRoiSelection);
+}
+
 const lockRoiFrameButton = el("lockRoiFrame");
 if (lockRoiFrameButton) {
   lockRoiFrameButton.addEventListener("click", onLockRoiFrame);
@@ -1255,16 +1979,6 @@ if (copyRoiCoordsButton) {
     const value = String(el("roiInput")?.value || "");
     const ok = await copyTextToClipboard(value);
     appendLog(ok ? "ROI 좌표를 복사했습니다." : "오류: ROI 좌표 복사 실패");
-  });
-}
-
-const layoutHintNode = el("layoutHint");
-if (layoutHintNode) {
-  layoutHintNode.addEventListener("change", () => {
-    updateLayoutHintUi({ applyDefaults: true });
-    manualOpenStep = "roi";
-    appendLog("영상 형태 변경: 추천 옵션을 적용했어요");
-    refreshCaptureWorkflowUi();
   });
 }
 
@@ -1383,6 +2097,97 @@ if (copyOutputPathButton) {
   });
 }
 
+const toggleAlwaysOnTopButton = el("toggleAlwaysOnTop");
+if (toggleAlwaysOnTopButton) {
+  toggleAlwaysOnTopButton.addEventListener("click", onToggleAlwaysOnTop);
+}
+
+const resultKeepAllButton = el("resultKeepAll");
+if (resultKeepAllButton) {
+  resultKeepAllButton.addEventListener("click", onKeepAllResultPages);
+}
+
+const resultApplyReviewButton = el("resultApplyReview");
+if (resultApplyReviewButton) {
+  resultApplyReviewButton.addEventListener("click", onApplyResultReview);
+}
+
+const captureCropModal = el("captureCropModal");
+if (captureCropModal) {
+  captureCropModal.addEventListener("click", (event) => {
+    if (event.target === captureCropModal && !captureCropState.applyRunning) {
+      closeCaptureCropModal();
+    }
+  });
+}
+
+const captureCropCloseButton = el("captureCropClose");
+if (captureCropCloseButton) {
+  captureCropCloseButton.addEventListener("click", () => {
+    if (captureCropState.applyRunning) {
+      return;
+    }
+    closeCaptureCropModal();
+  });
+}
+
+const captureCropResetButton = el("captureCropReset");
+if (captureCropResetButton) {
+  captureCropResetButton.addEventListener("click", () => {
+    if (captureCropState.applyRunning) {
+      return;
+    }
+    resetCaptureCropRectToFull();
+  });
+}
+
+const captureCropApplyButton = el("captureCropApply");
+if (captureCropApplyButton) {
+  captureCropApplyButton.addEventListener("click", onApplyCaptureCrop);
+}
+
+const captureCropCanvas = el("captureCropCanvas");
+if (captureCropCanvas) {
+  captureCropCanvas.addEventListener("pointerdown", (event) => {
+    if (captureCropCanvas.setPointerCapture) {
+      try {
+        captureCropCanvas.setPointerCapture(event.pointerId);
+      } catch (_) {}
+    }
+    onCaptureCropPointerDown(event);
+  });
+  captureCropCanvas.addEventListener("pointermove", onCaptureCropPointerMove);
+  captureCropCanvas.addEventListener("pointerup", (event) => {
+    if (captureCropCanvas.releasePointerCapture) {
+      try {
+        captureCropCanvas.releasePointerCapture(event.pointerId);
+      } catch (_) {}
+    }
+    onCaptureCropPointerUp();
+  });
+  captureCropCanvas.addEventListener("pointercancel", onCaptureCropPointerUp);
+  captureCropCanvas.addEventListener("pointerleave", () => {
+    if (captureCropState.drawing) {
+      onCaptureCropPointerUp();
+    }
+  });
+}
+
+window.addEventListener("resize", () => {
+  if (!captureCropState.open || !captureCropState.loaded) {
+    return;
+  }
+  resizeCaptureCropCanvas();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || !captureCropState.open || captureCropState.applyRunning) {
+    return;
+  }
+  event.preventDefault();
+  closeCaptureCropModal();
+});
+
 const runJobButton = el("runJob");
 if (runJobButton) {
   runJobButton.addEventListener("click", onRun);
@@ -1421,6 +2226,11 @@ if (clearSetupLogButton) {
       logNode.textContent = "[안내] 로그를 지웠습니다.";
     }
   });
+}
+
+const clearCacheFilesButton = el("clearCacheFiles");
+if (clearCacheFilesButton) {
+  clearCacheFilesButton.addEventListener("click", onClearCacheFiles);
 }
 
 if (window.drumSheetAPI && typeof window.drumSheetAPI.onSetupLog === "function") {
@@ -1463,7 +2273,6 @@ bindStepNavigation();
 bindPresetButtons();
 updateSourceRows();
 updateManualTools();
-updateLayoutHintUi({ applyDefaults: false });
 updateCaptureSensitivityHelp();
 updateUpscaleUi();
 applyCapturePreset("basic", { withLog: false });
@@ -1472,6 +2281,8 @@ refreshBackendBridgeState();
 renderBackendBridgeState();
 setActiveMode("capture");
 setPipelineState({ currentStep: "queued", progress: 0, status: "queued", isYoutubeSource: sourceType() === "youtube" });
+syncResultReviewUi();
+syncAlwaysOnTopState();
 
 const filePathNode = el("filePath");
 if (sourceType() === "file" && filePathNode?.value) {

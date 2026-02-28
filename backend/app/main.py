@@ -3,25 +3,30 @@ from __future__ import annotations
 import hashlib
 import os
 import platform
+import shutil
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Dict
-from urllib.parse import unquote
+from typing import Any, Dict, List
 
+import cv2
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.job_store import Job, JobStatus, JobStore
 from app.schemas import (
-    AudioBeatTrackRequest,
-    AudioBeatTrackResponse,
     AudioSeparateRequest,
     AudioSeparateResponse,
+    CaptureCropRequest,
+    CaptureCropResponse,
+    CacheClearResponse,
+    CacheUsageResponse,
     JobCreate,
     JobCreateResponse,
     JobFileResponse,
+    JobReviewExportRequest,
+    JobReviewExportResponse,
     JobStatusResponse,
     PreviewFrameRequest,
     PreviewFrameResponse,
@@ -36,7 +41,6 @@ from app.pipeline.detect import detect_sheet_regions
 from app.pipeline.rectify import rectify_frames
 from app.pipeline.stitch import stitch_pages
 from app.pipeline.upscale import upscale_frames
-from app.pipeline.audio_beat import extract_audio_for_beat_input, track_beats_for_audio
 from app.pipeline.audio_uvr import separate_audio_stem
 from app.pipeline.torch_runtime import inspect_torch_runtime, select_torch_device
 from app.pipeline.export import export_frames
@@ -88,6 +92,44 @@ def runtime_status() -> RuntimeStatusResponse:
         }
     )
     return RuntimeStatusResponse(**payload)
+
+
+@app.post("/maintenance/clear-cache", response_model=CacheClearResponse)
+def clear_cache() -> CacheClearResponse:
+    active_jobs = job_store.active_job_ids()
+    if active_jobs:
+        raise HTTPException(status_code=409, detail="cache clear is blocked while jobs are running")
+
+    reclaimed_bytes = 0
+    cleared_paths = 0
+    skipped_paths: List[str] = []
+
+    for child in sorted(jobs_root.iterdir(), key=lambda item: item.name):
+        try:
+            reclaimed_bytes += _path_size_bytes(child)
+            _remove_path(child)
+            cleared_paths += 1
+        except OSError as exc:
+            skipped_paths.append(f"{child.name}: {exc}")
+
+    cleared_jobs = job_store.clear_all()
+    return CacheClearResponse(
+        cleared_paths=cleared_paths,
+        cleared_jobs=cleared_jobs,
+        reclaimed_bytes=int(max(0, reclaimed_bytes)),
+        reclaimed_human=_human_bytes(reclaimed_bytes),
+        skipped_paths=skipped_paths,
+    )
+
+
+@app.get("/maintenance/cache-usage", response_model=CacheUsageResponse)
+def cache_usage() -> CacheUsageResponse:
+    total_paths, total_bytes = _cache_usage_summary()
+    return CacheUsageResponse(
+        total_paths=total_paths,
+        total_bytes=int(max(0, total_bytes)),
+        total_human=_human_bytes(total_bytes),
+    )
 
 
 @app.post("/preview/frame", response_model=PreviewFrameResponse)
@@ -241,95 +283,6 @@ def audio_separate(payload: AudioSeparateRequest) -> AudioSeparateResponse:
         raise HTTPException(status_code=500, detail=f"audio separation failed: {exc}")
 
 
-@app.post("/audio/beat-track", response_model=AudioBeatTrackResponse)
-def audio_beat_track(payload: AudioBeatTrackRequest) -> AudioBeatTrackResponse:
-    try:
-        logs: list[str] = []
-
-        def _beat_log(message: str) -> None:
-            text = str(message or "").strip()
-            if text:
-                logs.append(text)
-
-        workspace = jobs_root / "_beat" / str(uuid.uuid4())
-        workspace.mkdir(parents=True, exist_ok=True)
-        _beat_log(f"beat tracking workspace: {workspace}")
-
-        options = payload.options
-        resolved_audio_path: Path
-        if payload.audio_path:
-            audio_path = unquote(str(payload.audio_path).strip())
-            path_candidates: list[Path] = [Path(audio_path)]
-            if audio_path.startswith("/jobs-files/"):
-                path_candidates.insert(0, jobs_root / audio_path.removeprefix("/jobs-files/").lstrip("/"))
-            if not audio_path.startswith("/") and audio_path.startswith("jobs-files/"):
-                path_candidates.insert(0, jobs_root / audio_path.removeprefix("jobs-files/").lstrip("/"))
-
-            resolved_audio_path = None
-            for candidate in path_candidates:
-                if candidate.exists():
-                    resolved_audio_path = candidate
-                    break
-
-            if resolved_audio_path is None:
-                raise HTTPException(status_code=400, detail="audio_path does not exist")
-            if not resolved_audio_path.exists():
-                raise HTTPException(status_code=400, detail="audio_path does not exist")
-            _beat_log(f"beat tracking input selected: {resolved_audio_path}")
-        else:
-            if payload.source_type == "file":
-                if not payload.file_path:
-                    raise HTTPException(status_code=400, detail="file_path is required when source_type is file")
-                source_path = Path(payload.file_path)
-                if not source_path.exists():
-                    raise HTTPException(status_code=400, detail="file_path does not exist")
-            if payload.source_type == "youtube" and not payload.youtube_url:
-                raise HTTPException(status_code=400, detail="youtube_url is required when source_type is youtube")
-
-            if payload.source_type == "youtube":
-                source_video, from_cache = _get_or_prepare_cached_youtube_video(payload.youtube_url or "", logger=_beat_log)
-                _beat_log("beat tracking source cache hit: youtube preview cache reused" if from_cache else "beat tracking source cache miss: youtube downloaded and cached")
-            else:
-                source_video = prepare_preview_source(
-                    source_type=payload.source_type,
-                    file_path=payload.file_path,
-                    youtube_url=payload.youtube_url,
-                    workspace=workspace / "source",
-                    logger=_beat_log,
-                )
-            resolved_audio_path = workspace / "input" / "source_audio.wav"
-            resolved_audio_path.parent.mkdir(parents=True, exist_ok=True)
-            extract_audio_for_beat_input(source_video=source_video, audio_output=resolved_audio_path)
-            _beat_log(f"beat tracking source audio extracted: {resolved_audio_path}")
-
-        result = track_beats_for_audio(
-            audio_input=resolved_audio_path,
-            options=options,
-            workspace=workspace / "result",
-            logger=_beat_log,
-        )
-
-        beat_tsv = result.get("beat_tsv")
-        beat_tsv_url = _to_jobs_files_url(Path(str(beat_tsv))) if beat_tsv else None
-        return AudioBeatTrackResponse(
-            audio_path=str(result.get("audio_path", resolved_audio_path)),
-            beats=[float(v) for v in result.get("beats", [])],
-            downbeats=[float(v) for v in result.get("downbeats", [])],
-            beat_count=int(result.get("beat_count", 0)),
-            downbeat_count=int(result.get("downbeat_count", 0)),
-            bpm=float(result["bpm"]) if result.get("bpm") is not None else None,
-            model=str(result.get("model", options.model)),
-            device=str(result.get("device", "unknown")),
-            beat_tsv=str(beat_tsv) if beat_tsv else None,
-            beat_tsv_url=beat_tsv_url,
-            log_tail=logs[-120:],
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"beat tracking failed: {exc}")
-
-
 @app.post("/jobs", response_model=JobCreateResponse)
 def create_job(payload: JobCreate) -> JobCreateResponse:
     if payload.source_type == "file":
@@ -375,6 +328,167 @@ def get_job_files(job_id: str) -> JobFileResponse:
     return JobFileResponse(
         images=images,
         pdf=str(result.get("pdf")) if result.get("pdf") else None,
+    )
+
+
+@app.post("/jobs/{job_id}/review-export", response_model=JobReviewExportResponse)
+def review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExportResponse:
+    job = job_store.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
+        raise HTTPException(status_code=409, detail="job is still running")
+
+    raw_inputs = payload.keep_captures if payload.keep_captures else payload.keep_images
+    keep_raw = [str(path or "").strip() for path in raw_inputs]
+    keep_raw = [path for path in keep_raw if path]
+    if not keep_raw:
+        raise HTTPException(status_code=400, detail="keep_captures must include at least one capture")
+
+    artifact_root = Path(job.artifact_dir).resolve()
+    resolved_paths: List[Path] = []
+    seen: set[str] = set()
+    for raw_path in keep_raw:
+        resolved = _resolve_capture_path_for_job(job=job, raw_path=raw_path, must_exist=True)
+        key = str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        resolved_paths.append(resolved)
+
+    if not resolved_paths:
+        raise HTTPException(status_code=400, detail="no valid captures selected")
+
+    configured_formats = ["png", "pdf"]
+    if isinstance(job.options, dict):
+        export_opts = job.options.get("export")
+        if isinstance(export_opts, dict):
+            candidate_formats = export_opts.get("formats")
+            if isinstance(candidate_formats, list):
+                configured_formats = [str(value) for value in candidate_formats if str(value).strip()]
+
+    requested_formats = payload.formats if payload.formats is not None else configured_formats
+    export_workspace = Path(job.artifact_dir) / "export"
+
+    try:
+        export_options = _build_export_options(formats=[str(value) for value in requested_formats])
+        _clear_export_workspace(export_workspace)
+        export_result = export_frames(
+            frame_paths=resolved_paths,
+            options=export_options,
+            workspace=export_workspace,
+            logger=lambda msg: _append(job_id, msg),
+            source_frames=None,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"review export failed: {exc}")
+
+    result = dict(job.result or {})
+    result["images"] = export_result.get("images", [])
+    result["pdf"] = export_result.get("pdf")
+    result["raw_frames"] = export_result.get("raw_frames", [])
+    result["output_dir"] = str(export_workspace)
+    result["review_candidates"] = [str(path) for path in resolved_paths]
+    result["review_export"] = {
+        "kept_count": len(resolved_paths),  # capture count
+        "requested_count": len(keep_raw),
+    }
+    job_store.set_state(
+        job_id,
+        JobStatus.DONE,
+        1.0,
+        "done",
+        "review export finished",
+        result=result,
+    )
+
+    return JobReviewExportResponse(
+        images=[str(path) for path in export_result.get("images", [])],
+        pdf=str(export_result.get("pdf")) if export_result.get("pdf") else None,
+        output_dir=str(export_workspace),
+        kept_count=len(resolved_paths),
+    )
+
+
+@app.post("/jobs/{job_id}/capture-crop", response_model=CaptureCropResponse)
+def crop_capture(job_id: str, payload: CaptureCropRequest) -> CaptureCropResponse:
+    job = job_store.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
+        raise HTTPException(status_code=409, detail="job is still running")
+
+    capture_path = _resolve_capture_path_for_job(job=job, raw_path=payload.capture_path, must_exist=True)
+    if len(payload.roi) != 4:
+        raise HTTPException(status_code=400, detail="roi must be 4 points: [[x,y], ...]")
+
+    coords: List[tuple[float, float]] = []
+    for point in payload.roi:
+        if not isinstance(point, list) or len(point) != 2:
+            raise HTTPException(status_code=400, detail="each roi point must be [x, y]")
+        x = float(point[0])
+        y = float(point[1])
+        if not (x == x and y == y):  # NaN guard
+            raise HTTPException(status_code=400, detail="roi includes invalid number")
+        coords.append((x, y))
+
+    image = cv2.imread(str(capture_path))
+    if image is None:
+        raise HTTPException(status_code=400, detail="capture file could not be read")
+
+    h, w = image.shape[:2]
+    xs = [max(0.0, min(float(w), point[0])) for point in coords]
+    ys = [max(0.0, min(float(h), point[1])) for point in coords]
+    x1 = int(round(min(xs)))
+    y1 = int(round(min(ys)))
+    x2 = int(round(max(xs)))
+    y2 = int(round(max(ys)))
+
+    min_size = 16
+    if x2 - x1 < min_size or y2 - y1 < min_size:
+        raise HTTPException(status_code=400, detail="roi is too small for capture crop")
+
+    cropped = image[y1:y2, x1:x2].copy()
+    if cropped.size == 0:
+        raise HTTPException(status_code=400, detail="capture crop produced empty image")
+
+    if not cv2.imwrite(str(capture_path), cropped):
+        raise HTTPException(status_code=500, detail="failed to save cropped capture")
+
+    result = dict(job.result or {})
+
+    def _is_same_capture_path(raw_entry: object) -> bool:
+        candidate_raw = str(raw_entry or "").strip()
+        if not candidate_raw:
+            return False
+        try:
+            candidate_resolved = _resolve_capture_path_for_job(job=job, raw_path=candidate_raw, must_exist=False)
+        except HTTPException:
+            return False
+        return candidate_resolved == capture_path
+
+    if isinstance(result.get("review_candidates"), list):
+        result["review_candidates"] = [
+            str(capture_path) if _is_same_capture_path(path) else str(path) for path in result["review_candidates"]
+        ]
+    if isinstance(result.get("upscaled_frames"), list):
+        result["upscaled_frames"] = [
+            str(capture_path) if _is_same_capture_path(path) else str(path) for path in result["upscaled_frames"]
+        ]
+    job_store.set_state(
+        job_id,
+        job.status,
+        job.progress,
+        job.current_step,
+        "capture crop saved",
+        result=result,
+    )
+    job_store.log(job_id, f"capture crop saved: {capture_path.name} ({x2 - x1}x{y2 - y1})")
+
+    return CaptureCropResponse(
+        capture_path=str(capture_path),
+        width=int(x2 - x1),
+        height=int(y2 - y1),
     )
 
 
@@ -428,6 +542,11 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
         )
         result["extracted_frames"] = [str(frame_path) for frame_path in frames]
         result["runtime"] = runtime_public_info(accel, ffmpeg_mode=runtime_capture.get("ffmpeg_mode"))
+        source_video_path = runtime_capture.get("source_video")
+        src_w, src_h = _detect_source_resolution(source_video_path=source_video_path, extracted_frames=frames)
+        if src_w > 0 and src_h > 0:
+            result["source_resolution"] = {"width": int(src_w), "height": int(src_h)}
+            job_store.log(job_id, f"source resolution: {src_w}x{src_h}")
         job_store.set_state(job_id, JobStatus.RUNNING, 0.2, "detecting", "frame extraction completed")
 
         if audio_opts.enable:
@@ -486,6 +605,7 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
             logger=lambda msg: _append(job_id, msg),
         )
         result["upscaled_frames"] = [str(path) for path in upscaled_paths] if upscale_opts.enable else []
+        result["review_candidates"] = [str(path) for path in upscaled_paths]
         upscale_message = "upscaling completed" if upscale_opts.enable else "upscaling skipped"
         job_store.set_state(job_id, JobStatus.RUNNING, 0.92, "exporting", upscale_message)
 
@@ -564,3 +684,148 @@ def _to_jobs_files_url(path: Path) -> str | None:
         return f"/jobs-files/{rel_path.as_posix()}"
     except ValueError:
         return None
+
+
+def _resolve_client_file_path(raw: str) -> Path:
+    value = str(raw or "").strip()
+    if value.startswith("/jobs-files/"):
+        rel = value[len("/jobs-files/") :].lstrip("/")
+        return jobs_root / rel
+    if value.startswith("jobs-files/"):
+        rel = value[len("jobs-files/") :].lstrip("/")
+        return jobs_root / rel
+    return Path(value).expanduser()
+
+
+def _resolve_capture_path_for_job(*, job: Job, raw_path: str, must_exist: bool) -> Path:
+    candidate = _resolve_client_file_path(raw_path)
+    resolved = candidate.resolve()
+
+    artifact_root = Path(job.artifact_dir).resolve()
+    try:
+        resolved.relative_to(artifact_root)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"capture path must be inside this job directory: {raw_path}")
+
+    if must_exist and (not resolved.exists() or not resolved.is_file()):
+        raise HTTPException(status_code=400, detail=f"capture file not found: {raw_path}")
+    if resolved.suffix.lower() not in {".png", ".jpg", ".jpeg"}:
+        raise HTTPException(status_code=400, detail=f"unsupported capture format: {raw_path}")
+    return resolved
+
+
+def _build_export_options(*, formats: List[str]):
+    from app.schemas import ExportOptions
+
+    tokens = [str(value or "").strip().lower() for value in formats]
+    normalized: List[str] = []
+    for token in tokens:
+        if token == "jpeg":
+            token = "jpg"
+        if token in {"png", "jpg", "pdf"} and token not in normalized:
+            normalized.append(token)
+    if not normalized:
+        normalized = ["png", "pdf"]
+    return ExportOptions(formats=normalized, include_raw_frames=False)
+
+
+def _clear_export_workspace(workspace: Path) -> None:
+    image_dir = workspace / "images"
+    raw_dir = workspace / "raw_frames"
+    for directory in (image_dir, raw_dir):
+        if not directory.exists():
+            continue
+        for pattern in ("*.png", "*.jpg", "*.jpeg"):
+            for file_path in directory.glob(pattern):
+                try:
+                    file_path.unlink()
+                except OSError:
+                    continue
+    pdf_path = workspace / "sheet_export.pdf"
+    if pdf_path.exists():
+        try:
+            pdf_path.unlink()
+        except OSError:
+            pass
+
+
+def _detect_source_resolution(*, source_video_path: str | None, extracted_frames: List[Path]) -> tuple[int, int]:
+    if source_video_path:
+        width, height = _probe_video_resolution(Path(source_video_path))
+        if width > 0 and height > 0:
+            return width, height
+
+    if extracted_frames:
+        frame = cv2.imread(str(extracted_frames[0]))
+        if frame is not None and frame.size > 0:
+            h, w = frame.shape[:2]
+            if w > 0 and h > 0:
+                return int(w), int(h)
+
+    return 0, 0
+
+
+def _probe_video_resolution(path: Path) -> tuple[int, int]:
+    if not path.exists():
+        return 0, 0
+    cap = cv2.VideoCapture(str(path))
+    if not cap.isOpened():
+        return 0, 0
+    try:
+        width = int(round(float(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)))
+        height = int(round(float(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)))
+        if width > 0 and height > 0:
+            return width, height
+        return 0, 0
+    finally:
+        cap.release()
+
+
+def _cache_usage_summary() -> tuple[int, int]:
+    total_bytes = 0
+    total_paths = 0
+    for child in jobs_root.iterdir():
+        total_paths += 1
+        total_bytes += _path_size_bytes(child)
+    return total_paths, int(max(0, total_bytes))
+
+
+def _path_size_bytes(path: Path) -> int:
+    if not path.exists():
+        return 0
+    if path.is_file() or path.is_symlink():
+        try:
+            return int(path.stat().st_size)
+        except OSError:
+            return 0
+
+    total = 0
+    for root, _, files in os.walk(path, topdown=True):
+        for file_name in files:
+            file_path = Path(root) / file_name
+            try:
+                total += int(file_path.stat().st_size)
+            except OSError:
+                continue
+    return int(max(0, total))
+
+
+def _remove_path(path: Path) -> None:
+    if not path.exists():
+        return
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+        return
+    path.unlink()
+
+
+def _human_bytes(size: int) -> str:
+    units = ["B", "KB", "MB", "GB", "TB"]
+    value = float(max(0, int(size)))
+    idx = 0
+    while value >= 1024.0 and idx < len(units) - 1:
+        value /= 1024.0
+        idx += 1
+    if idx == 0:
+        return f"{int(value)} {units[idx]}"
+    return f"{value:.1f} {units[idx]}"

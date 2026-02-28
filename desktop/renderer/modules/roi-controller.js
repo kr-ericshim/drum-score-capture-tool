@@ -134,13 +134,6 @@ export function createRoiController({ onPreviewLoadError }) {
       }
     });
 
-    const applyRoi = el("applyRoi");
-    if (applyRoi) {
-      applyRoi.addEventListener("click", () => {
-        applyCurrentRoi();
-      });
-    }
-
     window.addEventListener("keydown", (event) => {
       if (!roiRect || !hasResultImage() || !isImageReady()) {
         return;

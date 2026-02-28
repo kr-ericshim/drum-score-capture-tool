@@ -31,7 +31,7 @@ export function clearResultMeta() {
   }
 }
 
-const PIPELINE_IDS = ["pipeDownload", "pipeExtract", "pipeAudio", "pipeDetect", "pipeRectify", "pipeUpscale", "pipeExport"];
+const PIPELINE_IDS = ["pipeDownload", "pipeExtract", "pipeDetect", "pipeRectify", "pipeUpscale", "pipeExport"];
 
 function resolvePipelineIndex(currentStep, progress, isYoutubeSource) {
   const step = String(currentStep || "").toLowerCase();
@@ -46,7 +46,7 @@ function resolvePipelineIndex(currentStep, progress, isYoutubeSource) {
     if (pct < 0.36) {
       return 1;
     }
-    return 3;
+    return 2;
   }
   if (step === "separating_audio") {
     return 2;
@@ -56,12 +56,12 @@ function resolvePipelineIndex(currentStep, progress, isYoutubeSource) {
       return 3;
     }
     if (step === "stitching") {
-      return 4;
+      return 3;
     }
-    return 5;
+    return 4;
   }
   if (step === "exporting") {
-    return 6;
+    return 5;
   }
   return 0;
 }
@@ -95,48 +95,43 @@ export function renderResultMeta(job, friendlyStepName) {
       firstImagePath: "",
       hasResultImage: false,
       imagePaths: [],
+      capturePaths: [],
       pdfPath: "",
     };
   }
   const files = job.result || {};
   const lines = [];
 
-  lines.push(`작업 상태: ${friendlyStepName(job.status)}`);
+  lines.push(`현재 상태: ${friendlyStepName(job.status)}`);
   if (files.output_dir) {
-    lines.push(`출력 폴더: ${files.output_dir}`);
+    lines.push(`저장 폴더: ${files.output_dir}`);
   }
   if (files.pdf) {
     lines.push(`PDF 파일: ${files.pdf}`);
   }
   if (files.images?.length) {
-    lines.push(`저장된 이미지: ${files.images.length}장`);
+    const pageCount = Number(files.images.length || 0);
+    lines.push(`완성 페이지: ${pageCount}장`);
+    if (pageCount <= 2) {
+      lines.push("연주 편의: 페이지 넘김이 적은 편입니다.");
+    } else if (pageCount <= 4) {
+      lines.push("연주 편의: 페이지 넘김이 보통입니다.");
+    } else {
+      lines.push("연주 편의: 페이지가 많아요. 필요하면 스크롤 맞춤 모드를 시도해 보세요.");
+    }
+  }
+  if (files.review_export?.kept_count) {
+    lines.push(`검토 반영: 캡쳐 ${files.review_export.kept_count}개 유지`);
+  }
+  if (files.source_resolution?.width && files.source_resolution?.height) {
+    lines.push(`원본 영상 크기: ${files.source_resolution.width}x${files.source_resolution.height}`);
   }
   if (files.upscaled_frames?.length) {
-    lines.push(`업스케일 처리: ${files.upscaled_frames.length}장`);
-  }
-  if (files.audio_stem) {
-    lines.push(`드럼 분리 음원: ${files.audio_stem}`);
-  }
-  if (files.audio_model) {
-    lines.push(`드럼 분리 모델: ${files.audio_model} (${files.audio_device || "unknown"})`);
+    lines.push(`선명도 보정: ${files.upscaled_frames.length}장`);
   }
   if (files.runtime?.overall_mode) {
     const modeLabel = files.runtime.overall_mode === "gpu" ? "GPU" : "CPU";
-    lines.push(`가속 모드: ${modeLabel} (FFmpeg: ${files.runtime.ffmpeg_mode}, OpenCV: ${files.runtime.opencv_mode})`);
-    if (files.runtime.upscale_engine_hint) {
-      const hint = String(files.runtime.upscale_engine_hint || "").toLowerCase();
-      const hintLabel =
-        hint === "hat"
-          ? "HAT (Transformer SR)"
-          : hint === "ffmpeg_scale_vt"
-            ? "FFmpeg scale_vt (Metal)"
-            : hint === "opencv_cuda"
-              ? "OpenCV CUDA"
-              : hint === "opencv_opencl"
-                ? "OpenCV OpenCL"
-                : files.runtime.upscale_engine_hint;
-      lines.push(`업스케일 엔진: ${hintLabel}`);
-    }
+    lines.push(`처리 장치: ${modeLabel}`);
   }
 
   meta.textContent = lines.join("\n");
@@ -145,6 +140,13 @@ export function renderResultMeta(job, friendlyStepName) {
     firstImagePath: files.images?.[0] || "",
     hasResultImage: Boolean(files.images?.length),
     imagePaths: Array.isArray(files.images) ? files.images : [],
+    capturePaths: Array.isArray(files.review_candidates) && files.review_candidates.length
+      ? files.review_candidates
+      : Array.isArray(files.upscaled_frames) && files.upscaled_frames.length
+        ? files.upscaled_frames
+        : Array.isArray(files.stitched_frames)
+          ? files.stitched_frames
+          : [],
     pdfPath: files.pdf || "",
   };
 }

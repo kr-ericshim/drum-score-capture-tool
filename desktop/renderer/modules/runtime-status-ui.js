@@ -2,7 +2,7 @@ import { el } from "./dom.js";
 
 function formatMode(mode) {
   if (!mode) {
-    return "알 수 없음";
+    return "확인 중";
   }
   const value = String(mode).toLowerCase();
   if (value === "cpu") {
@@ -50,7 +50,8 @@ function formatAudioGpu(runtime) {
 }
 
 function formatEngineMini(runtime) {
-  const ffmpeg = String(runtime?.ffmpeg_mode || "unknown").toUpperCase();
+  const ffmpegMode = String(runtime?.ffmpeg_mode || "").toLowerCase();
+  const ffmpeg = ffmpegMode ? ffmpegMode.toUpperCase() : "확인 중";
   const opencv = formatMode(runtime?.opencv_mode || "cpu");
   return `${ffmpeg} / ${opencv}`;
 }
@@ -71,11 +72,11 @@ function summaryText(runtime) {
   if (overall === "gpu") {
     const audioGpuReady = Boolean(runtime.audio_gpu_ready);
     if (!audioGpuReady) {
-      return `GPU는 일부 단계에서만 사용 중입니다. 오디오 분리는 torch CUDA/MPS 상태를 따로 확인해야 합니다. (FFmpeg: ${ffmpeg}, OpenCV: ${opencv}, 업스케일: ${upscale})`;
+      return `영상/이미지 처리는 GPU를 우선 사용합니다. 오디오 분리는 환경에 따라 CPU로 전환될 수 있어요. (영상: ${ffmpeg}, 이미지: ${opencv}, 선명도: ${upscale})`;
     }
-    return `가속 가능한 단계는 GPU로 처리하고, 실패하면 자동으로 CPU로 전환합니다. (FFmpeg: ${ffmpeg}, OpenCV: ${opencv}, 업스케일: ${upscale})`;
+    return `가능한 단계는 GPU로 처리하고, 안 되면 자동으로 CPU로 전환합니다. (영상: ${ffmpeg}, 이미지: ${opencv}, 선명도: ${upscale})`;
   }
-  return `현재 환경에서는 CPU로 처리 중입니다. GPU 가속 가능 환경이면 자동 전환됩니다. (FFmpeg: ${ffmpeg}, OpenCV: ${opencv}, 업스케일: ${upscale})`;
+  return `현재는 CPU 중심으로 처리합니다. GPU 환경이 준비되면 자동으로 가속을 사용합니다. (영상: ${ffmpeg}, 이미지: ${opencv}, 선명도: ${upscale})`;
 }
 
 export function renderRuntimeStatus(runtime) {
@@ -147,22 +148,22 @@ export function renderRuntimeStatus(runtime) {
 export function renderRuntimeError() {
   const desc = el("runtimeMainDesc");
   if (desc) {
-    desc.textContent = "런타임 정보를 읽지 못했습니다.";
+    desc.textContent = "엔진 정보를 아직 읽는 중입니다. 잠시 후 다시 확인됩니다.";
   }
   const gpuMini = el("runtimeGpuMini");
   const engineMini = el("runtimeEngineMini");
   if (gpuMini) {
-    gpuMini.textContent = "확인 실패";
+    gpuMini.textContent = "연결 대기";
   }
   if (engineMini) {
-    engineMini.textContent = "확인 실패";
+    engineMini.textContent = "연결 대기";
   }
   const audioGpu = el("runtimeAudioGpu");
   const torch = el("runtimeTorch");
   if (audioGpu) {
-    audioGpu.textContent = "확인 실패";
+    audioGpu.textContent = "연결 대기";
   }
   if (torch) {
-    torch.textContent = "확인 실패";
+    torch.textContent = "연결 대기";
   }
 }
