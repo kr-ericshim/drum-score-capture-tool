@@ -24,7 +24,12 @@ const localBuilder = process.platform === "win32"
   : path.join(__dirname, "..", "node_modules", ".bin", "electron-builder");
 
 let command = localBuilder;
-let args = ["--config", path.join(__dirname, "..", "electron-builder.config.js")];
+let args = [
+  "--config",
+  path.join(__dirname, "..", "electron-builder.config.js"),
+  "--publish",
+  "never",
+];
 if (action === "pack") {
   args.unshift("--dir");
 }
