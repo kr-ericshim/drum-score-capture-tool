@@ -76,6 +76,17 @@ let lastSourceType = sourceType();
 let previewRequestToken = 0;
 let roiHealthRequestToken = 0;
 let roiHealthDebounceTimer = null;
+let youtubePrepareState = {
+  status: "idle",
+  fingerprint: "",
+  detail: "",
+  fromCache: false,
+  playable: "",
+};
+let roiFrameRequestState = {
+  status: "idle",
+  detail: "",
+};
 let setupRunning = false;
 let cacheClearRunning = false;
 let cacheUsageText = "";
@@ -135,6 +146,125 @@ function appendLocaleSetupLog(ko, en) {
 
 function appendLocaleSetupError(message) {
   appendSetupLogLine(`${L("오류", "Error")}: ${message}`);
+}
+
+function youtubePrepareStatusText(state = youtubePrepareState) {
+  if (sourceType() !== "youtube") {
+    return "";
+  }
+  const detail = compactErrorText(state.detail, "");
+  switch (state.status) {
+    case "preparing":
+      return L(
+        "유튜브 영상을 다운로드하고 있습니다. 첫 요청은 몇 초 이상 걸릴 수 있습니다.",
+        "Downloading the YouTube video. The first request can take several seconds.",
+      );
+    case "ready":
+      return state.fromCache
+        ? L("캐시된 영상을 사용합니다. 바로 악보 화면을 열 수 있습니다.", "Using the cached video. You can open the score frame immediately.")
+        : L("영상 준비 완료. 아래 플레이어에서 구간을 확인한 뒤 악보 화면을 열 수 있습니다.", "Video ready. Check the range below, then open the score frame.");
+    case "error":
+      return detail
+        ? L(`영상 준비 실패: ${detail}`, `Video preparation failed: ${detail}`)
+        : L("유튜브 영상을 준비하지 못했습니다. 다시 시도합니다.", "Could not prepare the YouTube video. Try again.");
+    default:
+      return L("유튜브 주소를 붙여넣고 영상 준비를 누르면 다운로드 상태가 여기 표시됩니다.", "Paste a YouTube URL and press Prepare Video to see download status here.");
+  }
+}
+
+function roiFrameRequestStatusText(state = roiFrameRequestState) {
+  const detail = compactErrorText(state.detail, "");
+  switch (state.status) {
+    case "loading":
+      return L("악보 화면용 대표 프레임을 추출하고 있습니다.", "Extracting a representative frame for ROI setup.");
+    case "ready":
+      return L("프레임 준비 완료. 악보 전체가 들어오도록 드래그합니다.", "Frame ready. Drag to include the full score area.");
+    case "error":
+      return detail
+        ? L(`프레임 준비 실패: ${detail}`, `Failed to prepare the frame: ${detail}`)
+        : L("악보 화면을 열지 못했습니다. 다시 시도합니다.", "Could not open the score frame. Try again.");
+    default:
+      return "";
+  }
+}
+
+function renderYoutubePrepareState() {
+  const button = el("prepareYoutubeVideo");
+  const statusNode = el("youtubePrepareStatus");
+  const isYoutube = sourceType() === "youtube";
+  if (button) {
+    if (youtubePrepareState.status === "preparing") {
+      button.textContent = L("준비 중...", "Preparing...");
+    } else if (youtubePrepareState.status === "ready") {
+      button.textContent = L("다시 준비", "Prepare Again");
+    } else if (youtubePrepareState.status === "error") {
+      button.textContent = L("다시 시도", "Try Again");
+    } else {
+      button.textContent = L("유튜브 영상 준비", "Prepare YouTube Video");
+    }
+  }
+  if (!statusNode) {
+    return;
+  }
+  statusNode.hidden = !isYoutube;
+  statusNode.dataset.tone = youtubePrepareState.status === "preparing"
+    ? "loading"
+    : youtubePrepareState.status === "ready"
+      ? "ready"
+      : youtubePrepareState.status === "error"
+        ? "error"
+        : "idle";
+  statusNode.textContent = youtubePrepareStatusText();
+}
+
+function renderRoiFrameRequestState() {
+  const button = el("loadPreviewForRoi");
+  const statusNode = el("roiFrameRequestStatus");
+  if (button) {
+    button.textContent = roiFrameRequestState.status === "loading"
+      ? L("불러오는 중...", "Loading...")
+      : L("악보 화면 열기", "Open Score Frame");
+  }
+  if (!statusNode) {
+    return;
+  }
+  const hasMessage = Boolean(roiFrameRequestStatusText());
+  statusNode.hidden = !hasMessage;
+  statusNode.dataset.tone = roiFrameRequestState.status === "loading"
+    ? "loading"
+    : roiFrameRequestState.status === "ready"
+      ? "ready"
+      : roiFrameRequestState.status === "error"
+        ? "error"
+        : "idle";
+  statusNode.textContent = roiFrameRequestStatusText();
+}
+
+function resetYoutubePrepareState() {
+  youtubePrepareState = {
+    status: "idle",
+    fingerprint: "",
+    detail: "",
+    fromCache: false,
+    playable: "",
+  };
+  renderYoutubePrepareState();
+}
+
+function setYoutubePrepareState(next) {
+  youtubePrepareState = {
+    ...youtubePrepareState,
+    ...next,
+  };
+  renderYoutubePrepareState();
+}
+
+function setRoiFrameRequestState(next) {
+  roiFrameRequestState = {
+    ...roiFrameRequestState,
+    ...next,
+  };
+  renderRoiFrameRequestState();
 }
 
 function defaultSetupLogText() {
@@ -1372,6 +1502,7 @@ function updateCaptureLayoutState() {
 function resetRoiForSourceChange({ silent = true } = {}) {
   previewRequestToken += 1;
   resetCurrentRoiHealthReport();
+  setRoiFrameRequestState({ status: "idle", detail: "" });
   const roiInput = el("roiInput");
   const hadRoi = Boolean(String(roiInput?.value || "").trim());
   currentPreviewFrame = {
@@ -1402,6 +1533,7 @@ function resetForSourceChange({ silent = true } = {}) {
   }
 
   runState = "idle";
+  resetYoutubePrepareState();
   resetRoiForSourceChange({ silent });
   videoRangePicker.clearMedia();
   videoRangePicker.clearRangeState();
@@ -1566,6 +1698,7 @@ function updateSourceRows() {
   if (youtubeTools) {
     youtubeTools.style.display = isYoutube ? "flex" : "none";
   }
+  renderYoutubePrepareState();
   videoRangePicker.onSourceTypeChange();
   refreshCaptureWorkflowUi();
 }
@@ -2623,9 +2756,13 @@ async function onLoadPreviewForRoi() {
         videoRangePicker.loadLocalFile(pickedPath);
       }
     }
+    setRoiFrameRequestState({ status: "loading", detail: "" });
     setStatus(statusText("악보 화면을 준비 중입니다", "Preparing score frame"));
     appendLocaleLog("악보 영역 지정 화면 요청", "Requested score-frame preview");
     roiController.clearPreview();
+    if (sourceType() === "youtube") {
+      await ensureYoutubePrepared({ reason: "frame" });
+    }
     const previewStartSec = videoRangePicker.getPreviewSecond();
     if (previewStartSec != null) {
       appendLocaleLog(`영역 지정 시점: ${previewStartSec.toFixed(1)}초`, `Preview moment: ${previewStartSec.toFixed(1)}s`);
@@ -2651,6 +2788,7 @@ async function onLoadPreviewForRoi() {
         "안내: 입력 값이 바뀌어 영역 지정 화면 요청이 취소되었습니다. 다시 눌러 주세요.",
         "Info: the input changed, so the preview request was canceled. Try again.",
       );
+      setRoiFrameRequestState({ status: "idle", detail: "" });
       setStatus(statusText("입력 변경으로 요청 취소됨", "Request canceled because input changed"));
       return false;
     }
@@ -2667,6 +2805,7 @@ async function onLoadPreviewForRoi() {
     roiController.showPreviewWithRoi(currentPreviewFrame.imagePath);
     roiController.setRoiEditorVisibility(true);
     roiController.setRoiEditMode(true);
+    setRoiFrameRequestState({ status: "ready", detail: "" });
     el("roiEditorWrap")?.scrollIntoView({ behavior: "smooth", block: "center" });
     setStatus(statusText("화면 준비 완료. 악보 부분을 드래그해 주세요", "Frame ready. Drag over the score area."));
     appendLocaleLog("영역 지정 화면 준비 완료", "Score-frame preview is ready");
@@ -2677,6 +2816,7 @@ async function onLoadPreviewForRoi() {
       return false;
     }
     appendLocaleError(error.message);
+    setRoiFrameRequestState({ status: "error", detail: error?.message || "" });
     setStatus(statusText("악보 화면을 불러오지 못했습니다", "Could not load the score frame"));
     return false;
   } finally {
@@ -2693,6 +2833,78 @@ async function onLockRoiFrame() {
     setStatus(statusText("현재 시점 프레임으로 갱신됨", "Updated with current frame"));
   }
   refreshCaptureWorkflowUi();
+}
+
+async function ensureYoutubePrepared({ reason = "manual" } = {}) {
+  if (sourceType() !== "youtube") {
+    return null;
+  }
+
+  const fingerprint = currentSourceFingerprint();
+  if (
+    youtubePrepareState.status === "ready" &&
+    youtubePrepareState.fingerprint === fingerprint &&
+    youtubePrepareState.playable &&
+    videoRangePicker.hasMediaLoaded?.()
+  ) {
+    return {
+      playable: youtubePrepareState.playable,
+      fromCache: youtubePrepareState.fromCache,
+      alreadyReady: true,
+    };
+  }
+
+  setYoutubePrepareState({
+    status: "preparing",
+    fingerprint,
+    detail: "",
+    fromCache: false,
+    playable: "",
+  });
+  if (reason === "manual") {
+    setStatus(statusText("유튜브 영상을 준비 중입니다", "Preparing YouTube video"));
+    appendLocaleLog("유튜브 영상 준비 요청", "Requested YouTube video preparation");
+  } else {
+    appendLocaleLog(
+      "악보 화면을 열기 전에 유튜브 영상을 먼저 준비합니다.",
+      "Preparing the YouTube video before opening the score frame.",
+    );
+  }
+
+  try {
+    const prepared = await requestPreviewSource(API_BASE);
+    const playable = prepared.video_url ? `${API_BASE}${prepared.video_url}` : prepared.video_path;
+    if (!playable) {
+      throw new Error(L("재생 가능한 유튜브 영상을 준비하지 못했어요.", "Could not prepare a playable YouTube video."));
+    }
+    if (fingerprint !== currentSourceFingerprint()) {
+      throw new Error(L("입력한 유튜브 주소가 바뀌었습니다. 다시 시도합니다.", "The YouTube URL changed. Try again."));
+    }
+    videoRangePicker.loadVideoSource(playable);
+    setYoutubePrepareState({
+      status: "ready",
+      fingerprint,
+      detail: "",
+      fromCache: Boolean(prepared.from_cache),
+      playable,
+    });
+    return {
+      playable,
+      fromCache: Boolean(prepared.from_cache),
+      alreadyReady: false,
+    };
+  } catch (error) {
+    if (fingerprint === currentSourceFingerprint()) {
+      setYoutubePrepareState({
+        status: "error",
+        fingerprint,
+        detail: error?.message || "",
+        fromCache: false,
+        playable: "",
+      });
+    }
+    throw error;
+  }
 }
 
 function onApplyRoiSelection() {
@@ -2730,18 +2942,19 @@ async function onPrepareYoutubeVideo() {
     if (button) {
       button.disabled = true;
     }
-    setStatus(statusText("유튜브 영상을 준비 중입니다", "Preparing YouTube video"));
-    appendLocaleLog("유튜브 영상 준비 요청", "Requested YouTube video preparation");
-    const prepared = await requestPreviewSource(API_BASE);
-    const playable = prepared.video_url ? `${API_BASE}${prepared.video_url}` : prepared.video_path;
-    if (!playable) {
-      throw new Error(L("재생 가능한 유튜브 영상을 준비하지 못했어요.", "Could not prepare a playable YouTube video."));
-    }
-    videoRangePicker.loadVideoSource(playable);
+    const prepared = await ensureYoutubePrepared({ reason: "manual" });
     setStatus(statusText("유튜브 영상 준비 완료", "YouTube video ready"));
     appendLocaleLog(
-      prepared.from_cache ? "캐시된 유튜브 영상 사용" : "유튜브 영상 다운로드 완료",
-      prepared.from_cache ? "Using cached YouTube video" : "YouTube video downloaded",
+      prepared.alreadyReady
+        ? "이미 준비된 유튜브 영상을 그대로 사용합니다."
+        : prepared.fromCache
+          ? "캐시된 유튜브 영상 사용"
+          : "유튜브 영상 다운로드 완료",
+      prepared.alreadyReady
+        ? "Using the already prepared YouTube video."
+        : prepared.fromCache
+          ? "Using cached YouTube video"
+          : "YouTube video downloaded",
     );
     refreshCaptureWorkflowUi();
   } catch (error) {
@@ -3161,6 +3374,8 @@ function refreshLocalizedUi() {
   }
   syncThemeToggleUi();
   syncLocaleToggleUi();
+  renderYoutubePrepareState();
+  renderRoiFrameRequestState();
   refreshAlwaysOnTopButton();
   renderBackendBridgeState();
   updateCaptureSensitivityHelp();
@@ -3191,6 +3406,8 @@ onLocaleChange(() => {
 });
 updateSourceRows();
 updateManualTools();
+renderYoutubePrepareState();
+renderRoiFrameRequestState();
 renderRoiAssist(null);
 updateCaptureSensitivityHelp();
 updateUpscaleUi();
