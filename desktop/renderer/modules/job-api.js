@@ -1,5 +1,10 @@
 import { el, parseJsonOrNull } from "./dom.js";
+import { getLocale } from "./i18n.js";
 import { friendlyApiError } from "./messages.js";
+
+function L(ko, en) {
+  return getLocale() === "ko" ? ko : en;
+}
 
 export function sourceType() {
   const checked = document.querySelector('input[name="sourceType"]:checked');
@@ -101,7 +106,7 @@ export function buildPayload() {
   const stitchEnabled = checkedValue("enableStitch", false);
   const parsedRoi = parseManualRoi();
   if (!parsedRoi) {
-    throw new Error("악보 영역 좌표가 필요합니다. 3단계에서 미리보기 화면을 불러와 드래그로 지정해 주세요.");
+    throw new Error(L("악보 영역 좌표가 필요합니다. 3단계에서 미리보기 화면을 불러온 뒤 드래그로 지정합니다.", "ROI coordinates are required. Open a preview in step 3 and drag the score area."));
   }
   const inferredLayoutHint = inferLayoutHintFromRoi(parsedRoi, {
     sourceType: type,
@@ -135,14 +140,6 @@ export function buildPayload() {
         scale: numberOrDefault("upscaleFactor", 2.0),
         gpu_only: true,
       },
-      audio: {
-        enable: false,
-        engine: "uvr_demucs",
-        model: "htdemucs",
-        stem: "drums",
-        output_format: "wav",
-        gpu_only: false,
-      },
       export: {
         formats: getFormats(),
         include_raw_frames: false,
@@ -154,18 +151,18 @@ export function buildPayload() {
   if (type === "file") {
     body.file_path = textValue("filePath", "").trim();
     if (!body.file_path) {
-      throw new Error("로컬 파일을 선택해 주세요.");
+      throw new Error(L("로컬 파일을 선택합니다.", "Select a local file."));
     }
   } else {
     body.youtube_url = textValue("youtubeUrl", "").trim();
     if (!body.youtube_url) {
-      throw new Error("유튜브 URL을 입력해 주세요.");
+      throw new Error(L("유튜브 URL을 입력합니다.", "Enter a YouTube URL."));
     }
   }
 
   const formats = getFormats();
   if (!formats.length) {
-    throw new Error("최소 하나의 출력 형식을 선택해 주세요.");
+    throw new Error(L("최소 하나의 출력 형식을 선택합니다.", "Choose at least one export format."));
   }
   body.options.export.formats = formats;
 
@@ -180,8 +177,8 @@ export async function createJob(apiBase) {
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: "요청 실패" }));
-    throw new Error(friendlyApiError(error.detail || "요청 실패"));
+    const error = await response.json().catch(() => ({ detail: L("요청 실패", "Request failed") }));
+    throw new Error(friendlyApiError(error.detail || L("요청 실패", "Request failed")));
   }
   const data = await response.json();
   return data.job_id;
@@ -190,7 +187,7 @@ export async function createJob(apiBase) {
 export async function getJob(apiBase, jobId) {
   const response = await fetch(`${apiBase}/jobs/${jobId}`);
   if (!response.ok) {
-    throw new Error("작업 조회 실패");
+    throw new Error(L("작업 조회 실패", "Failed to fetch job status."));
   }
   return response.json();
 }
@@ -198,7 +195,7 @@ export async function getJob(apiBase, jobId) {
 export async function reviewExport(apiBase, jobId, { keepCaptures = [], formats = null } = {}) {
   const selected = Array.isArray(keepCaptures) ? keepCaptures.map((value) => String(value || "").trim()).filter(Boolean) : [];
   if (!selected.length) {
-    throw new Error("검토 반영을 위해 포함할 캡쳐를 최소 1개 선택해 주세요.");
+    throw new Error(L("검토 반영을 위해 포함할 캡처를 최소 1개 선택합니다.", "Select at least one capture to keep before applying review."));
   }
   const body = {
     keep_captures: selected,
@@ -213,8 +210,8 @@ export async function reviewExport(apiBase, jobId, { keepCaptures = [], formats 
     body: JSON.stringify(body),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: "검토 반영 실패" }));
-    throw new Error(friendlyApiError(error.detail || "검토 반영 실패"));
+    const error = await response.json().catch(() => ({ detail: L("검토 반영 실패", "Review apply failed") }));
+    throw new Error(friendlyApiError(error.detail || L("검토 반영 실패", "Review apply failed")));
   }
   return response.json();
 }
@@ -222,10 +219,10 @@ export async function reviewExport(apiBase, jobId, { keepCaptures = [], formats 
 export async function cropCapture(apiBase, jobId, { capturePath = "", roi = [] } = {}) {
   const path = String(capturePath || "").trim();
   if (!path) {
-    throw new Error("자르기 대상 캡쳐 경로가 비어 있어요.");
+    throw new Error(L("자르기 대상 캡처 경로가 비어 있습니다.", "The capture path is empty."));
   }
   if (!Array.isArray(roi) || roi.length !== 4) {
-    throw new Error("자르기 영역이 올바르지 않습니다. 다시 드래그해 주세요.");
+    throw new Error(L("자르기 영역이 올바르지 않습니다. 영역을 다시 지정합니다.", "The crop area is invalid. Set it again."));
   }
 
   const response = await fetch(`${apiBase}/jobs/${jobId}/capture-crop`, {
@@ -237,8 +234,8 @@ export async function cropCapture(apiBase, jobId, { capturePath = "", roi = [] }
     }),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: "캡쳐 자르기 실패" }));
-    throw new Error(friendlyApiError(error.detail || "캡쳐 자르기 실패"));
+    const error = await response.json().catch(() => ({ detail: L("캡처 자르기 실패", "Recrop failed") }));
+    throw new Error(friendlyApiError(error.detail || L("캡처 자르기 실패", "Recrop failed")));
   }
   return response.json();
 }
@@ -246,7 +243,7 @@ export async function cropCapture(apiBase, jobId, { capturePath = "", roi = [] }
 export async function getRuntimeStatus(apiBase) {
   const response = await fetch(`${apiBase}/runtime`);
   if (!response.ok) {
-    throw new Error("런타임 정보 조회 실패");
+    throw new Error(L("런타임 정보 조회 실패", "Failed to load runtime information."));
   }
   return response.json();
 }
@@ -256,8 +253,8 @@ export async function clearCache(apiBase) {
     method: "POST",
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: "캐시 정리 실패" }));
-    throw new Error(friendlyApiError(error.detail || "캐시 정리 실패"));
+    const error = await response.json().catch(() => ({ detail: L("캐시 정리 실패", "Cache clear failed") }));
+    throw new Error(friendlyApiError(error.detail || L("캐시 정리 실패", "Cache clear failed")));
   }
   return response.json();
 }
@@ -265,7 +262,7 @@ export async function clearCache(apiBase) {
 export async function getCacheUsage(apiBase) {
   const response = await fetch(`${apiBase}/maintenance/cache-usage`);
   if (!response.ok) {
-    throw new Error("캐시 용량 조회 실패");
+    throw new Error(L("캐시 용량 조회 실패", "Failed to load cache usage."));
   }
   return response.json();
 }
@@ -277,12 +274,12 @@ function buildSourcePayload() {
   if (type === "file") {
     payload.file_path = textValue("filePath", "").trim();
     if (!payload.file_path) {
-      throw new Error("로컬 파일을 먼저 선택해 주세요.");
+      throw new Error(L("로컬 파일을 먼저 선택합니다.", "Select a local file first."));
     }
   } else {
     payload.youtube_url = textValue("youtubeUrl", "").trim();
     if (!payload.youtube_url) {
-      throw new Error("유튜브 주소를 먼저 입력해 주세요.");
+      throw new Error(L("유튜브 주소를 먼저 입력합니다.", "Enter a YouTube URL first."));
     }
   }
   return payload;
@@ -296,8 +293,8 @@ export async function requestPreviewSource(apiBase) {
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: "영상 준비 실패" }));
-    throw new Error(friendlyApiError(error.detail || "영상 준비 실패"));
+    const error = await response.json().catch(() => ({ detail: L("영상 준비 실패", "Source preparation failed") }));
+    throw new Error(friendlyApiError(error.detail || L("영상 준비 실패", "Source preparation failed")));
   }
   return response.json();
 }
@@ -314,12 +311,12 @@ function buildPreviewPayload(startSecOverride = null) {
   if (type === "file") {
     payload.file_path = textValue("filePath", "").trim();
     if (!payload.file_path) {
-      throw new Error("로컬 파일을 먼저 선택해 주세요.");
+      throw new Error(L("로컬 파일을 먼저 선택합니다.", "Select a local file first."));
     }
   } else {
     payload.youtube_url = textValue("youtubeUrl", "").trim();
     if (!payload.youtube_url) {
-      throw new Error("유튜브 주소를 먼저 입력해 주세요.");
+      throw new Error(L("유튜브 주소를 먼저 입력합니다.", "Enter a YouTube URL first."));
     }
   }
 
@@ -334,12 +331,38 @@ export async function requestPreviewFrame(apiBase, { startSecOverride = null } =
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: "미리보기 생성 실패" }));
-    throw new Error(friendlyApiError(error.detail || "미리보기 생성 실패"));
+    const error = await response.json().catch(() => ({ detail: L("미리보기 생성 실패", "Preview generation failed") }));
+    throw new Error(friendlyApiError(error.detail || L("미리보기 생성 실패", "Preview generation failed")));
   }
   const data = await response.json();
-  if (data.image_url) {
-    return data.image_url.startsWith("http") ? data.image_url : `${apiBase}${data.image_url}`;
+  const resolvedImagePath = data.image_url
+    ? data.image_url.startsWith("http")
+      ? data.image_url
+      : `${apiBase}${data.image_url}`
+    : data.image_path;
+  return {
+    imagePath: resolvedImagePath,
+    sourcePath: data.image_path,
+    diagnostics: Array.isArray(data.diagnostics) ? data.diagnostics : [],
+  };
+}
+
+export async function requestPreviewRoiHealth(apiBase, { roi, startSecOverride = null } = {}) {
+  if (!Array.isArray(roi) || roi.length !== 4) {
+    throw new Error(L("ROI 좌표가 올바르지 않습니다.", "ROI coordinates are invalid."));
   }
-  return data.image_path;
+  const payload = {
+    ...buildPreviewPayload(startSecOverride),
+    roi,
+  };
+  const response = await fetch(`${apiBase}/preview/roi-health`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: L("ROI 점검 실패", "ROI diagnostics failed") }));
+    throw new Error(friendlyApiError(error.detail || L("ROI 점검 실패", "ROI diagnostics failed")));
+  }
+  return response.json();
 }

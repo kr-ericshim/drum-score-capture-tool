@@ -1,218 +1,113 @@
 <!doctype html>
-<html lang="ko">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Drum Sheet Capture Tool</title>
+    <script>
+      (() => {
+        const themeKey = "drum-sheet-theme";
+        const localeKey = "drum-sheet-language";
+        const savedTheme = localStorage.getItem(themeKey);
+        const theme = savedTheme === "light" || savedTheme === "dark"
+          ? savedTheme
+          : (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        const savedLocale = localStorage.getItem(localeKey);
+        const locale = savedLocale === "ko" || savedLocale === "en"
+          ? savedLocale
+          : ((navigator.language || "").toLowerCase().startsWith("ko") ? "ko" : "en");
+        document.documentElement.setAttribute("data-theme", theme);
+        document.documentElement.lang = locale;
+      })();
+    </script>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
-    <main class="layout">
-      <header class="hero">
-        <div class="hero-copy">
-          <p class="hero-eyebrow">로컬 데스크톱 도구</p>
-          <h1>Drum Sheet Capture Tool</h1>
-          <p class="hero-subtitle">영상에서 악보 부분만 깔끔하게 뽑아서 이미지/PDF로 저장해요.</p>
+    <main class="layout utility-layout">
+      <header class="utility-header">
+        <div class="utility-header-copy">
+          <p class="utility-kicker" data-i18n="header.kicker">Drum Sheet Capture</p>
+          <h1 data-i18n="header.title">드럼 악보 캡처</h1>
+          <p class="utility-subtitle" data-i18n="header.subtitle">영상에서 악보 영역을 지정해 PNG, JPG, PDF로 저장합니다.</p>
         </div>
-        <div class="hero-badges">
-          <span class="hero-badge">인터넷 업로드 없음</span>
-          <span class="hero-badge">마우스로 영역 지정</span>
-          <span class="hero-badge">PNG / JPG / PDF 저장</span>
+        <div class="utility-header-actions">
+          <button id="heroStart" class="primary utility-start-button" type="button" data-i18n="header.start">영상 선택</button>
+          <div class="locale-toggle" role="group" data-i18n-aria-label="header.languageToggle" aria-label="Language">
+            <button id="localeKo" class="locale-toggle-btn" type="button" data-locale="ko" data-i18n="language.ko">KO</button>
+            <button id="localeEn" class="locale-toggle-btn" type="button" data-locale="en" data-i18n="language.en">EN</button>
+          </div>
+          <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle theme" title="Toggle theme">
+            <span class="theme-toggle-track">
+              <span class="theme-toggle-thumb">
+                <span class="theme-icon theme-icon-sun" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                    <circle cx="12" cy="12" r="4.2"></circle>
+                    <path d="M12 2.5v2.2M12 19.3v2.2M4.93 4.93l1.56 1.56M17.51 17.51l1.56 1.56M2.5 12h2.2M19.3 12h2.2M4.93 19.07l1.56-1.56M17.51 6.49l1.56-1.56"></path>
+                  </svg>
+                </span>
+                <span class="theme-icon theme-icon-moon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M20.2 14.1A8.6 8.6 0 0 1 9.9 3.8a.8.8 0 0 0-1-.97A10 10 0 1 0 21.17 15.1a.8.8 0 0 0-.97-1Z"></path>
+                  </svg>
+                </span>
+              </span>
+            </span>
+          </button>
         </div>
       </header>
 
-      <section class="mode-nav" aria-label="workflow">
-        <button id="tabCapture" class="mode-tab mode-tab-active" type="button">악보 캡처</button>
-        <button id="tabAudio" class="mode-tab" type="button">드럼 음원 분리</button>
-      </section>
-
-      <section class="panel panel-runtime runtime-toolbar-panel">
-        <div class="runtime-toolbar">
-          <span id="runtimeOverallChip" class="runtime-chip runtime-chip-cpu">확인 중</span>
-          <span class="runtime-mini-badge">실행 장치: <strong id="runtimeGpuMini">연결 대기</strong></span>
-          <span class="runtime-mini-badge">처리 방식: <strong id="runtimeEngineMini">연결 대기</strong></span>
+      <section class="panel utility-status-strip capture-panel" data-i18n-aria-label="header.workflowAria" aria-label="capture workflow">
+        <div class="utility-step-strip">
+          <button id="stepperSource" class="stepper-item stepper-item-active" type="button">
+            <span class="stepper-number">1</span>
+            <span class="stepper-label" data-i18n="step.source">영상 선택</span>
+            <span id="stepBadgeSource" class="stepper-summary" data-i18n="step.source.pending">입력 대기</span>
+          </button>
+          <button id="stepperRoi" class="stepper-item" type="button">
+            <span class="stepper-number">2</span>
+            <span class="stepper-label" data-i18n="step.roi">영역 지정</span>
+            <span id="stepBadgeRoi" class="stepper-summary" data-i18n="step.roi.pending">미설정</span>
+          </button>
+          <button id="stepperExport" class="stepper-item" type="button">
+            <span class="stepper-number">3</span>
+            <span class="stepper-label" data-i18n="step.export">저장</span>
+            <span id="stepBadgeExport" class="stepper-summary" data-i18n="step.export.pending">형식 확인</span>
+          </button>
         </div>
-        <p class="runtime-calm-note">여기 정보는 몰라도 괜찮아요. 영상만 고르면 바로 시작할 수 있습니다.</p>
-        <details class="runtime-details setup-details">
-          <summary>문제 생기면 눌러주세요: 자동 설치/복구</summary>
-          <div class="setup-panel">
-            <div class="setup-head">
-              <span id="backendBridgeChip" class="setup-chip setup-chip-warn">엔진 확인 중</span>
-              <p id="backendBridgeText" class="setup-desc">로컬 엔진 연결 상태를 확인하고 있습니다.</p>
-            </div>
-            <div class="result-actions setup-actions">
-              <button id="runGuidedSetup" type="button">자동 설치/복구</button>
-              <button id="restartBackend" type="button" class="secondary">엔진 다시 연결</button>
-              <button id="clearCacheFiles" type="button" class="secondary">캐시 정리</button>
-              <button id="clearSetupLog" type="button" class="secondary">로그 지우기</button>
-            </div>
-            <p class="helper-text">캐시 정리는 이전 결과 파일을 비워 저장공간을 확보합니다.</p>
-            <pre id="setupLog" class="setup-log">[안내] 문제가 생기면 여기 로그를 보고 원인을 빠르게 확인할 수 있어요.</pre>
-          </div>
-        </details>
-        <details class="runtime-details">
-          <summary>고급 정보 보기 (선택)</summary>
-          <div class="runtime-grid">
-            <article class="runtime-card runtime-primary">
-              <h3 id="runtimeMainTitle">런타임 정보 확인 중</h3>
-              <p id="runtimeMainDesc">로딩 중입니다...</p>
-            </article>
-            <article class="runtime-card">
-              <div class="runtime-list">
-                <div class="runtime-row"><span>영상 추출 (FFmpeg)</span><strong id="runtimeFfmpeg">확인 중</strong></div>
-                <div class="runtime-row"><span>이미지 처리 (OpenCV)</span><strong id="runtimeOpencv">확인 중</strong></div>
-                <div class="runtime-row"><span>오디오 분리 (torch)</span><strong id="runtimeAudioGpu">확인 중</strong></div>
-                <div class="runtime-row"><span>선명도 엔진</span><strong id="runtimeUpscale">확인 중</strong></div>
-                <div class="runtime-row"><span>GPU 이름</span><strong id="runtimeGpu">확인 중</strong></div>
-                <div class="runtime-row"><span>CPU 이름</span><strong id="runtimeCpu">확인 중</strong></div>
-                <div class="runtime-row"><span>Torch 상태</span><strong id="runtimeTorch">확인 중</strong></div>
-                <div class="runtime-row runtime-row-order"><span>FFmpeg 우선순위</span><strong id="runtimeOrder">확인 중</strong></div>
-              </div>
-            </article>
-          </div>
-        </details>
-      </section>
-
-      <section class="panel panel-quickstart capture-panel">
-        <div class="panel-head">
-          <h2>처음엔 이렇게 해보세요 (15초)</h2>
-          <p>아래 4가지만 채우고 처리 시작을 누르면 됩니다.</p>
-        </div>
-        <div class="quickstart-grid">
-          <article class="quickstart-item">
-            <span class="quickstart-num">1</span>
-            <strong>영상 선택</strong>
-            <p>로컬 파일 또는 유튜브 주소를 입력하세요.</p>
-          </article>
-          <article class="quickstart-item">
-            <span class="quickstart-num">2</span>
-            <strong>구간 정하기</strong>
-            <p>필요한 부분만 시작/끝으로 지정하면 더 빨라요.</p>
-          </article>
-          <article class="quickstart-item">
-            <span class="quickstart-num">3</span>
-            <strong>악보 위치 드래그</strong>
-            <p>악보 부분을 네모 박스로 한 번만 잡아주세요.</p>
-          </article>
-          <article class="quickstart-item">
-            <span class="quickstart-num">4</span>
-            <strong>저장 형식 선택</strong>
-            <p>PNG/PDF를 고르고 바로 시작하면 됩니다.</p>
-          </article>
+        <div class="utility-runtime-strip">
+          <span id="runtimeOverallChip" class="runtime-chip runtime-chip-cpu" data-i18n="runtime.checking">확인 중</span>
+          <span class="runtime-mini-badge"><span data-i18n="runtime.deviceLabel">장치</span> <strong id="runtimeGpuMini" data-i18n="runtime.waiting">연결 대기</strong></span>
+          <span class="runtime-mini-badge"><span data-i18n="runtime.engineLabel">엔진</span> <strong id="runtimeEngineMini" data-i18n="runtime.waiting">연결 대기</strong></span>
         </div>
       </section>
 
-      <section class="capture-stepper capture-panel" aria-label="capture workflow">
-        <button id="stepperSource" class="stepper-item stepper-item-active" type="button">
-          <span class="stepper-number">1</span>
-          <span class="stepper-label">영상 고르기</span>
-          <span id="stepBadgeSource" class="stepper-summary">영상 필요</span>
-        </button>
-        <button id="stepperRange" class="stepper-item" type="button">
-          <span class="stepper-number">2</span>
-          <span class="stepper-label">구간 정하기</span>
-          <span id="stepBadgeRange" class="stepper-summary">기본: 전체</span>
-        </button>
-        <button id="stepperRoi" class="stepper-item" type="button">
-          <span class="stepper-number">3</span>
-          <span class="stepper-label">악보 위치</span>
-          <span id="stepBadgeRoi" class="stepper-summary">영역 필요</span>
-        </button>
-        <button id="stepperExport" class="stepper-item" type="button">
-          <span class="stepper-number">4</span>
-          <span class="stepper-label">저장하기</span>
-          <span id="stepBadgeExport" class="stepper-summary">PNG/PDF</span>
-        </button>
-      </section>
-
+      <div class="utility-shell">
+        <div class="utility-main">
       <section class="panel panel-step panel-step-source capture-panel">
         <details id="stepSourceDetails" class="step-details" open>
           <summary>
-            <span class="step-title"><span class="step-dot">1</span>영상 고르기</span>
-            <span id="stepSourceSummary" class="step-summary-badge">아직 안 골랐어요</span>
+            <span class="step-title"><span class="step-dot">1</span><span data-i18n="step.source">영상 선택</span></span>
+            <span id="stepSourceSummary" class="step-summary-badge" data-i18n="step.source.required">선택 필요</span>
           </summary>
           <div class="step-body">
-            <p class="helper-text">로컬 파일 또는 유튜브 URL 중 하나만 고르면 됩니다.</p>
+            <p class="helper-text" data-i18n="source.helper">로컬 파일 또는 유튜브 주소 중 하나를 입력합니다.</p>
             <div class="choice-row">
-              <label class="choice-chip"><input type="radio" name="sourceType" value="file" checked /> 로컬 파일</label>
-              <label class="choice-chip"><input type="radio" name="sourceType" value="youtube" /> 유튜브 URL</label>
+              <label class="choice-chip"><input type="radio" name="sourceType" value="file" checked /> <span data-i18n="source.file">로컬 파일</span></label>
+              <label class="choice-chip"><input type="radio" name="sourceType" value="youtube" /> <span data-i18n="source.youtube">유튜브 URL</span></label>
             </div>
             <div class="control-row" id="fileRow">
-              <input id="filePath" type="text" placeholder="영상 파일을 선택하세요" readonly />
-              <button id="browseFile" class="secondary">파일 선택</button>
-              <button id="copySourcePath" class="secondary" type="button">경로 복사</button>
+              <input id="filePath" type="text" data-i18n-placeholder="source.filePlaceholder" placeholder="영상 파일을 선택합니다" readonly />
+              <button id="browseFile" class="secondary" data-i18n="source.browse">파일 선택</button>
+              <button id="copySourcePath" class="secondary" type="button" data-i18n="source.copyPath">경로 복사</button>
             </div>
             <div class="control-row" id="youtubeRow" style="display: none">
-              <input id="youtubeUrl" type="text" placeholder="유튜브 주소를 붙여넣으세요 (https://www.youtube.com/...)" />
+              <input id="youtubeUrl" type="text" data-i18n-placeholder="source.youtubePlaceholder" placeholder="유튜브 주소를 입력합니다 (https://www.youtube.com/...)" />
             </div>
             <div class="result-actions" id="youtubePrepareTools" style="display: none">
-              <button id="prepareYoutubeVideo" type="button" class="secondary">유튜브 영상 준비</button>
-              <span class="helper-text">처음 1회는 조금 걸릴 수 있어요. 준비가 끝나면 아래 플레이어에서 시작/끝을 쉽게 정할 수 있습니다.</span>
+              <button id="prepareYoutubeVideo" type="button" class="secondary" data-i18n="source.prepareYoutube">유튜브 영상 준비</button>
+              <span class="helper-text" data-i18n="source.prepareHint">준비가 끝나면 아래에서 대표 프레임과 처리 구간을 확인할 수 있습니다.</span>
             </div>
-            <p class="helper-text">유튜브 다운로드 옵션은 영상 정책/환경에 따라 변동될 수 있습니다.</p>
-          </div>
-        </details>
-      </section>
-
-      <section class="panel panel-step panel-step-range capture-panel">
-        <details id="stepRangeDetails" class="step-details">
-          <summary>
-            <span class="step-title"><span class="step-dot">2</span>구간 정하기</span>
-            <span id="stepRangeSummary" class="step-summary-badge">전체 구간</span>
-          </summary>
-          <div class="step-body">
-            <p class="helper-text">필요한 부분만 지정하면 처리 시간이 줄고 결과가 더 깔끔해집니다.</p>
-            <div class="field-grid">
-              <label class="field">
-                <span>장면 캡처 양</span>
-                <select id="captureSensitivity">
-                  <option value="low">낮음 (중복 적게)</option>
-                  <option value="medium" selected>보통 (추천)</option>
-                  <option value="high">높음 (세밀하게)</option>
-                </select>
-                <small id="captureSensitivityHelp" class="field-help">플레이헤드 같은 작은 움직임은 최대한 무시하고, 실제 악보 변화 위주로 캡처합니다.</small>
-              </label>
-              <label class="field">
-                <span>시작 시간 (초, 선택)</span>
-                <input id="startSec" type="number" value="" step="0.1" min="0" />
-                <small id="startHuman" class="field-help">mm:ss -</small>
-              </label>
-              <label class="field">
-                <span>끝 시간 (초, 선택)</span>
-                <input id="endSec" type="number" value="" step="0.1" min="0" />
-                <small id="endHuman" class="field-help">mm:ss -</small>
-              </label>
-            </div>
-            <div id="localRangeHelper" class="video-helper" style="display: none">
-              <p class="video-helper-title">영상을 보면서 시작/끝 고르기</p>
-              <video id="rangeVideo" class="range-video" preload="metadata"></video>
-              <div class="result-actions range-preview-actions">
-                <button id="videoPlayPause" type="button" class="secondary" disabled>재생</button>
-                <button id="videoBack5" type="button" class="secondary" disabled>5초 뒤로</button>
-                <button id="videoForward5" type="button" class="secondary" disabled>5초 앞으로</button>
-              </div>
-              <div class="range-time-row">
-                <span id="videoCurrent">00:00.0</span>
-                <input id="videoSeek" type="range" min="0" max="0" value="0" step="0.1" disabled />
-                <span id="videoDuration">00:00.0</span>
-              </div>
-              <div class="range-sliders">
-                <label class="field">
-                  <span>시작 슬라이더</span>
-                  <input id="startSlider" type="range" min="0" max="0" value="0" step="0.1" disabled />
-                </label>
-                <label class="field">
-                  <span>끝 슬라이더</span>
-                  <input id="endSlider" type="range" min="0" max="0" value="0" step="0.1" disabled />
-                </label>
-              </div>
-              <div class="result-actions">
-                <button id="setStartAtCurrent" type="button" class="secondary" disabled>현재 시점을 시작으로</button>
-                <button id="setEndAtCurrent" type="button" class="secondary" disabled>현재 시점을 끝으로</button>
-                <button id="clearRange" type="button" class="secondary" disabled>시작/끝 초기화</button>
-              </div>
-              <p id="videoHelperHint" class="helper-text">로컬 파일을 선택하면 아래 플레이어에서 시작/끝 시간을 슬라이더로 쉽게 고를 수 있어요.</p>
-            </div>
+            <p class="helper-text" data-i18n="source.downloadHint">유튜브 다운로드 가능 여부는 영상 정책과 실행 환경에 따라 달라질 수 있습니다.</p>
           </div>
         </details>
       </section>
@@ -220,138 +115,254 @@
       <section class="panel panel-step panel-step-roi capture-panel">
         <details id="stepRoiDetails" class="step-details">
           <summary>
-            <span class="step-title"><span class="step-dot">3</span>악보 위치 잡기</span>
-            <span id="stepRoiSummary" class="step-summary-badge">영역 아직 없음</span>
+            <span class="step-title"><span class="step-dot">2</span><span data-i18n="step.roi">악보 영역 지정</span></span>
+            <span id="stepRoiSummary" class="step-summary-badge" data-i18n="step.roi.required">영역 지정 필요</span>
           </summary>
           <div class="step-body">
-            <p class="helper-text">악보 영역은 직접 지정 방식만 사용합니다.</p>
+            <div class="roi-step-intro">
+              <div>
+                <p class="roi-step-eyebrow" data-i18n="roi.eyebrow">중요 단계</p>
+                <h3 data-i18n="roi.title">악보 영역을 지정합니다</h3>
+                <p class="helper-text" data-i18n="roi.helper">프레임을 불러온 뒤 악보 전체가 들어오도록 범위를 지정합니다.</p>
+              </div>
+              <div class="roi-step-chip-group">
+                <span class="roi-step-chip" data-i18n="roi.chip.drag">모서리 드래그</span>
+                <span class="roi-step-chip" data-i18n="roi.chip.nudge">방향키 미세 이동</span>
+                <span class="roi-step-chip" data-i18n="roi.chip.framebar">프레임 바 선택</span>
+              </div>
+            </div>
+            <div id="localRangeHelper" class="video-helper" style="display: none">
+              <p class="video-helper-title" data-i18n="range.title">악보가 선명하게 보이는 시점을 먼저 선택합니다</p>
+              <video id="rangeVideo" class="range-video" preload="metadata"></video>
+              <div class="result-actions range-preview-actions">
+                <button id="videoPlayPause" type="button" class="secondary" disabled data-i18n="range.play">재생</button>
+                <button id="videoBack5" type="button" class="secondary" disabled data-i18n="range.back5">5초 이전</button>
+                <button id="videoForward5" type="button" class="secondary" disabled data-i18n="range.forward5">5초 이후</button>
+              </div>
+              <div class="range-time-row">
+                <span id="videoCurrent">00:00.0</span>
+                <input id="videoSeek" type="range" min="0" max="0" value="0" step="0.1" disabled />
+                <span id="videoDuration">00:00.0</span>
+              </div>
+              <p id="videoHelperHint" class="helper-text" data-i18n="range.hint">여기서는 대표 프레임만 선택합니다. 처리 구간을 줄여야 하는 경우에만 아래 상세 설정을 사용합니다.</p>
+              <details class="advanced-details roi-range-advanced">
+                <summary data-i18n="range.advanced">상세 설정: 처리 구간 제한</summary>
+                <div class="field-grid roi-range-grid">
+                  <label class="field">
+                    <span data-i18n="range.startSec">시작 시간 (초)</span>
+                    <input id="startSec" type="number" value="" step="0.1" min="0" />
+                    <small id="startHuman" class="field-help">mm:ss -</small>
+                  </label>
+                  <label class="field">
+                    <span data-i18n="range.endSec">끝 시간 (초)</span>
+                    <input id="endSec" type="number" value="" step="0.1" min="0" />
+                    <small id="endHuman" class="field-help">mm:ss -</small>
+                  </label>
+                </div>
+                <div class="range-sliders">
+                  <label class="field">
+                    <span data-i18n="range.startSlider">시작 슬라이더</span>
+                    <input id="startSlider" type="range" min="0" max="0" value="0" step="0.1" disabled />
+                  </label>
+                  <label class="field">
+                    <span data-i18n="range.endSlider">끝 슬라이더</span>
+                    <input id="endSlider" type="range" min="0" max="0" value="0" step="0.1" disabled />
+                  </label>
+                </div>
+                <div class="result-actions">
+                  <button id="setStartAtCurrent" type="button" class="secondary" disabled data-i18n="range.setStart">현재 시점으로 시작 지정</button>
+                  <button id="setEndAtCurrent" type="button" class="secondary" disabled data-i18n="range.setEnd">현재 시점으로 종료 지정</button>
+                  <button id="clearRange" type="button" class="secondary" disabled data-i18n="range.clear">시작/끝 초기화</button>
+                </div>
+              </details>
+            </div>
             <div class="result-actions" id="manualRoiTools">
-              <button id="loadPreviewForRoi" type="button" class="secondary">악보 화면 열기</button>
-              <button id="lockRoiFrame" type="button" class="secondary">현재 시점 다시 불러오기</button>
-              <span class="helper-text">열린 화면에서 악보 부분을 마우스로 드래그하세요.</span>
+              <button id="loadPreviewForRoi" type="button" class="secondary" data-i18n="roi.openFrame">악보 화면 열기</button>
+              <button id="lockRoiFrame" type="button" class="secondary" data-i18n="roi.reloadFrame">현재 시점 다시 불러오기</button>
+              <span class="helper-text" data-i18n="roi.toolsHint">열린 프레임에서 범위를 드래그합니다. 방향키는 1px, Shift+방향키는 10px 단위로 이동합니다.</span>
             </div>
             <div id="roiEditorWrap" style="display: none">
-              <div class="roi-help">악보가 보이는 부분을 네모로 감싸 주세요. 모서리를 끌어서 정밀하게 조정할 수 있습니다.</div>
-              <div class="preview-stage">
-                <img id="roiImage" alt="preview image" />
-                <canvas id="roiCanvas"></canvas>
-              </div>
-              <div class="result-actions roi-editor-actions">
-                <button id="applyRoi" type="button" class="secondary">이 영역으로 진행</button>
+              <div class="roi-workbench">
+                <section class="roi-stage-card">
+                  <div class="roi-stage-head">
+                    <div>
+                      <span class="roi-panel-kicker" data-i18n="roi.frame">프레임</span>
+                      <h4 data-i18n="roi.adjustBounds">경계 조정</h4>
+                    </div>
+                    <span id="roiFrameMeta" class="roi-frame-meta" data-i18n="roi.frameMetaIdle">프레임 준비 전</span>
+                  </div>
+                  <div class="roi-help" data-i18n="roi.stageHelp">악보 전체가 들어오도록 범위를 지정합니다. 상단과 하단에 여백을 조금 남기는 편이 안전합니다.</div>
+                  <div class="preview-stage">
+                    <img id="roiImage" alt="preview image" />
+                    <canvas id="roiCanvas"></canvas>
+                  </div>
+                  <div class="roi-stage-actions">
+                    <p class="helper-text" id="roiAssistHint" data-i18n="roi.assistHint">미리보기를 불러오면 오른쪽 패널에서 경계 위험과 확대 보조 화면을 확인할 수 있습니다.</p>
+                    <button id="applyRoi" type="button" class="secondary" data-i18n="roi.apply">영역 적용</button>
+                  </div>
+                </section>
+                <aside class="roi-inspector">
+                  <article class="roi-inspect-card">
+                    <div class="roi-inspect-head">
+                      <div>
+                      <span class="roi-panel-kicker" data-i18n="roi.cropKicker">선택 영역</span>
+                      <h4 data-i18n="roi.cropTitle">선택 영역 확인</h4>
+                      </div>
+                    </div>
+                    <canvas id="roiCropPreview" class="roi-assist-canvas" data-i18n-aria-label="roi.cropCanvasAria" aria-label="roi crop preview"></canvas>
+                    <p id="roiCropSummary" class="roi-inspect-copy" data-i18n="roi.cropSummary">프레임을 불러온 뒤 ROI를 지정하면 선택 영역만 확대해 표시합니다.</p>
+                    <div id="roiCropMetrics" class="roi-metric-grid">
+                      <span class="roi-metric-pill" data-i18n="roi.metric.widthEmpty">폭 -</span>
+                      <span class="roi-metric-pill" data-i18n="roi.metric.heightEmpty">높이 -</span>
+                      <span class="roi-metric-pill" data-i18n="roi.metric.topMarginEmpty">상단 여백 -</span>
+                      <span class="roi-metric-pill" data-i18n="roi.metric.bottomMarginEmpty">하단 여백 -</span>
+                    </div>
+                  </article>
+                  <article class="roi-inspect-card">
+                    <div class="roi-inspect-head">
+                      <div>
+                      <span class="roi-panel-kicker" data-i18n="roi.zoomKicker">확대 보기</span>
+                      <h4 data-i18n="roi.zoomTitle">경계 여유 확인</h4>
+                      </div>
+                    </div>
+                    <canvas id="roiZoomPreview" class="roi-assist-canvas" data-i18n-aria-label="roi.zoomCanvasAria" aria-label="roi zoom preview"></canvas>
+                    <p id="roiZoomSummary" class="roi-inspect-copy" data-i18n="roi.zoomSummary">선택 영역 주변까지 함께 표시해 경계 여유를 확인합니다.</p>
+                  </article>
+                  <article class="roi-inspect-card roi-health-card">
+                    <div class="roi-inspect-head roi-health-head">
+                      <div>
+                        <span class="roi-panel-kicker" data-i18n="roi.healthKicker">실행 전 진단</span>
+                        <h4 data-i18n="roi.healthTitle">진행 전 확인</h4>
+                      </div>
+                      <span id="roiHealthBadge" class="roi-health-badge roi-health-idle" data-i18n="roi.healthIdle">대기 중</span>
+                    </div>
+                    <p id="roiHealthSummary" class="roi-inspect-copy" data-i18n="roi.healthSummary">ROI를 지정하면 진단 결과를 표시합니다.</p>
+                    <ul id="roiDiagnosticsList" class="roi-diagnostics-list">
+                      <li class="roi-diagnostic-item roi-diagnostic-info" data-i18n="roi.healthListDefault">악보 화면을 열고 ROI를 지정하면 경계 위험을 먼저 표시합니다.</li>
+                    </ul>
+                    <p id="roiBackendHint" class="helper-text" data-i18n="roi.healthBackendHint">현재는 화면 기준 즉시 진단을 제공합니다.</p>
+                  </article>
+                </aside>
               </div>
             </div>
             <details id="roiAdvancedDetails" class="advanced-details">
-              <summary>고급: 좌표 직접 입력</summary>
+              <summary data-i18n="roi.advanced">고급 설정: 좌표 직접 입력</summary>
               <label class="field field-full">
-                <span>좌표 직접 입력</span>
+                <span data-i18n="roi.coordinates">좌표 직접 입력</span>
                 <textarea id="roiInput" rows="3" placeholder='[[0,0],[100,0],[100,100],[0,100]]'></textarea>
               </label>
               <div class="result-actions">
-                <button id="copyRoiCoords" type="button" class="secondary">좌표 복사</button>
+                <button id="copyRoiCoords" type="button" class="secondary" data-i18n="roi.copyCoords">좌표 복사</button>
               </div>
             </details>
           </div>
         </details>
       </section>
 
-      <section class="panel panel-step panel-step-export capture-panel">
-        <details id="stepExportDetails" class="step-details">
-          <summary>
-            <span class="step-title"><span class="step-dot">4</span>저장 방식 고르기</span>
-            <span id="stepExportSummary" class="step-summary-badge">PNG/PDF · 추천</span>
-          </summary>
-          <div class="step-body">
-            <div class="preset-row">
-              <button id="presetBasic" class="preset-btn preset-btn-active" type="button">연주 기본(권장)</button>
-              <button id="presetScroll" class="preset-btn" type="button">스크롤 맞춤</button>
-              <button id="presetQuality" class="preset-btn" type="button">선명도 우선</button>
-            </div>
-            <p id="presetHint" class="helper-text">기본은 페이지 넘김을 줄이는 연주 모드입니다. 필요할 때만 다른 모드를 선택하세요.</p>
-            <div class="choice-row">
-              <label class="choice-chip"><input class="format" type="checkbox" value="png" checked /> PNG</label>
-              <label class="choice-chip"><input class="format" type="checkbox" value="jpg" /> JPG</label>
-              <label class="choice-chip"><input class="format" type="checkbox" value="pdf" checked /> PDF</label>
-            </div>
-            <details id="advancedOptions" class="advanced-details">
-              <summary>필요할 때만: 상세 조정</summary>
-              <div class="control-row stacked-mobile">
-                <label class="choice-chip"><input id="enableStitch" type="checkbox" /> 스크롤 악보 한 장으로 합치기</label>
-                <label class="field compact-field">
-                  <span>겹침 판단 민감도</span>
-                  <input id="overlapThreshold" type="number" value="0.2" min="0" max="1" step="0.05" />
-                </label>
-              </div>
-              <div class="control-row stacked-mobile">
-                <label class="choice-chip"><input id="enableUpscale" type="checkbox" /> 출력을 더 선명하게 (시간 증가)</label>
-                <label class="field compact-field">
-                  <span>업스케일 배율</span>
-                  <select id="upscaleFactor" disabled>
-                    <option value="2.0" selected>2x (권장)</option>
-                    <option value="3.0">3x</option>
-                  </select>
-                </label>
-              </div>
-              <p id="upscaleHint" class="helper-text">켜면 업스케일은 GPU로만 처리합니다. GPU를 찾지 못하면 시작 전에 알려줍니다.</p>
-            </details>
-          </div>
-        </details>
-      </section>
+        </div>
 
-      <section class="panel panel-side capture-panel">
+      <section class="panel panel-side utility-sidebar capture-panel">
+        <section class="panel panel-step panel-step-export export-rail-card">
+          <details id="stepExportDetails" class="step-details" open>
+            <summary>
+              <span class="step-title"><span class="step-dot">3</span><span data-i18n="step.export">저장 형식</span></span>
+              <span id="stepExportSummary" class="step-summary-badge" data-i18n="step.export.defaultSummary">PNG/PDF · 추천</span>
+            </summary>
+            <div class="step-body">
+              <div class="rail-head">
+                <strong data-i18n="export.settingsTitle">처리 설정</strong>
+                <p class="helper-text" data-i18n="export.settingsHelper">ROI 확인이 끝나면 바로 실행할 수 있도록 이 영역에서 저장 옵션을 정리합니다.</p>
+              </div>
+              <div class="preset-row">
+                <button id="presetBasic" class="preset-btn preset-btn-active" type="button" data-i18n="export.preset.basic">기본</button>
+                <button id="presetScroll" class="preset-btn" type="button" data-i18n="export.preset.scroll">스크롤 맞춤</button>
+                <button id="presetQuality" class="preset-btn" type="button" data-i18n="export.preset.quality">선명도 우선</button>
+              </div>
+              <p id="presetHint" class="helper-text" data-i18n="export.preset.hint">기본은 페이지 넘김을 줄이는 연주 모드입니다. 필요할 때만 다른 모드를 선택하세요.</p>
+              <div class="choice-row format-choice-row">
+                <label class="choice-chip"><input class="format" type="checkbox" value="png" checked /> PNG</label>
+                <label class="choice-chip"><input class="format" type="checkbox" value="jpg" /> JPG</label>
+                <label class="choice-chip"><input class="format" type="checkbox" value="pdf" checked /> PDF</label>
+              </div>
+              <details id="advancedOptions" class="advanced-details">
+                <summary data-i18n="export.advanced">상세 설정</summary>
+                <div class="control-row stacked-mobile">
+                  <label class="choice-chip"><input id="enableStitch" type="checkbox" /> <span data-i18n="export.stitch">스크롤 악보를 한 장으로 합치기</span></label>
+                  <label class="field compact-field">
+                    <span data-i18n="export.overlap">겹침 판단 민감도</span>
+                    <input id="overlapThreshold" type="number" value="0.2" min="0" max="1" step="0.05" />
+                  </label>
+                </div>
+                <div class="control-row stacked-mobile">
+                  <label class="choice-chip"><input id="enableUpscale" type="checkbox" /> <span data-i18n="export.upscale">출력 선명도 향상</span></label>
+                  <label class="field compact-field">
+                    <span data-i18n="export.upscaleFactor">업스케일 배율</span>
+                    <select id="upscaleFactor" disabled>
+                      <option value="2.0" selected data-i18n="export.upscale2x">2x (권장)</option>
+                      <option value="3.0">3x</option>
+                    </select>
+                  </label>
+                </div>
+                <p id="upscaleHint" class="helper-text" data-i18n="export.upscaleHint">사용 시 업스케일은 GPU 전용으로 처리합니다. GPU를 사용할 수 없으면 시작 전에 안내합니다.</p>
+              </details>
+            </div>
+          </details>
+        </section>
+
         <div id="captureStickyCta" class="capture-sticky-cta">
-          <p id="runCtaHint" class="helper-text">1단계에서 영상을 선택해 주세요.</p>
+          <p id="runCtaHint" class="helper-text" data-i18n="cta.initialHint">1단계에서 영상을 선택합니다.</p>
           <div class="result-actions capture-cta-actions">
-            <button id="runJob" class="primary" disabled>먼저 영상을 선택해 주세요</button>
-            <button id="cancelRun" class="secondary" type="button" style="display: none">처리 중단</button>
-            <button id="stickyOpenOutput" class="secondary" type="button" disabled>결과 폴더</button>
+            <button id="runJob" class="primary" disabled data-i18n="cta.runRequired">영상 선택 필요</button>
+            <button id="cancelRun" class="secondary" type="button" style="display: none" data-i18n="cta.cancel">조회 중단</button>
+            <button id="stickyOpenOutput" class="secondary" type="button" disabled data-i18n="cta.outputFolder">결과 폴더</button>
           </div>
         </div>
 
         <section class="sub-card progress-card">
           <div class="panel-head">
-            <h2>진행 현황</h2>
-            <p>필수 항목을 채운 뒤 처리 시작을 누르면 자동으로 진행됩니다.</p>
+            <h2 data-i18n="progress.title">진행 현황</h2>
+            <p data-i18n="progress.helper">처리 시작 후 진행 상태를 표시합니다.</p>
           </div>
           <div class="status-shell">
-            <span class="status-label">현재 상태</span>
-            <strong id="status">대기 중</strong>
+            <span class="status-label" data-i18n="progress.current">현재 상태</span>
+            <strong id="status" data-i18n="status.idle">대기 중</strong>
           </div>
           <div class="progress-wrap"><div id="progressBar"></div></div>
-          <div class="pipeline-track" aria-label="pipeline">
-            <span id="pipeDownload" class="pipe-step">영상 준비</span>
-            <span id="pipeExtract" class="pipe-step">장면 모으기</span>
-            <span id="pipeDetect" class="pipe-step">악보 자르기</span>
-            <span id="pipeRectify" class="pipe-step">페이지 정리</span>
-            <span id="pipeUpscale" class="pipe-step">선명도 높이기</span>
-            <span id="pipeExport" class="pipe-step">저장하기</span>
+          <div class="pipeline-track" data-i18n-aria-label="header.pipelineAria" aria-label="pipeline">
+            <span id="pipeDownload" class="pipe-step" data-i18n="pipe.download">영상 준비</span>
+            <span id="pipeExtract" class="pipe-step" data-i18n="pipe.extract">장면 모으기</span>
+            <span id="pipeDetect" class="pipe-step" data-i18n="pipe.detect">악보 자르기</span>
+            <span id="pipeRectify" class="pipe-step" data-i18n="pipe.rectify">페이지 정리</span>
+            <span id="pipeUpscale" class="pipe-step" data-i18n="pipe.upscale">선명도 보정</span>
+            <span id="pipeExport" class="pipe-step" data-i18n="pipe.export">저장하기</span>
           </div>
           <details id="logsDetail" class="logs-detail">
-            <summary>상세 로그 보기 (개발자용)</summary>
+            <summary data-i18n="logs.detail">상세 로그</summary>
             <div id="logs" class="logs"></div>
           </details>
         </section>
 
         <section class="sub-card result-card">
           <div class="panel-head">
-            <h2>결과</h2>
-            <p>썸네일을 눌러 바로 결과를 확인해 보세요.</p>
+            <h2 data-i18n="result.title">결과</h2>
+            <p data-i18n="result.helper">검토가 필요한 페이지를 먼저 올려 표시합니다.</p>
           </div>
           <div id="resultMeta"></div>
           <div class="result-actions">
-            <button id="openOutputDir" disabled class="secondary">결과 폴더 열기</button>
-            <button id="openPdf" disabled class="secondary">PDF 열기</button>
-            <button id="copyOutputPath" disabled class="secondary">경로 복사</button>
-            <button id="toggleAlwaysOnTop" class="secondary" type="button">연습 고정: 끔</button>
+            <button id="openOutputDir" disabled class="secondary" data-i18n="result.openFolder">결과 폴더 열기</button>
+            <button id="openPdf" disabled class="secondary" data-i18n="result.openPdf">PDF 열기</button>
+            <button id="copyOutputPath" disabled class="secondary" data-i18n="result.copyPath">경로 복사</button>
+            <button id="toggleAlwaysOnTop" class="secondary" type="button" data-i18n="result.pinWindow">창 고정: 끔</button>
           </div>
-          <p class="helper-text">연습 고정을 켜면 앱 창이 다른 창 위에 유지됩니다.</p>
+          <p class="helper-text" data-i18n="result.pinHint">창 고정 사용 시 앱 창이 다른 창 위에 유지됩니다.</p>
           <div id="resultReviewBar" class="result-review-bar" style="display: none">
-            <span id="resultReviewSummary" class="result-review-summary">캡쳐 결과를 검토해 제외할 항목을 선택해 주세요.</span>
+            <span id="resultReviewSummary" class="result-review-summary" data-i18n="result.reviewSummary">캡처 결과를 검토하고 제외할 항목을 선택합니다.</span>
             <div class="result-review-actions">
-              <button id="resultKeepAll" class="secondary" type="button">전체 포함</button>
-              <button id="resultApplyReview" class="primary" type="button" disabled>선택 반영 후 페이지 다시 생성</button>
+              <button id="resultKeepAll" class="secondary" type="button" data-i18n="result.keepAll">전체 포함</button>
+              <button id="resultApplyReview" class="primary" type="button" disabled data-i18n="result.applyReview">선택 반영 후 페이지 재생성</button>
             </div>
           </div>
-          <div id="resultPathChip" class="path-chip">출력 경로: -</div>
+          <div id="resultPathChip" class="path-chip" data-i18n="result.pathChipEmpty">출력 경로: -</div>
           <div id="resultThumbGrid" class="result-thumb-grid"></div>
           <div id="previewWrap" class="preview-wrap">
             <img id="resultPreviewImage" class="result-preview-image" alt="result preview" style="display: none" />
@@ -359,175 +370,66 @@
         </section>
       </section>
 
-      <section class="panel panel-audio-input audio-panel" style="display: none">
-        <span class="audio-step-badge">1단계 · 입력 소스</span>
-        <div class="panel-head">
-          <h2>음원/영상 선택</h2>
-          <p>분리할 파일을 고르면, 아래에서 바로 드럼 stem 분리와 연습용 믹서를 사용할 수 있습니다.</p>
-        </div>
-        <div class="audio-source-shell">
-          <div class="choice-row audio-source-choice">
-            <label class="choice-chip"><input type="radio" name="audioSourceType" value="file" checked /> 로컬 파일</label>
-            <label class="choice-chip"><input type="radio" name="audioSourceType" value="youtube" /> 유튜브 URL</label>
-          </div>
-          <div class="control-row" id="audioFileRow">
-            <input id="audioFilePath" type="text" placeholder="로컬 파일 경로 (mp3 / wav / mp4)" readonly />
-            <button id="audioBrowseFile" class="secondary" type="button">파일 선택</button>
-          </div>
-          <div class="control-row" id="audioYoutubeRow" style="display: none">
-            <input id="audioYoutubeUrl" type="text" placeholder="https://www.youtube.com/..." />
-          </div>
-          <p id="audioSourceHint" class="helper-text">유튜브는 먼저 로컬로 받아온 뒤 분리를 진행합니다. 첫 실행은 조금 더 걸릴 수 있어요.</p>
-        </div>
-        <div class="audio-tip-grid">
-          <article class="audio-tip-card">
-            <strong>권장 입력</strong>
-            <p>연습용으로는 영상(mp4) 입력이 가장 좋습니다. 분리 후 영상 동기 재생까지 바로 가능합니다.</p>
-          </article>
-          <article class="audio-tip-card">
-            <strong>처리 속도 팁</strong>
-            <p>긴 곡은 먼저 MP3로 변환하면 준비 시간이 줄어듭니다. 정밀 분리는 htdemucs_ft 모델을 사용하세요.</p>
-          </article>
-        </div>
-      </section>
+      </div>
 
-      <section class="panel panel-audio-run audio-panel" style="display: none">
-        <span class="audio-step-badge">2단계 · 분리 실행</span>
-        <div class="panel-head">
-          <h2>드럼 음원 분리</h2>
-          <p>설정을 고르고 실행하면 stem을 자동 생성하고, 바로 재생/믹서에서 연습할 수 있습니다.</p>
+      <section class="panel panel-runtime utility-support-panel capture-panel">
+        <div class="panel-head utility-support-head">
+          <h2 data-i18n="support.title">문제 해결</h2>
+          <p data-i18n="support.helper">실행 오류가 있거나 고급 설정이 필요할 때만 확인합니다.</p>
         </div>
-
-        <div class="audio-run-shell">
-          <div class="audio-run-main">
-            <div class="field-grid audio-config-grid">
-              <label class="field">
-                <span>모델</span>
-                <select id="audioModel">
-                  <option value="htdemucs" selected>htdemucs (기본)</option>
-                  <option value="htdemucs_ft">htdemucs_ft (정밀)</option>
-                  <option value="htdemucs_6s">htdemucs_6s (6 stem)</option>
-                </select>
-              </label>
-              <label class="field">
-                <span>출력 형식</span>
-                <select id="audioOutputFormat">
-                  <option value="wav" selected>WAV</option>
-                  <option value="mp3">MP3</option>
-                </select>
-              </label>
-              <div class="field">
-                <span>실행 모드</span>
-                <label class="choice-chip"><input id="audioGpuOnly" type="checkbox" /> GPU 전용 (없으면 중단)</label>
+        <details class="runtime-details setup-details">
+          <summary data-i18n="support.setup">자동 설치 및 복구</summary>
+          <div class="setup-panel">
+            <div class="setup-head">
+              <span id="backendBridgeChip" class="setup-chip setup-chip-warn" data-i18n="support.setup.checking">엔진 확인 중</span>
+              <p id="backendBridgeText" class="setup-desc" data-i18n="support.setup.desc">로컬 엔진 연결 상태를 확인하는 중입니다.</p>
+            </div>
+            <div class="result-actions setup-actions">
+              <button id="runGuidedSetup" type="button" data-i18n="support.setup.run">자동 설치/복구</button>
+              <button id="restartBackend" type="button" class="secondary" data-i18n="support.setup.restart">엔진 다시 연결</button>
+              <button id="clearCacheFiles" type="button" class="secondary" data-i18n="support.setup.clearCache">캐시 정리</button>
+              <button id="clearSetupLog" type="button" class="secondary" data-i18n="support.setup.clearLog">로그 지우기</button>
+            </div>
+            <p class="helper-text" data-i18n="support.setup.cacheHint">캐시 정리 시 이전 결과 파일과 임시 파일을 삭제합니다.</p>
+            <pre id="setupLog" class="setup-log">[안내] 문제가 발생하면 아래 로그에서 원인을 확인할 수 있습니다.</pre>
+          </div>
+        </details>
+        <details class="runtime-details">
+          <summary data-i18n="support.runtime">실행 정보</summary>
+          <div class="runtime-grid">
+            <article class="runtime-card runtime-primary">
+              <h3 id="runtimeMainTitle" data-i18n="support.runtime.title">런타임 정보 확인 중</h3>
+              <p id="runtimeMainDesc" data-i18n="support.runtime.desc">정보를 불러오는 중입니다.</p>
+            </article>
+            <article class="runtime-card">
+              <div class="runtime-list">
+                <div class="runtime-row"><span data-i18n="support.runtime.ffmpeg">영상 추출 (FFmpeg)</span><strong id="runtimeFfmpeg" data-i18n="runtime.checking">확인 중</strong></div>
+                <div class="runtime-row"><span data-i18n="support.runtime.opencv">이미지 처리 (OpenCV)</span><strong id="runtimeOpencv" data-i18n="runtime.checking">확인 중</strong></div>
+                <div class="runtime-row"><span data-i18n="support.runtime.upscale">선명도 엔진</span><strong id="runtimeUpscale" data-i18n="runtime.checking">확인 중</strong></div>
+                <div class="runtime-row"><span data-i18n="support.runtime.gpu">GPU 이름</span><strong id="runtimeGpu" data-i18n="runtime.checking">확인 중</strong></div>
+                <div class="runtime-row"><span data-i18n="support.runtime.cpu">CPU 이름</span><strong id="runtimeCpu" data-i18n="runtime.checking">확인 중</strong></div>
+                <div class="runtime-row runtime-row-order"><span data-i18n="support.runtime.order">FFmpeg 우선순위</span><strong id="runtimeOrder" data-i18n="runtime.checking">확인 중</strong></div>
               </div>
-            </div>
-
-            <div class="audio-phase-wrap">
-              <span class="status-label">진행 단계</span>
-              <div class="audio-phase-track" role="list" aria-label="오디오 분리 진행 단계">
-                <span id="audioPhasePrepare" class="audio-phase-step audio-phase-step-active" role="listitem">요청 준비</span>
-                <span id="audioPhaseExtract" class="audio-phase-step" role="listitem">오디오 추출</span>
-                <span id="audioPhaseSeparate" class="audio-phase-step" role="listitem">Stem 분리</span>
-              </div>
-            </div>
-
-            <div id="audioResultMeta"></div>
-            <div class="result-actions audio-result-actions">
-              <button id="audioOpenOutputDir" disabled class="secondary" type="button">분리 결과 폴더 열기</button>
-            </div>
-
-            <details class="audio-log-details">
-              <summary>상세 로그 보기</summary>
-              <div id="audioLogs" class="logs"></div>
-            </details>
+            </article>
           </div>
-
-          <aside class="audio-run-side">
-            <div class="status-shell audio-status-shell">
-              <span class="status-label">현재 상태</span>
-              <strong id="audioStatus">대기 중</strong>
-            </div>
-            <p id="audioStatusGuide" class="audio-status-guide">입력 소스를 선택한 뒤 실행 버튼을 누르면 분리가 시작됩니다.</p>
-            <button id="audioRunSeparation" class="primary audio-run-cta" type="button">드럼 음원 분리 시작</button>
-            <p class="helper-text audio-run-side-help">분리 완료 후 바로 아래에서 재생/속도/파트 볼륨을 조절할 수 있습니다.</p>
-          </aside>
-        </div>
-
-        <section id="audioMixerPanel" class="audio-mixer-panel audio-mixer-panel-pro" style="display: none">
-          <span class="audio-step-badge audio-step-badge-muted">3단계 · 재생/연습</span>
-          <div class="panel-head">
-            <h3>바로 재생 / 파트 믹서</h3>
-            <p>앱 안에서 즉시 재생하고, 파트별 볼륨/속도를 조절해 연습하세요.</p>
-          </div>
-
-          <div class="audio-mixer-layout">
-            <div class="audio-mixer-primary">
-              <section id="audioVideoPanel" class="audio-video-panel" style="display: none">
-                <div class="audio-video-head">
-                  <strong>연습용 영상 동기화</strong>
-                  <button id="audioPrepareVideo" class="secondary" type="button">영상 다시 불러오기</button>
-                </div>
-                <video
-                  id="audioVideoPreview"
-                  class="audio-video-preview"
-                  preload="metadata"
-                  playsinline
-                  muted
-                ></video>
-                <p id="audioVideoHint" class="helper-text">영상 입력(mp4/유튜브)일 때만 표시됩니다.</p>
-              </section>
-
-              <div class="audio-player-controls">
-                <button id="audioPlayToggle" class="primary" disabled type="button">재생</button>
-                <button id="audioStop" class="secondary" disabled type="button">정지</button>
-                <div class="audio-practice-box">
-                  <div class="audio-practice-head">
-                    <strong>BPM 기반 재생 속도</strong>
-                    <span id="audioSpeedRatio" class="audio-speed-ratio">1.00x</span>
-                  </div>
-                  <div class="audio-practice-row">
-                    <label class="field compact-field">
-                      <span>원곡 BPM</span>
-                      <input id="audioSourceBpm" type="number" min="40" max="260" step="1" value="120" disabled />
-                    </label>
-                    <label class="field compact-field">
-                      <span>연습 BPM</span>
-                      <input id="audioPracticeBpm" type="number" min="40" max="260" step="1" value="120" disabled />
-                    </label>
-                  </div>
-                  <input id="audioPracticeBpmSlider" type="range" min="40" max="260" step="1" value="120" disabled />
-                </div>
-              </div>
-
-              <div class="audio-seek-row">
-                <span id="audioCurrentTime">00:00</span>
-                <div class="audio-seek-track">
-                  <input id="audioSeek" type="range" min="0" max="1000" value="0" disabled />
-                </div>
-                <span id="audioDuration">00:00</span>
-              </div>
-
-              <div id="audioStemMixer" class="audio-stem-mixer"></div>
-            </div>
-          </div>
-        </section>
+        </details>
       </section>
     </main>
 
     <div id="captureCropModal" class="capture-crop-modal" style="display: none" aria-hidden="true">
       <div class="capture-crop-dialog" role="dialog" aria-modal="true" aria-labelledby="captureCropTitle">
         <div class="capture-crop-head">
-          <h3 id="captureCropTitle">캡쳐 다시 자르기</h3>
-          <button id="captureCropClose" class="secondary" type="button">닫기</button>
+          <h3 id="captureCropTitle" data-i18n="crop.title">캡처 다시 자르기</h3>
+          <button id="captureCropClose" class="secondary" type="button" data-i18n="crop.close">닫기</button>
         </div>
-        <p class="helper-text">필요한 부분만 남기도록 영역을 드래그하세요. 적용 시 이 캡쳐만 교체됩니다.</p>
+        <p class="helper-text" data-i18n="crop.helper">필요한 부분만 남기도록 영역을 드래그합니다. 적용 시 해당 캡처만 교체합니다.</p>
         <div class="capture-crop-stage">
           <img id="captureCropImage" alt="capture to crop" />
           <canvas id="captureCropCanvas"></canvas>
         </div>
         <div class="result-actions capture-crop-actions">
-          <button id="captureCropReset" class="secondary" type="button">영역 초기화</button>
-          <button id="captureCropApply" class="primary" type="button">이 캡쳐에 반영</button>
+          <button id="captureCropReset" class="secondary" type="button" data-i18n="crop.reset">영역 초기화</button>
+          <button id="captureCropApply" class="primary" type="button" data-i18n="crop.apply">현재 캡처에 반영</button>
         </div>
       </div>
     </div>

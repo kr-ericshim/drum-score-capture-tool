@@ -23,7 +23,7 @@ def finalize_sheet_pages(
     pages = _split_long_page(prepared, page_ratio=page_ratio, page_fill_mode=page_fill_mode)
     if not pages:
         pages = [prepared]
-    return [_frame_as_printed_page(page, page_ratio=page_ratio) for page in pages]
+    return _frame_pages_as_printed_set(pages, page_ratio=page_ratio)
 
 
 def finalize_sheet_sequence(
@@ -53,8 +53,43 @@ def finalize_sheet_sequence(
     pages = _split_long_page(merged, page_ratio=page_ratio, page_fill_mode=page_fill_mode)
     if not pages:
         pages = [merged]
-    page_frames = [_frame_as_printed_page(page, page_ratio=page_ratio) for page in pages]
+    page_frames = _frame_pages_as_printed_set(pages, page_ratio=page_ratio)
     return page_frames, merged, len(prepared_frames)
+
+
+def _frame_pages_as_printed_set(images: List[np.ndarray], *, page_ratio: float) -> List[np.ndarray]:
+    valid_images = [image for image in images if image is not None and image.size > 0]
+    if not valid_images:
+        return []
+
+    max_w = max(int(image.shape[1]) for image in valid_images)
+    max_h = max(int(image.shape[0]) for image in valid_images)
+    if max_w <= 0 or max_h <= 0:
+        return valid_images
+
+    margin_x = max(10, int(max_w * 0.015))
+    margin_top = max(14, int(max_h * 0.026))
+    margin_bottom = max(24, int(max_h * 0.056))
+    canvas_w = max_w + (margin_x * 2)
+    target_ratio = max(0.6, float(page_ratio))
+    canvas_h = max(margin_top + margin_bottom + 1, int(round(canvas_w / target_ratio)))
+
+    inner_w = max(1, canvas_w - (margin_x * 2))
+    inner_h = max(1, canvas_h - margin_top - margin_bottom)
+    common_scale = min(1.0, inner_w / float(max_w), inner_h / float(max_h))
+
+    return [
+        _frame_as_printed_page(
+            image,
+            canvas_w=canvas_w,
+            canvas_h=canvas_h,
+            margin_x=margin_x,
+            margin_top=margin_top,
+            margin_bottom=margin_bottom,
+            common_scale=common_scale,
+        )
+        for image in valid_images
+    ]
 
 
 def _normalize_score_tone(image) -> np.ndarray:
@@ -255,6 +290,18 @@ def _split_long_page(image, *, page_ratio: float, page_fill_mode: PageFillMode =
     pages.append((cur_s, cur_e))
     pages = _resolve_overlapping_ranges(pages, row_density=row_density)
 
+    # Band-based grouping is only safe when page ranges stay effectively contiguous.
+    # If it introduces internal dropped rows, fall back to whitespace slicing so
+    # sparse notation between systems is preserved.
+    max_internal_gap = max(6, int(target_h * 0.004))
+    if _has_internal_page_gaps(pages, max_gap=max_internal_gap):
+        return _slice_by_whitespace(
+            image,
+            row_density=row_density,
+            target_h=target_h,
+            page_fill_mode=mode,
+        )
+
     normalized_pages: List[np.ndarray] = []
     for s, e in pages:
         if e - s > int(target_h * 1.32):
@@ -333,6 +380,16 @@ def _extract_active_bands(active_mask: np.ndarray, *, min_len: int) -> List[Tupl
     if start >= 0 and len(active_mask) - start >= min_len:
         bands.append((start, len(active_mask)))
     return bands
+
+
+def _has_internal_page_gaps(ranges: List[Tuple[int, int]], *, max_gap: int) -> bool:
+    if len(ranges) < 2:
+        return False
+
+    for (_, prev_e), (next_s, _) in zip(ranges, ranges[1:]):
+        if int(next_s) - int(prev_e) > max_gap:
+            return True
+    return False
 
 
 def _slice_by_whitespace(
@@ -421,11 +478,67 @@ def _slice_by_whitespace(
                 if pick - start >= max(96, int(min_h * 0.42)):
                     cut = pick
 
+        cut = _refine_cut_boundary(
+            row_density=row_density,
+            cut=cut,
+            start=start,
+            hard_end=hard_end,
+            search_lo=search_lo,
+            search_hi=search_hi,
+            min_h=min_h,
+        )
+
         pages.append(image[start:cut].copy())
         # Start exactly at the chosen cut to avoid duplicated strips across pages.
         start = cut
 
     return _merge_short_trailing_page(pages, target_h=target_h, page_fill_mode=mode)
+
+
+def _refine_cut_boundary(
+    *,
+    row_density: np.ndarray,
+    cut: int,
+    start: int,
+    hard_end: int,
+    search_lo: int,
+    search_hi: int,
+    min_h: int,
+) -> int:
+    total_h = int(row_density.shape[0])
+    cut = int(np.clip(cut, start + 1, total_h))
+    if cut - start < min_h:
+        return cut
+
+    def boundary_score(index: int) -> float:
+        lo = max(0, index - 12)
+        hi = min(total_h, index + 12)
+        window = row_density[lo:hi]
+        if window.size == 0:
+            return float("inf")
+        return float(np.mean(window))
+
+    current_score = boundary_score(cut)
+    # When the local boundary is still dense, search nearby rows for a clearer seam.
+    # This avoids slicing through staff lines or lyrics even if a single row looks blank.
+    if current_score <= 0.0105:
+        return cut
+
+    candidate_lo = max(start + min_h, search_lo)
+    candidate_hi = min(total_h - 1, search_hi)
+    if candidate_hi <= candidate_lo:
+        return cut
+
+    best_cut = cut
+    best_score = current_score + (abs(cut - hard_end) * 0.00018)
+    for candidate in range(candidate_lo, candidate_hi + 1):
+        score = boundary_score(candidate) + (abs(candidate - hard_end) * 0.00018)
+        if score < best_score:
+            best_cut = candidate
+            best_score = score
+
+    improved = best_score < (current_score * 0.92)
+    return int(best_cut if improved else cut)
 
 
 def _merge_short_trailing_page(
@@ -468,33 +581,46 @@ def _merge_short_trailing_page(
     return result
 
 
-def _frame_as_printed_page(image, *, page_ratio: float) -> np.ndarray:
+def _frame_as_printed_page(
+    image,
+    *,
+    page_ratio: float = PORTRAIT_PAGE_RATIO,
+    canvas_w: Optional[int] = None,
+    canvas_h: Optional[int] = None,
+    margin_x: Optional[int] = None,
+    margin_top: Optional[int] = None,
+    margin_bottom: Optional[int] = None,
+    common_scale: float = 1.0,
+) -> np.ndarray:
     h, w = image.shape[:2]
     if h <= 0 or w <= 0:
         return image
 
-    # Print-safe margins with extra space at bottom to avoid last-staff clipping.
-    margin_x = max(10, int(w * 0.015))
-    margin_top = max(14, int(h * 0.026))
-    margin_bottom = max(24, int(h * 0.056))
+    if margin_x is None:
+        margin_x = max(10, int(w * 0.015))
+    if margin_top is None:
+        margin_top = max(14, int(h * 0.026))
+    if margin_bottom is None:
+        margin_bottom = max(24, int(h * 0.056))
 
-    base_w = w + (margin_x * 2)
-    base_h = h + margin_top + margin_bottom
-    target_ratio = max(0.6, float(page_ratio))
-    cur_ratio = float(base_w) / float(max(1, base_h))
+    if canvas_w is None:
+        canvas_w = w + (margin_x * 2)
+    if canvas_h is None:
+        target_ratio = max(0.6, float(page_ratio))
+        canvas_h = max(margin_top + margin_bottom + 1, int(round(canvas_w / target_ratio)))
 
-    extra_left = 0
-    canvas_w = base_w
-    canvas_h = base_h
-    if cur_ratio > target_ratio:
-        desired_h = int(round(base_w / target_ratio))
-        extra_h = max(0, desired_h - base_h)
-        # Keep top alignment for short captures.
-        # Centering vertical slack makes single-strip pages appear "floating" in the middle.
-        canvas_h = base_h + extra_h
+    scale = float(np.clip(common_scale, 0.05, 1.0))
+    if scale < 0.999:
+        target_w = max(1, int(round(w * scale)))
+        target_h = max(1, int(round(h * scale)))
+        image = cv2.resize(image, (target_w, target_h), interpolation=cv2.INTER_AREA)
+        h, w = image.shape[:2]
 
     canvas = np.full((canvas_h, canvas_w, 3), 255, dtype=np.uint8)
     y0 = margin_top
-    x0 = margin_x + extra_left
+    usable_w = max(1, canvas_w - (margin_x * 2))
+    x0 = margin_x + max(0, (usable_w - w) // 2)
+    if y0 + h > canvas_h - margin_bottom:
+        y0 = max(margin_top, canvas_h - margin_bottom - h)
     canvas[y0 : y0 + h, x0 : x0 + w] = image
     return canvas

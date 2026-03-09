@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import cv2
+import numpy as np
 from PIL import Image
 
 from app.pipeline.sheet_finalize import finalize_sheet_pages, finalize_sheet_sequence
@@ -25,7 +26,7 @@ def export_frames(
     source_frames: Optional[List[Path]] = None,
 ) -> Dict[str, object]:
     workspace.mkdir(parents=True, exist_ok=True)
-    output: Dict[str, object] = {"images": [], "pdf": None, "raw_frames": []}
+    output: Dict[str, object] = {"images": [], "pdf": None, "raw_frames": [], "page_diagnostics": []}
 
     image_dir = workspace / "images"
     image_dir.mkdir(parents=True, exist_ok=True)
@@ -97,6 +98,7 @@ def export_frames(
                 rgb = cv2.cvtColor(finalized, cv2.COLOR_BGR2RGB)
             Image.fromarray(rgb).save(out, quality=95)
             image_paths.append(out)
+        output["page_diagnostics"].append(_diagnose_page_image(finalized, export_idx))
         export_idx += 1
 
     if not image_paths and not wants_pdf and not options.include_raw_frames:
@@ -137,7 +139,7 @@ def export_selected_pages(
     logger,
 ) -> Dict[str, object]:
     workspace.mkdir(parents=True, exist_ok=True)
-    output: Dict[str, object] = {"images": [], "pdf": None}
+    output: Dict[str, object] = {"images": [], "pdf": None, "page_diagnostics": []}
     image_dir = workspace / "images"
     image_dir.mkdir(parents=True, exist_ok=True)
 
@@ -178,6 +180,7 @@ def export_selected_pages(
                 rgb_image = cv2.cvtColor(page, cv2.COLOR_BGR2RGB)
             Image.fromarray(rgb_image).save(jpg_out, quality=95)
             image_paths.append(jpg_out)
+        output["page_diagnostics"].append(_diagnose_page_image(page, export_idx))
         export_idx += 1
 
     if not image_paths and not wants_pdf:
@@ -257,3 +260,38 @@ def _prepare_pdf_image(image: Image.Image) -> Image.Image:
     buf.close()
     rgb.close()
     return compressed
+
+
+def _diagnose_page_image(image, page_index: int) -> Dict[str, object]:
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    inv = cv2.adaptiveThreshold(
+        gray,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV,
+        31,
+        7,
+    )
+    h, w = gray.shape[:2]
+    row_density = (inv > 0).sum(axis=1).astype("float32") / float(max(1, w))
+    top_band = row_density[: max(1, min(48, h))]
+    bottom_band = row_density[max(0, h - min(48, h)) :]
+    top_score = float(np.mean(top_band)) if top_band.size > 0 else 0.0
+    bottom_score = float(np.mean(bottom_band)) if bottom_band.size > 0 else 0.0
+
+    warnings: List[str] = []
+    suspicious = False
+    if top_score > 0.020:
+        suspicious = True
+        warnings.append("페이지 상단에 내용이 너무 붙어 있어 이전 페이지에서 잘렸을 수 있습니다.")
+    if bottom_score > 0.020:
+        suspicious = True
+        warnings.append("페이지 하단에 내용이 너무 붙어 있어 다음 페이지로 잘렸을 수 있습니다.")
+
+    return {
+        "page_index": int(page_index),
+        "suspicious": bool(suspicious),
+        "warning_reasons": warnings,
+        "top_edge_density": round(top_score, 5),
+        "bottom_edge_density": round(bottom_score, 5),
+    }
