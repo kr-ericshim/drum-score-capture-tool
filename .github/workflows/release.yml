@@ -41,18 +41,42 @@ jobs:
           cache: "npm"
           cache-dependency-path: desktop/package-lock.json
 
-      - name: Prepare bundled backend runtime
+      - name: Install backend build dependencies
         shell: bash
         run: |
-          python -m venv backend/.venv
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -r backend/requirements.txt pyinstaller
+
+      - name: Build frozen backend runtime
+        shell: bash
+        run: |
+          python backend/scripts/build_frozen_backend.py
           if [ "$RUNNER_OS" = "Windows" ]; then
-            VENV_PY="backend/.venv/Scripts/python.exe"
+            test -f backend/runtime/drumsheet-backend/drumsheet-backend.exe
           else
-            VENV_PY="backend/.venv/bin/python"
+            test -f backend/runtime/drumsheet-backend/drumsheet-backend
           fi
-          "$VENV_PY" -m pip install --upgrade pip setuptools wheel
-          "$VENV_PY" -m pip install -r backend/requirements.txt
-          "$VENV_PY" -c "import fastapi, uvicorn, numpy, cv2, PIL, yt_dlp, pydantic"
+
+      - name: Smoke test frozen backend
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/drumsheet-jobs"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            BACKEND_BIN="backend/runtime/drumsheet-backend/drumsheet-backend.exe"
+          else
+            BACKEND_BIN="backend/runtime/drumsheet-backend/drumsheet-backend"
+          fi
+          DRUMSHEET_PORT=8123 DRUMSHEET_JOBS_DIR="$RUNNER_TEMP/drumsheet-jobs" "$BACKEND_BIN" > "$RUNNER_TEMP/drumsheet-backend.log" 2>&1 &
+          BACKEND_PID=$!
+          trap 'kill $BACKEND_PID >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 18); do
+            sleep 5
+            if curl -sf http://127.0.0.1:8123/health >/dev/null; then
+              exit 0
+            fi
+          done
+          cat "$RUNNER_TEMP/drumsheet-backend.log"
+          exit 1
 
       - name: Install desktop dependencies
         working-directory: desktop
