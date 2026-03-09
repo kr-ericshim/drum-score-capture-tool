@@ -421,6 +421,7 @@ export function createVideoRangePicker({ sourceType, onRangeChange = null }) {
     loadVideoSource,
     clearMedia,
     clearRangeState,
+    hasMediaLoaded: () => hasMedia,
     getPreviewSecond: () => {
       if (!hasMedia) {
         return null;

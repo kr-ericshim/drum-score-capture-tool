@@ -1724,6 +1724,23 @@ button.secondary {
   margin: 0;
 }
 
+.source-inline-status {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+}
+
+.source-inline-status[data-tone="loading"] {
+  color: var(--accent-strong);
+}
+
+.source-inline-status[data-tone="ready"] {
+  color: var(--success-strong);
+}
+
+.source-inline-status[data-tone="error"] {
+  color: var(--danger-strong);
+}
+
 .roi-range-advanced {
   margin-top: 12px;
 }

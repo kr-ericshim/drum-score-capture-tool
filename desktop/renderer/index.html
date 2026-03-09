@@ -107,6 +107,7 @@
               <button id="prepareYoutubeVideo" type="button" class="secondary" data-i18n="source.prepareYoutube">유튜브 영상 준비</button>
               <span class="helper-text" data-i18n="source.prepareHint">준비가 끝나면 아래에서 대표 프레임과 처리 구간을 확인할 수 있습니다.</span>
             </div>
+            <p id="youtubePrepareStatus" class="helper-text source-inline-status" hidden></p>
             <p class="helper-text" data-i18n="source.downloadHint">유튜브 다운로드 가능 여부는 영상 정책과 실행 환경에 따라 달라질 수 있습니다.</p>
           </div>
         </details>
@@ -181,6 +182,7 @@
               <button id="lockRoiFrame" type="button" class="secondary" data-i18n="roi.reloadFrame">현재 시점 다시 불러오기</button>
               <span class="helper-text" data-i18n="roi.toolsHint">열린 프레임에서 범위를 드래그합니다. 방향키는 1px, Shift+방향키는 10px 단위로 이동합니다.</span>
             </div>
+            <p id="roiFrameRequestStatus" class="helper-text source-inline-status" hidden></p>
             <div id="roiEditorWrap" style="display: none">
               <div class="roi-workbench">
                 <section class="roi-stage-card">
