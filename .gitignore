@@ -1,6 +1,11 @@
 .venv/
 dist/
 build/
+!desktop/build/
+!desktop/build/icon.png
+!desktop/build/icon.icns
+!desktop/build/icon.ico
+desktop/build/icon.iconset/
 *.log
 *.pyc
 __pycache__/

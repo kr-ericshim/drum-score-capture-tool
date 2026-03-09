@@ -2,17 +2,32 @@
   "name": "drum-sheet-capture",
   "version": "0.1.0",
   "private": true,
+  "description": "Local desktop tool for capturing drum sheet pages from video and exporting PNG, JPG, or PDF.",
+  "author": "Eric Shim",
+  "license": "MIT",
+  "homepage": "https://github.com/kr-ericshim/drum-score-capture-tool#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kr-ericshim/drum-score-capture-tool.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kr-ericshim/drum-score-capture-tool/issues"
+  },
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "pack": "node scripts/run-builder.js pack full",
+    "check:renderer-syntax": "node --check renderer/app.js && node --check renderer/modules/i18n.js && node --check renderer/modules/job-api.js && node --check renderer/modules/messages.js && node --check renderer/modules/runtime-status-ui.js && node --check renderer/modules/status-ui.js && node --check renderer/modules/video-range-picker.js",
+    "check:locale-init": "node scripts/check-locale-init.js",
+    "pack": "node scripts/run-builder.js pack release",
     "pack:lean": "node scripts/run-builder.js pack lean",
     "pack:full": "node scripts/run-builder.js pack full",
     "pack:compact": "node scripts/run-builder.js pack compact",
-    "dist": "node scripts/run-builder.js dist full",
+    "pack:release": "node scripts/run-builder.js pack release",
+    "dist": "node scripts/run-builder.js dist release",
     "dist:lean": "node scripts/run-builder.js dist lean",
     "dist:full": "node scripts/run-builder.js dist full",
-    "dist:compact": "node scripts/run-builder.js dist compact"
+    "dist:compact": "node scripts/run-builder.js dist compact",
+    "dist:release": "node scripts/run-builder.js dist release"
   },
   "dependencies": {},
   "devDependencies": {
@@ -76,9 +91,6 @@
     },
     "win": {
       "target": "nsis"
-    },
-    "linux": {
-      "target": "AppImage"
     }
   }
 }
