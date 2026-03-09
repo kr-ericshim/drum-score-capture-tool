@@ -1,4 +1,5 @@
 import { el } from "./dom.js";
+import { getLocale } from "./i18n.js";
 
 export function setStatus(text) {
   const node = el("status");
@@ -48,9 +49,6 @@ function resolvePipelineIndex(currentStep, progress, isYoutubeSource) {
     }
     return 2;
   }
-  if (step === "separating_audio") {
-    return 2;
-  }
   if (step === "rectifying" || step === "stitching" || step === "upscaling") {
     if (step === "rectifying") {
       return 3;
@@ -96,42 +94,47 @@ export function renderResultMeta(job, friendlyStepName) {
       hasResultImage: false,
       imagePaths: [],
       capturePaths: [],
+      pageDiagnostics: [],
       pdfPath: "",
     };
   }
   const files = job.result || {};
   const lines = [];
 
-  lines.push(`현재 상태: ${friendlyStepName(job.status)}`);
+  lines.push(getLocale() === "ko" ? `현재 상태: ${friendlyStepName(job.status)}` : `Status: ${friendlyStepName(job.status)}`);
   if (files.output_dir) {
-    lines.push(`저장 폴더: ${files.output_dir}`);
+    lines.push(getLocale() === "ko" ? `저장 폴더: ${files.output_dir}` : `Output folder: ${files.output_dir}`);
   }
   if (files.pdf) {
-    lines.push(`PDF 파일: ${files.pdf}`);
+    lines.push(getLocale() === "ko" ? `PDF 파일: ${files.pdf}` : `PDF file: ${files.pdf}`);
   }
   if (files.images?.length) {
     const pageCount = Number(files.images.length || 0);
-    lines.push(`완성 페이지: ${pageCount}장`);
+    lines.push(getLocale() === "ko" ? `생성 페이지: ${pageCount}장` : `Pages generated: ${pageCount}`);
     if (pageCount <= 2) {
-      lines.push("연주 편의: 페이지 넘김이 적은 편입니다.");
+      lines.push(getLocale() === "ko" ? "페이지 구성: 페이지 수가 적습니다." : "Page layout: low page count.");
     } else if (pageCount <= 4) {
-      lines.push("연주 편의: 페이지 넘김이 보통입니다.");
+      lines.push(getLocale() === "ko" ? "페이지 구성: 페이지 수가 보통입니다." : "Page layout: moderate page count.");
     } else {
-      lines.push("연주 편의: 페이지가 많아요. 필요하면 스크롤 맞춤 모드를 시도해 보세요.");
+      lines.push(
+        getLocale() === "ko"
+          ? "페이지 구성: 페이지 수가 많습니다. 필요 시 스크롤 맞춤 모드를 사용합니다."
+          : "Page layout: high page count. Use the scroll preset when needed.",
+      );
     }
   }
   if (files.review_export?.kept_count) {
-    lines.push(`검토 반영: 캡쳐 ${files.review_export.kept_count}개 유지`);
+    lines.push(getLocale() === "ko" ? `검토 반영: 캡처 ${files.review_export.kept_count}개 유지` : `Review applied: kept ${files.review_export.kept_count} captures`);
   }
   if (files.source_resolution?.width && files.source_resolution?.height) {
-    lines.push(`원본 영상 크기: ${files.source_resolution.width}x${files.source_resolution.height}`);
+    lines.push(getLocale() === "ko" ? `원본 영상 크기: ${files.source_resolution.width}x${files.source_resolution.height}` : `Source resolution: ${files.source_resolution.width}x${files.source_resolution.height}`);
   }
   if (files.upscaled_frames?.length) {
-    lines.push(`선명도 보정: ${files.upscaled_frames.length}장`);
+    lines.push(getLocale() === "ko" ? `선명도 보정: ${files.upscaled_frames.length}개` : `Clarity enhanced: ${files.upscaled_frames.length}`);
   }
   if (files.runtime?.overall_mode) {
     const modeLabel = files.runtime.overall_mode === "gpu" ? "GPU" : "CPU";
-    lines.push(`처리 장치: ${modeLabel}`);
+    lines.push(getLocale() === "ko" ? `처리 장치: ${modeLabel}` : `Processing device: ${modeLabel}`);
   }
 
   meta.textContent = lines.join("\n");
@@ -147,6 +150,7 @@ export function renderResultMeta(job, friendlyStepName) {
         : Array.isArray(files.stitched_frames)
           ? files.stitched_frames
           : [],
+    pageDiagnostics: Array.isArray(files.page_diagnostics) ? files.page_diagnostics : [],
     pdfPath: files.pdf || "",
   };
 }

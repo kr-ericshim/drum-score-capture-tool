@@ -1,8 +1,9 @@
 import { el } from "./dom.js";
+import { getLocale } from "./i18n.js";
 
 function formatMode(mode) {
   if (!mode) {
-    return "확인 중";
+    return getLocale() === "ko" ? "확인 중" : "Checking";
   }
   const value = String(mode).toLowerCase();
   if (value === "cpu") {
@@ -19,7 +20,7 @@ function formatMode(mode) {
 
 function formatUpscaleEngine(runtime) {
   if (!runtime || runtime.upscale_available !== true) {
-    return "사용 불가";
+    return getLocale() === "ko" ? "사용 불가" : "Unavailable";
   }
   const hint = String(runtime.upscale_engine_hint || "").toLowerCase();
   if (hint === "hat") {
@@ -34,24 +35,12 @@ function formatUpscaleEngine(runtime) {
   if (hint === "opencv_opencl") {
     return "OpenCV OpenCL";
   }
-  return "업스케일 가능";
-}
-
-function formatAudioGpu(runtime) {
-  const mode = String(runtime?.audio_gpu_mode || "cpu").toLowerCase();
-  if (mode === "cuda") {
-    const name = runtime?.torch_cuda_device_name || runtime?.gpu_name || "CUDA GPU";
-    return `GPU (CUDA) - ${name}`;
-  }
-  if (mode === "mps") {
-    return "GPU (MPS)";
-  }
-  return "CPU (torch GPU 미사용)";
+  return getLocale() === "ko" ? "업스케일 가능" : "Available";
 }
 
 function formatEngineMini(runtime) {
   const ffmpegMode = String(runtime?.ffmpeg_mode || "").toLowerCase();
-  const ffmpeg = ffmpegMode ? ffmpegMode.toUpperCase() : "확인 중";
+  const ffmpeg = ffmpegMode ? ffmpegMode.toUpperCase() : (getLocale() === "ko" ? "확인 중" : "Checking");
   const opencv = formatMode(runtime?.opencv_mode || "cpu");
   return `${ffmpeg} / ${opencv}`;
 }
@@ -59,9 +48,9 @@ function formatEngineMini(runtime) {
 function mainTitle(runtime) {
   const overall = String(runtime.overall_mode || "").toLowerCase();
   if (overall === "gpu") {
-    return `GPU 사용 중 - ${runtime.gpu_name || "장치명 확인 불가"}`;
+    return getLocale() === "ko" ? `GPU 사용 중 - ${runtime.gpu_name || "장치 정보 없음"}` : `Using GPU - ${runtime.gpu_name || "No device info"}`;
   }
-  return `CPU 사용 중 - ${runtime.cpu_name || "장치명 확인 불가"}`;
+  return getLocale() === "ko" ? `CPU 사용 중 - ${runtime.cpu_name || "장치 정보 없음"}` : `Using CPU - ${runtime.cpu_name || "No device info"}`;
 }
 
 function summaryText(runtime) {
@@ -70,13 +59,13 @@ function summaryText(runtime) {
   const opencv = formatMode(runtime.opencv_mode);
   const upscale = formatUpscaleEngine(runtime);
   if (overall === "gpu") {
-    const audioGpuReady = Boolean(runtime.audio_gpu_ready);
-    if (!audioGpuReady) {
-      return `영상/이미지 처리는 GPU를 우선 사용합니다. 오디오 분리는 환경에 따라 CPU로 전환될 수 있어요. (영상: ${ffmpeg}, 이미지: ${opencv}, 선명도: ${upscale})`;
-    }
-    return `가능한 단계는 GPU로 처리하고, 안 되면 자동으로 CPU로 전환합니다. (영상: ${ffmpeg}, 이미지: ${opencv}, 선명도: ${upscale})`;
+    return getLocale() === "ko"
+      ? `가능한 단계는 GPU를 우선 사용합니다. 필요 시 CPU로 자동 전환합니다. (영상: ${ffmpeg}, 이미지: ${opencv}, 선명도: ${upscale})`
+      : `GPU is used whenever possible and falls back to CPU when needed. (Video: ${ffmpeg}, Image: ${opencv}, Clarity: ${upscale})`;
   }
-  return `현재는 CPU 중심으로 처리합니다. GPU 환경이 준비되면 자동으로 가속을 사용합니다. (영상: ${ffmpeg}, 이미지: ${opencv}, 선명도: ${upscale})`;
+  return getLocale() === "ko"
+    ? `현재는 CPU 중심으로 처리합니다. GPU 환경이 준비되면 자동으로 가속을 사용합니다. (영상: ${ffmpeg}, 이미지: ${opencv}, 선명도: ${upscale})`
+    : `Currently running in CPU-first mode. GPU acceleration will be used automatically when available. (Video: ${ffmpeg}, Image: ${opencv}, Clarity: ${upscale})`;
 }
 
 export function renderRuntimeStatus(runtime) {
@@ -90,21 +79,19 @@ export function renderRuntimeStatus(runtime) {
   const desc = el("runtimeMainDesc");
   const ffmpeg = el("runtimeFfmpeg");
   const opencv = el("runtimeOpencv");
-  const audioGpu = el("runtimeAudioGpu");
   const upscale = el("runtimeUpscale");
   const gpu = el("runtimeGpu");
   const cpu = el("runtimeCpu");
-  const torch = el("runtimeTorch");
   const order = el("runtimeOrder");
 
   const usesGpu = String(runtime.overall_mode || "").toLowerCase() === "gpu";
   if (overallChip) {
-    overallChip.textContent = usesGpu ? "GPU 사용 중" : "CPU 사용 중";
+    overallChip.textContent = usesGpu ? (getLocale() === "ko" ? "GPU 사용 중" : "Using GPU") : (getLocale() === "ko" ? "CPU 사용 중" : "Using CPU");
     overallChip.classList.toggle("runtime-chip-gpu", usesGpu);
     overallChip.classList.toggle("runtime-chip-cpu", !usesGpu);
   }
   if (gpuMini) {
-    gpuMini.textContent = runtime.gpu_name || runtime.cpu_name || "확인 불가";
+    gpuMini.textContent = runtime.gpu_name || runtime.cpu_name || (getLocale() === "ko" ? "확인 불가" : "Unavailable");
   }
   if (engineMini) {
     engineMini.textContent = formatEngineMini(runtime);
@@ -121,24 +108,14 @@ export function renderRuntimeStatus(runtime) {
   if (opencv) {
     opencv.textContent = formatMode(runtime.opencv_mode);
   }
-  if (audioGpu) {
-    audioGpu.textContent = formatAudioGpu(runtime);
-  }
   if (upscale) {
     upscale.textContent = formatUpscaleEngine(runtime);
   }
   if (gpu) {
-    gpu.textContent = runtime.gpu_name || "감지되지 않음";
+    gpu.textContent = runtime.gpu_name || (getLocale() === "ko" ? "사용 안 함" : "Not used");
   }
   if (cpu) {
-    cpu.textContent = runtime.cpu_name || "알 수 없음";
-  }
-  if (torch) {
-    const version = runtime.torch_version || "미설치";
-    const cudaVer = runtime.torch_cuda_version || "-";
-    const reason = runtime.torch_gpu_reason || "unknown";
-    const count = Number.isFinite(Number(runtime.torch_cuda_device_count)) ? Number(runtime.torch_cuda_device_count) : 0;
-    torch.textContent = `${version} (CUDA=${cudaVer}, dev=${count}, reason=${reason})`;
+    cpu.textContent = runtime.cpu_name || (getLocale() === "ko" ? "정보 없음" : "No info");
   }
   if (order) {
     order.textContent = Array.isArray(runtime.ffmpeg_order) && runtime.ffmpeg_order.length > 0 ? runtime.ffmpeg_order.join(" -> ") : "cpu";
@@ -148,22 +125,14 @@ export function renderRuntimeStatus(runtime) {
 export function renderRuntimeError() {
   const desc = el("runtimeMainDesc");
   if (desc) {
-    desc.textContent = "엔진 정보를 아직 읽는 중입니다. 잠시 후 다시 확인됩니다.";
+    desc.textContent = getLocale() === "ko" ? "엔진 정보를 불러오는 중입니다. 잠시 후 다시 확인합니다." : "Loading engine information. Check again shortly.";
   }
   const gpuMini = el("runtimeGpuMini");
   const engineMini = el("runtimeEngineMini");
   if (gpuMini) {
-    gpuMini.textContent = "연결 대기";
+    gpuMini.textContent = getLocale() === "ko" ? "연결 대기" : "Waiting";
   }
   if (engineMini) {
-    engineMini.textContent = "연결 대기";
-  }
-  const audioGpu = el("runtimeAudioGpu");
-  const torch = el("runtimeTorch");
-  if (audioGpu) {
-    audioGpu.textContent = "연결 대기";
-  }
-  if (torch) {
-    torch.textContent = "연결 대기";
+    engineMini.textContent = getLocale() === "ko" ? "연결 대기" : "Waiting";
   }
 }

@@ -1,4 +1,5 @@
 import { clamp, el, fileUrl } from "./dom.js";
+import { getLocale } from "./i18n.js";
 
 function formatTime(sec) {
   const safe = Number.isFinite(sec) ? Math.max(0, sec) : 0;
@@ -45,11 +46,15 @@ export function createVideoRangePicker({ sourceType, onRangeChange = null }) {
   let endTouched = false;
   let syncing = false;
 
+  function L(ko, en) {
+    return getLocale() === "ko" ? ko : en;
+  }
+
   function updatePlayPauseLabel() {
     if (!playPauseButton) {
       return;
     }
-    playPauseButton.textContent = video.paused ? "재생" : "일시정지";
+    playPauseButton.textContent = video.paused ? L("재생", "Play") : L("일시정지", "Pause");
   }
 
   function seekBy(deltaSec) {
@@ -207,9 +212,9 @@ export function createVideoRangePicker({ sourceType, onRangeChange = null }) {
     }
     if (!hasMedia) {
       if (type === "youtube") {
-        setHint("유튜브 URL을 입력한 뒤 '유튜브 영상 불러오기'를 누르면 같은 방식으로 구간을 고를 수 있어요.");
+        setHint(L("유튜브 URL을 입력한 뒤 '유튜브 영상 불러오기'를 누르면 같은 방식으로 구간을 고를 수 있어요.", "Enter a YouTube URL and click 'Prepare Video' to choose the range the same way."));
       } else {
-        setHint("로컬 파일을 선택하면 아래 플레이어에서 시작/끝 시간을 슬라이더로 쉽게 고를 수 있어요.");
+        setHint(L("로컬 파일을 선택하면 아래 플레이어에서 시작/끝 시간을 슬라이더로 쉽게 고를 수 있어요.", "After selecting a local file, you can choose start and end time with the sliders below."));
       }
     }
   }
@@ -221,7 +226,7 @@ export function createVideoRangePicker({ sourceType, onRangeChange = null }) {
     }
     onSourceTypeChange();
     resetMediaState();
-    setHint("영상 메타데이터를 읽는 중...");
+    setHint(L("영상 메타데이터를 읽는 중...", "Reading video metadata..."));
     video.src =
       value.startsWith("http://") ||
       value.startsWith("https://") ||
@@ -267,7 +272,7 @@ export function createVideoRangePicker({ sourceType, onRangeChange = null }) {
   video.addEventListener("loadedmetadata", () => {
     if (!Number.isFinite(video.duration) || video.duration <= 0) {
       resetMediaState();
-      setHint("영상 길이를 읽지 못했어요. 다른 파일로 시도해 주세요.");
+      setHint(L("영상 길이를 읽지 못했어요. 다른 파일로 시도해 주세요.", "Could not read the video duration. Try a different file."));
       return;
     }
     hasMedia = true;
@@ -279,7 +284,7 @@ export function createVideoRangePicker({ sourceType, onRangeChange = null }) {
     updateTimeLabels(0);
     setControlsDisabled(false);
     updatePlayPauseLabel();
-    setHint("플레이어를 재생하거나 슬라이더를 움직여 원하는 구간을 빠르게 설정하세요.");
+    setHint(L("플레이어를 재생하거나 슬라이더를 움직여 원하는 구간을 빠르게 설정하세요.", "Play the preview or move the sliders to set the range quickly."));
     notifyRangeChange();
   });
 
@@ -289,7 +294,7 @@ export function createVideoRangePicker({ sourceType, onRangeChange = null }) {
 
   video.addEventListener("error", () => {
     resetMediaState();
-    setHint("이 영상은 미리보기 재생이 어렵습니다. 시작/끝 시간을 직접 입력해 주세요.");
+    setHint(L("이 영상은 미리보기 재생이 어렵습니다. 시작/끝 시간을 직접 입력해 주세요.", "Preview playback is not available for this video. Enter start and end times manually."));
   });
 
   video.addEventListener("play", updatePlayPauseLabel);

@@ -1,6 +1,6 @@
 import { clamp, el, fileUrl, parseJsonOrNull } from "./dom.js";
 
-export function createRoiController({ onPreviewLoadError }) {
+export function createRoiController({ onPreviewLoadError, onPreviewReady, onRoiChange }) {
   const HANDLE_SIZE = 10;
   let roiCanvas = null;
   let roiContext = null;
@@ -11,6 +11,22 @@ export function createRoiController({ onPreviewLoadError }) {
   let roiDragMode = null;
   let roiDragStart = null;
   let roiImageLoaded = false;
+
+  function emitRoiChange() {
+    if (typeof onRoiChange !== "function") {
+      return;
+    }
+    const normalized = roiRect && roiCanvas ? normalizeRoiRect(roiRect) : null;
+    onRoiChange({
+      hasImage: hasResultImage(),
+      imageReady: roiImageLoaded,
+      imageElement: roiImage || null,
+      rect: normalized,
+      points: normalized ? rectToPoints(normalized) : null,
+      canvasWidth: roiCanvas?.width || 0,
+      canvasHeight: roiCanvas?.height || 0,
+    });
+  }
 
   function initRoiEditor() {
     if (roiBoundInitialized) {
@@ -117,6 +133,7 @@ export function createRoiController({ onPreviewLoadError }) {
         renderRoi();
         syncInputFromRect();
       }
+      emitRoiChange();
     });
 
     roiCanvas.addEventListener("pointerleave", () => {
@@ -132,6 +149,7 @@ export function createRoiController({ onPreviewLoadError }) {
         renderRoi();
         syncInputFromRect();
       }
+      emitRoiChange();
     });
 
     window.addEventListener("keydown", (event) => {
@@ -163,6 +181,7 @@ export function createRoiController({ onPreviewLoadError }) {
       nudgeRect(dx, dy);
       applyCurrentRoi();
       renderRoi();
+      emitRoiChange();
     });
 
     roiBoundInitialized = true;
@@ -251,6 +270,7 @@ export function createRoiController({ onPreviewLoadError }) {
       return false;
     }
     syncInputFromRect();
+    emitRoiChange();
     return true;
   }
 
@@ -304,6 +324,7 @@ export function createRoiController({ onPreviewLoadError }) {
     roiActive = false;
     roiDragMode = null;
     roiDragStart = null;
+    emitRoiChange();
   }
 
   function clearRoiImageState() {
@@ -347,6 +368,7 @@ export function createRoiController({ onPreviewLoadError }) {
       roiContext.fill();
       roiContext.stroke();
     });
+    emitRoiChange();
   }
 
   function renderManualRoiFromInput() {
@@ -470,15 +492,24 @@ export function createRoiController({ onPreviewLoadError }) {
 
       roiRect = normalizeRoiRect(roiRect);
       renderRoi();
+      if (typeof onPreviewReady === "function") {
+        onPreviewReady({
+          width: roiImage.naturalWidth || roiCanvas.width,
+          height: roiImage.naturalHeight || roiCanvas.height,
+        });
+      }
+      emitRoiChange();
     };
     roiImage.onerror = () => {
       roiImageLoaded = false;
       clearRoiCanvas();
+      emitRoiChange();
       if (typeof onPreviewLoadError === "function") {
         onPreviewLoadError(imagePath);
       }
     };
     roiImage.src = resolvePreviewSrc(imagePath);
+    emitRoiChange();
   }
 
   function hasResultImage() {
@@ -496,6 +527,7 @@ export function createRoiController({ onPreviewLoadError }) {
     roiImageLoaded = false;
     setRoiEditorVisibility(false);
     setRoiEditMode(false);
+    emitRoiChange();
   }
 
   function onRoiInputChange() {
@@ -506,6 +538,7 @@ export function createRoiController({ onPreviewLoadError }) {
     const applied = renderManualRoiFromInput();
     if (!applied) {
       applyFallbackRoi();
+      emitRoiChange();
     }
   }
 
