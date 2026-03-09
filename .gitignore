@@ -18,3 +18,5 @@ backend/output/
 backend/jobs/
 desktop/node_modules/
 desktop/dist/
+backend/runtime/
+.tmp/
