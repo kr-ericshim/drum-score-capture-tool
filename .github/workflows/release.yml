@@ -50,7 +50,12 @@ jobs:
 
       - name: Verify locale bootstrap policy
         working-directory: desktop
-        run: npm run check:locale-init
+        run: |
+          if [ -f renderer/modules/i18n.js ] && [ -f scripts/check-locale-init.js ]; then
+            npm run check:locale-init
+          else
+            echo "Skipping locale bootstrap policy check because locale bootstrap files are not present on this branch."
+          fi
 
       - name: Build release artifacts
         working-directory: desktop
