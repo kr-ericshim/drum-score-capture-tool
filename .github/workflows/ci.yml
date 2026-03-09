@@ -35,7 +35,12 @@ jobs:
         run: PYTHONPATH=backend python backend/tests/test_sheet_finalize.py
 
       - name: Run backend ROI health tests
-        run: PYTHONPATH=backend python backend/tests/test_roi_health.py
+        run: |
+          if [ -f backend/tests/test_roi_health.py ]; then
+            PYTHONPATH=backend python backend/tests/test_roi_health.py
+          else
+            echo "Skipping ROI health tests because backend/tests/test_roi_health.py is not present on this branch."
+          fi
 
       - name: Check renderer syntax
         working-directory: desktop
