@@ -4,16 +4,18 @@ const fs = require("fs");
 const { spawnSync } = require("child_process");
 
 const [, , target = "dist", profileArg] = process.argv;
-const profile = (profileArg || process.env.DRUMSHEET_DIST_PROFILE || "full").toLowerCase();
+const requestedProfile = (profileArg || process.env.DRUMSHEET_DIST_PROFILE || "full").toLowerCase();
+const profile = requestedProfile === "release" ? "compact" : requestedProfile;
 const action = target === "pack" ? "pack" : "dist";
-const supportedProfiles = new Set(["full", "compact", "lean"]);
+const signingEnabled = process.env.DRUMSHEET_ENABLE_SIGNING === "true";
+const supportedProfiles = new Set(["full", "compact", "lean", "release"]);
 if (!["pack", "dist"].includes(action)) {
-  console.error("usage: node scripts/run-builder.js <pack|dist> <full|compact|lean>");
+  console.error("usage: node scripts/run-builder.js <pack|dist> <full|compact|lean|release>");
   process.exit(1);
 }
-if (!supportedProfiles.has(profile)) {
-  console.error(`[run-builder] unsupported profile: ${profile}`);
-  console.error("supported profiles: full | compact | lean");
+if (!supportedProfiles.has(requestedProfile)) {
+  console.error(`[run-builder] unsupported profile: ${requestedProfile}`);
+  console.error("supported profiles: full | compact | lean | release");
   process.exit(1);
 }
 
@@ -40,6 +42,8 @@ const result = spawnSync(command, args, {
   env: {
     ...process.env,
     DRUMSHEET_DIST_PROFILE: profile,
+    DRUMSHEET_ENABLE_SIGNING: signingEnabled ? "true" : "false",
+    CSC_IDENTITY_AUTO_DISCOVERY: signingEnabled ? (process.env.CSC_IDENTITY_AUTO_DISCOVERY || "true") : "false",
   },
 });
 
