@@ -257,7 +257,26 @@ export function friendlyApiError(detail) {
     return getLocale() === "ko" ? "영역 지정 화면을 생성할 수 없습니다. 영상 코덱 문제일 수 있으므로 시작 시간을 변경해 다시 시도합니다." : "Could not generate the preview frame. Try changing the start time in case the video codec is the issue.";
   }
   if (typeof detail === "string" && detail.startsWith("preview source preparation failed:")) {
-    return getLocale() === "ko" ? "유튜브 영상을 불러올 수 없습니다. 주소를 확인한 뒤 다시 시도합니다." : "Could not load the YouTube video. Check the URL and try again.";
+    const reason = detail.replace("preview source preparation failed:", "").trim();
+    const normalizedReason = reason.toLowerCase();
+    if (normalizedReason.includes("timed out") || normalizedReason.includes("timeout")) {
+      return getLocale() === "ko"
+        ? "유튜브 영상 준비 시간이 초과되었습니다. 잠시 후 다시 시도하거나 다른 링크로 확인합니다."
+        : "Preparing the YouTube video timed out. Try again shortly or test another link.";
+    }
+    if (normalizedReason.includes("sign in to confirm you're not a bot")) {
+      return getLocale() === "ko"
+        ? "유튜브가 봇 확인을 요구하고 있습니다. 잠시 후 다시 시도하거나 다른 링크로 확인합니다."
+        : "YouTube requested a bot check. Try again later or test another link.";
+    }
+    if (normalizedReason.includes("video unavailable")) {
+      return getLocale() === "ko"
+        ? "이 유튜브 영상은 현재 내려받을 수 없습니다. 공개 상태와 지역 제한을 확인합니다."
+        : "This YouTube video is not available for download. Check its visibility and region restrictions.";
+    }
+    return reason
+      ? (getLocale() === "ko" ? `유튜브 영상 준비 실패: ${reason}` : `YouTube preparation failed: ${reason}`)
+      : (getLocale() === "ko" ? "유튜브 영상을 불러올 수 없습니다. 주소를 확인한 뒤 다시 시도합니다." : "Could not load the YouTube video. Check the URL and try again.");
   }
   if (typeof detail === "string" && detail.startsWith("review export failed:")) {
     const reason = detail.replace("review export failed:", "").trim();

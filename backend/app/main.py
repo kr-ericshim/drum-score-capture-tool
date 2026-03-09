@@ -226,6 +226,7 @@ def preview_source(payload: PreviewSourceRequest) -> PreviewSourceResponse:
     except HTTPException:
         raise
     except Exception as exc:
+        print(f"[preview/source] failed for {payload.source_type}: {exc}", flush=True)
         raise HTTPException(status_code=500, detail=f"preview source preparation failed: {exc}")
 
 

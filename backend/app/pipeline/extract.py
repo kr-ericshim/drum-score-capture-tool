@@ -130,7 +130,16 @@ def _download_youtube(url: str, workspace: Path, logger) -> Path:
         "outtmpl": output_template,
         "quiet": True,
         "no_warnings": True,
-        "format": "bestvideo+bestaudio/best",
+        "noplaylist": True,
+        "socket_timeout": 30,
+        "retries": 2,
+        "format": "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best",
+        "merge_output_format": "mp4",
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "web"],
+            },
+        },
     }
     with YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
