@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install backend dependencies
+        run: python -m pip install -r backend/requirements.txt
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Run backend pagination tests
+        run: PYTHONPATH=backend python backend/tests/test_sheet_finalize.py
+
+      - name: Run backend ROI health tests
+        run: PYTHONPATH=backend python backend/tests/test_roi_health.py
+
+      - name: Check renderer syntax
+        working-directory: desktop
+        run: npm run check:renderer-syntax
+
+      - name: Check locale bootstrap policy
+        working-directory: desktop
+        run: npm run check:locale-init
+
+      - name: Verify release docs exist
+        run: |
+          test -f LICENSE
+          test -f README.md
+          test -f README.en.md
+          test -f README.ko.md
+          test -f docs/reports/2026-03-09-github-production-readiness-report.md
+          test -f docs/release/github-release-runbook.md
