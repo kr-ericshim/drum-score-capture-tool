@@ -18,6 +18,8 @@ const fullCompactFilters = [
   "!**/__pycache__/**",
   "!**/*.pyc",
   "!**/*.pyo",
+  "!.venv",
+  "!.venv/**",
 
   // Trim packaged backend metadata that is not needed after install.
   "!tests",

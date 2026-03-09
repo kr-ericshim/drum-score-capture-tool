@@ -23,6 +23,20 @@ function resolveBackendDir() {
   return path.join(__dirname, "..", "backend");
 }
 
+function resolveBundledBackendExecutable(backendDir) {
+  const executableName = process.platform === "win32" ? "drumsheet-backend.exe" : "drumsheet-backend";
+  const candidates = [
+    path.join(backendDir, "runtime", "drumsheet-backend", executableName),
+    path.join(backendDir, "dist-runtime", "drumsheet-backend", executableName),
+  ];
+  for (const candidate of candidates) {
+    if (existsFile(candidate)) {
+      return candidate;
+    }
+  }
+  return "";
+}
+
 function resolveDesktopDir() {
   return __dirname;
 }
@@ -341,7 +355,7 @@ function createWindow() {
 }
 
 function waitForBackendReady() {
-  const limitMs = 30000;
+  const limitMs = app.isPackaged ? 60000 : 30000;
   const intervalMs = 500;
   const start = Date.now();
 
@@ -377,11 +391,10 @@ function runBackend() {
 
   const backendDir = resolveBackendDir();
   const runPy = path.join(backendDir, "run.py");
-  if (!fs.existsSync(runPy)) {
+  const bundledBackendExecutable = resolveBundledBackendExecutable(backendDir);
+  if (!bundledBackendExecutable && !fs.existsSync(runPy)) {
     throw new Error(`Cannot find backend entrypoint: ${runPy}`);
   }
-  const python = findPythonCommand(backendDir);
-  console.log(`[backend] python launcher: ${python.label} -> ${python.command} ${python.prefixArgs.join(" ")}`.trim());
   const bins = resolveFfmpegBinaries(backendDir);
   if (bins.ffmpegBin) {
     console.log(`[backend] ffmpeg bin: ${bins.ffmpegBin}`);
@@ -399,11 +412,28 @@ function runBackend() {
     ...(bins.ffmpegBin ? { DRUMSHEET_FFMPEG_BIN: bins.ffmpegBin } : {}),
     ...(bins.ffprobeBin ? { DRUMSHEET_FFPROBE_BIN: bins.ffprobeBin } : {}),
   };
-  backendProcess = spawn(python.command, [...python.prefixArgs, runPy], {
+
+  let command = "";
+  let args = [];
+  let shell = false;
+  if (app.isPackaged && bundledBackendExecutable) {
+    command = bundledBackendExecutable;
+    args = [];
+    console.log(`[backend] frozen backend launcher -> ${command}`);
+  } else {
+    const python = findPythonCommand(backendDir);
+    command = python.command;
+    args = [...python.prefixArgs, runPy];
+    shell = process.platform === "win32";
+    console.log(`[backend] python launcher: ${python.label} -> ${python.command} ${python.prefixArgs.join(" ")}`.trim());
+  }
+
+  backendProcess = spawn(command, args, {
     cwd: backendDir,
     env,
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
+    shell,
   });
 
   backendProcess.once("error", (error) => {
