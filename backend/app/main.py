@@ -155,6 +155,7 @@ def preview_frame(payload: PreviewFrameRequest) -> PreviewFrameResponse:
     except HTTPException:
         raise
     except Exception as exc:
+        print(f"[preview/frame] failed for {payload.source_type}: {exc}", flush=True)
         raise HTTPException(status_code=500, detail=f"preview frame extraction failed: {exc}")
 
 

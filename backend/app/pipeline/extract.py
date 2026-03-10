@@ -210,8 +210,14 @@ def _extract_single_frame_with_ffmpeg(
     logger,
 ) -> None:
     ffmpeg = resolve_ffmpeg_bin(strict=platform.system().lower() == "windows")
-    accel = get_runtime_acceleration(logger=logger, ffmpeg_bin=ffmpeg)
-    hwaccel_flag_sets = accel.ffmpeg_hwaccel_flags or [[]]
+    # Single-frame preview extraction is more fragile on Windows than the main
+    # capture path. Favor CPU decode here to avoid driver/hwaccel-specific
+    # failures when opening the ROI setup screen.
+    if platform.system().lower() == "windows":
+        hwaccel_flag_sets = [[]]
+    else:
+        accel = get_runtime_acceleration(logger=logger, ffmpeg_bin=ffmpeg)
+        hwaccel_flag_sets = accel.ffmpeg_hwaccel_flags or [[]]
     seek_candidates = _preview_seek_candidates(sec)
     attempt_errors: List[str] = []
 

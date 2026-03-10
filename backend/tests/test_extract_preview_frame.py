@@ -21,6 +21,33 @@ class TestPreviewFrameExtraction(unittest.TestCase):
         self.assertIn(3.5, candidates)
         self.assertIn(6.0, candidates)
 
+    def test_preview_uses_cpu_only_on_windows(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / "source.mp4"
+            source.write_bytes(b"fake-video")
+            out_path = root / "preview.png"
+            seen = []
+
+            def fake_run(cmd, stdout=None, stderr=None, text=None):
+                seen.append(cmd)
+                out_path.write_bytes(b"png")
+                return _Result(returncode=0)
+
+            with patch("app.pipeline.extract.platform.system", return_value="Windows"), patch(
+                "app.pipeline.extract.resolve_ffmpeg_bin",
+                return_value="ffmpeg.exe",
+            ), patch("app.pipeline.extract.subprocess.run", side_effect=fake_run):
+                _extract_single_frame_with_ffmpeg(
+                    source_video=source,
+                    out_path=out_path,
+                    sec=0.0,
+                    logger=lambda *_: None,
+                )
+
+            joined = " ".join(" ".join(map(str, cmd)) for cmd in seen)
+            self.assertNotIn("-hwaccel", joined)
+
     def test_thumbnail_fallback_succeeds_after_seek_failures(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

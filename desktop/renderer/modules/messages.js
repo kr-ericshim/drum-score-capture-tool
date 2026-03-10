@@ -254,6 +254,12 @@ export function friendlyApiError(detail) {
   };
 
   if (typeof detail === "string" && detail.startsWith("preview frame extraction failed:")) {
+    const reason = detail.replace("preview frame extraction failed:", "").trim();
+    if (reason) {
+      return getLocale() === "ko"
+        ? `영역 지정 화면 생성 실패: ${reason}. 시작 시간을 5~10초 정도로 옮겨 다시 시도합니다.`
+        : `Could not generate the preview frame: ${reason}. Move the start time to around 5-10 seconds and try again.`;
+    }
     return getLocale() === "ko"
       ? "영역 지정 화면을 생성할 수 없습니다. 시작 시간을 5~10초 정도로 옮겨 다시 시도합니다."
       : "Could not generate the preview frame. Move the start time to around 5-10 seconds and try again.";
