@@ -1,6 +1,6 @@
 {
   "name": "drum-sheet-capture",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "private": true,
   "description": "Local desktop tool for capturing drum sheet pages from video and exporting PNG, JPG, or PDF.",
   "author": "Eric Shim",
@@ -32,7 +32,9 @@
   "dependencies": {},
   "devDependencies": {
     "electron": "^37.2.0",
-    "electron-builder": "^26.1.0"
+    "electron-builder": "^26.1.0",
+    "ffmpeg-static": "^5.3.0",
+    "ffprobe-static": "^3.1.0"
   },
   "build": {
     "productName": "Drum Sheet Capture",

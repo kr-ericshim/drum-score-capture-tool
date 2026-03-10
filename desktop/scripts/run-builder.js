@@ -40,21 +40,37 @@ if (!fs.existsSync(localBuilder)) {
   args = ["electron-builder", ...args];
 }
 
-const stageScript = path.join(__dirname, "..", "..", "backend", "scripts", "stage_runtime_ffmpeg.py");
-const pythonCommand = process.platform === "win32" ? "python" : "python3";
-const stageResult = spawnSync(pythonCommand, [stageScript], {
-  cwd: path.join(__dirname, "..", ".."),
-  stdio: "inherit",
-  shell: process.platform === "win32",
-  env: process.env,
-});
-
-if (stageResult.error || stageResult.status !== 0) {
-  if (stageResult.error) {
-    console.error(`[run-builder] failed to stage ffmpeg runtime: ${stageResult.error.message}`);
+function stageRuntimeFfmpeg() {
+  const ffmpegPath = require("ffmpeg-static");
+  const ffprobeStatic = require("ffprobe-static");
+  const ffprobePath = ffprobeStatic && ffprobeStatic.path;
+  if (!ffmpegPath || !ffprobePath) {
+    console.error("[run-builder] ffmpeg-static / ffprobe-static could not resolve platform binaries.");
+    process.exit(1);
   }
-  process.exit(stageResult.status || 1);
+
+  const backendBinDir = path.join(__dirname, "..", "..", "backend", "bin");
+  fs.mkdirSync(backendBinDir, { recursive: true });
+
+  const ffmpegName = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
+  const ffprobeName = process.platform === "win32" ? "ffprobe.exe" : "ffprobe";
+  const copies = [
+    [ffmpegPath, path.join(backendBinDir, ffmpegName)],
+    [ffprobePath, path.join(backendBinDir, ffprobeName)],
+  ];
+
+  for (const [source, target] of copies) {
+    if (fs.existsSync(target)) {
+      fs.chmodSync(target, 0o755);
+      fs.unlinkSync(target);
+    }
+    fs.copyFileSync(source, target);
+    fs.chmodSync(target, 0o755);
+    console.log(`[run-builder] staged runtime binary: ${target}`);
+  }
 }
+
+stageRuntimeFfmpeg();
 
 const result = spawnSync(command, args, {
   cwd: path.join(__dirname, ".."),
