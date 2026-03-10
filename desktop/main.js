@@ -220,22 +220,6 @@ function resolveVenvPythonPath(backendDir) {
   return path.join(backendDir, ".venv", "bin", "python");
 }
 
-function hasNvidiaGpu() {
-  if (process.platform !== "win32") {
-    return false;
-  }
-  try {
-    const probe = spawnSync("nvidia-smi", [], {
-      stdio: "ignore",
-      windowsHide: true,
-      shell: true,
-    });
-    return !probe.error && probe.status === 0;
-  } catch (_) {
-    return false;
-  }
-}
-
 function runCommandWithLogs({ label, command, args = [], cwd, env = process.env }) {
   return new Promise((resolve, reject) => {
     emitSetupLog(`[${label}] ${command} ${args.join(" ")}`.trim());
@@ -306,45 +290,6 @@ async function performGuidedSetup() {
     label: "backend-core",
     command: venvPython,
     args: ["-m", "pip", "install", "-r", path.join(backendDir, "requirements.txt")],
-    cwd: backendDir,
-    env,
-  });
-
-  setupPhase = "backend_optional";
-  emitSetupState();
-  await runCommandWithLogs({
-    label: "backend-uvr",
-    command: venvPython,
-    args: ["-m", "pip", "install", "-r", path.join(backendDir, "requirements-uvr.txt")],
-    cwd: backendDir,
-    env,
-  });
-
-  const useCudaTorch = hasNvidiaGpu();
-  if (useCudaTorch) {
-    emitSetupLog("NVIDIA GPU 감지: CUDA torch 패키지를 설치합니다.");
-    await runCommandWithLogs({
-      label: "torch-cuda",
-      command: venvPython,
-      args: ["-m", "pip", "install", "--index-url", "https://download.pytorch.org/whl/cu128", "torch", "torchaudio"],
-      cwd: backendDir,
-      env,
-    });
-  } else {
-    emitSetupLog("NVIDIA GPU 미감지: CPU torch 패키지를 설치합니다.");
-    await runCommandWithLogs({
-      label: "torch-cpu",
-      command: venvPython,
-      args: ["-m", "pip", "install", "torch", "torchaudio"],
-      cwd: backendDir,
-      env,
-    });
-  }
-
-  await runCommandWithLogs({
-    label: "audio-runtime",
-    command: venvPython,
-    args: ["-m", "pip", "install", "torchcodec", "soundfile>=0.12.0"],
     cwd: backendDir,
     env,
   });
@@ -592,23 +537,6 @@ function registerIpc() {
         {
           name: "Video Files",
           extensions: ["mp4", "mkv", "mov", "avi", "webm"],
-        },
-      ],
-    });
-    if (result.canceled || result.filePaths.length === 0) {
-      return "";
-    }
-    return result.filePaths[0];
-  });
-
-  ipcMain.handle("select-audio-source-file", async () => {
-    const result = await dialog.showOpenDialog({
-      title: "오디오/영상 파일 선택",
-      properties: ["openFile"],
-      filters: [
-        {
-          name: "Audio/Video Files",
-          extensions: ["mp3", "wav", "mp4"],
         },
       ],
     });

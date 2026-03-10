@@ -6,8 +6,6 @@ import platform
 import shutil
 import subprocess
 import sys
-import tempfile
-import wave
 from pathlib import Path
 
 
@@ -66,11 +64,9 @@ def check_runtime() -> None:
     try:
         from app.pipeline.ffmpeg_runtime import resolve_ffmpeg_bin
         from app.pipeline.acceleration import get_runtime_acceleration, runtime_public_info
-        from app.pipeline.torch_runtime import inspect_torch_runtime, select_torch_device, torch_runtime_summary
 
         ffmpeg_bin = resolve_ffmpeg_bin()
         info = runtime_public_info(get_runtime_acceleration(ffmpeg_bin=ffmpeg_bin))
-        torch_info = inspect_torch_runtime()
         print_item("overall_mode", str(info.get("overall_mode")))
         print_item("ffmpeg_mode", str(info.get("ffmpeg_mode")))
         print_item("opencv_mode", str(info.get("opencv_mode")))
@@ -78,85 +74,8 @@ def check_runtime() -> None:
         print_item("cpu_name", str(info.get("cpu_name")))
         print_item("upscale_available", str(info.get("upscale_available")))
         print_item("upscale_engine_hint", str(info.get("upscale_engine_hint")))
-        print_item("audio_gpu_mode(torch)", select_torch_device(torch_info))
-        print_item("audio_gpu_ready(torch)", str(bool(torch_info.get("gpu_ready", False))))
-        print_item("audio_torch_summary", torch_runtime_summary(torch_info))
     except Exception as exc:
         print_item("runtime", f"확인 실패: {exc}")
-
-
-def check_torch() -> None:
-    if not has_module("torch"):
-        print_item("torch", "설치 안 됨")
-        return
-    try:
-        import torch  # type: ignore
-
-        print_item("torch", f"{torch.__version__}")
-        print_item("python.executable", sys.executable)
-        print_item("torch.version.cuda", str(getattr(torch.version, "cuda", None)))
-        print_item("torch.cuda.is_available", str(torch.cuda.is_available()))
-        try:
-            gpu_count = int(torch.cuda.device_count())
-        except Exception:
-            gpu_count = 0
-        print_item("torch.cuda.device_count", str(gpu_count))
-        if gpu_count > 0:
-            try:
-                print_item("torch.cuda.device_name[0]", str(torch.cuda.get_device_name(0)))
-            except Exception as exc:
-                print_item("torch.cuda.device_name[0]", f"확인 실패: {exc}")
-        has_mps = hasattr(torch.backends, "mps")
-        print_item("torch.mps.backend", str(has_mps))
-        if has_mps:
-            print_item("torch.mps.is_built", str(torch.backends.mps.is_built()))
-            print_item("torch.mps.is_available", str(torch.backends.mps.is_available()))
-    except Exception as exc:
-        print_item("torch", f"확인 실패: {exc}")
-
-
-def check_torchaudio_smoke() -> None:
-    if not has_module("torchaudio"):
-        print_item("torchaudio.load", "missing")
-        return
-    if not has_module("torch"):
-        print_item("torchaudio.load", "torch missing")
-        return
-    if not has_module("numpy"):
-        print_item("torchaudio.load", "numpy missing")
-        return
-
-    tmp_path: Path | None = None
-    try:
-        import numpy as np
-        import torchaudio  # type: ignore
-        sample_rate = 16000
-        duration_sec = 1.0
-        t = np.linspace(0, duration_sec, int(sample_rate * duration_sec), endpoint=False)
-        tone = (0.2 * np.sin(2 * np.pi * 440.0 * t) * 32767).astype(np.int16)
-
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
-            tmp_path = Path(temp_file.name)
-
-        with wave.open(str(tmp_path), "wb") as wav:
-            wav.setnchannels(1)
-            wav.setsampwidth(2)
-            wav.setframerate(sample_rate)
-            wav.writeframes(tone.tobytes())
-
-        waveform, sr = torchaudio.load(str(tmp_path))
-        if int(sr) != sample_rate or getattr(waveform, "numel", lambda: 0)() <= 0:
-            print_item("torchaudio.load", f"failed: invalid output sr={sr}, samples={getattr(waveform, 'numel', lambda: 0)()}")
-            return
-        print_item("torchaudio.load", "ok")
-    except Exception as exc:
-        print_item("torchaudio.load", f"failed: {exc}")
-    finally:
-        if tmp_path is not None:
-            try:
-                tmp_path.unlink(missing_ok=True)
-            except Exception:
-                pass
 
 
 def main() -> int:
@@ -191,15 +110,6 @@ def main() -> int:
     ]
     for module in required_modules:
         print_item(module, "ok" if has_module(module) else "missing")
-
-    print_section("옵션 모듈 - 오디오 분리")
-    uvr_modules = ["demucs", "torch", "torchaudio", "torchcodec"]
-    for module in uvr_modules:
-        print_item(module, "ok" if has_module(module) else "missing")
-
-    print_section("Torch 장치")
-    check_torch()
-    check_torchaudio_smoke()
 
     print_section("앱 런타임 감지")
     check_runtime()

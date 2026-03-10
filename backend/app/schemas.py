@@ -83,23 +83,12 @@ class ExportOptions(BaseModel):
     include_raw_frames: bool = False
     page_fill_mode: PageFillMode = "performance"
 
-
-class AudioSeparationOptions(BaseModel):
-    enable: bool = False
-    engine: Literal["uvr_demucs"] = "uvr_demucs"
-    model: str = "htdemucs"
-    stem: Literal["drums"] = "drums"
-    output_format: Literal["wav", "mp3"] = "wav"
-    gpu_only: bool = False
-
-
 class JobOptions(BaseModel):
     extract: ExtractOptions = Field(default_factory=ExtractOptions)
     detect: DetectOptions = Field(default_factory=DetectOptions)
     rectify: RectifyOptions = Field(default_factory=RectifyOptions)
     stitch: StitchOptions = Field(default_factory=StitchOptions)
     upscale: UpscaleOptions = Field(default_factory=UpscaleOptions)
-    audio: AudioSeparationOptions = Field(default_factory=AudioSeparationOptions)
     export: ExportOptions = Field(default_factory=ExportOptions)
 
 
@@ -161,9 +150,44 @@ class PreviewFrameRequest(BaseModel):
     start_sec: Optional[float] = Field(default=None, ge=0)
 
 
+class PreviewDiagnostic(BaseModel):
+    level: Literal["info", "warning", "critical"] = "info"
+    code: str = ""
+    title: str = ""
+    detail: str = ""
+
+
 class PreviewFrameResponse(BaseModel):
     image_path: str
     image_url: Optional[str] = None
+    diagnostics: List[PreviewDiagnostic] = Field(default_factory=list)
+
+
+class PreviewRoiHealthRequest(BaseModel):
+    source_type: Literal["file", "youtube"]
+    file_path: Optional[str] = None
+    youtube_url: Optional[str] = None
+    start_sec: Optional[float] = Field(default=None, ge=0)
+    roi: List[List[float]] = Field(default_factory=list)
+
+    @field_validator("roi")
+    @classmethod
+    def validate_roi(cls, value: List[List[float]]):
+        if len(value) != 4:
+            raise ValueError("roi must be 4 points: [[x,y], ...]")
+        for point in value:
+            if len(point) != 2:
+                raise ValueError("each roi point must be [x, y]")
+        return value
+
+
+class PreviewRoiHealthResponse(BaseModel):
+    risk_level: Literal["info", "warning", "critical"] = "info"
+    summary: str = ""
+    diagnostics: List[PreviewDiagnostic] = Field(default_factory=list)
+    sampled_frames: int = 0
+    checked_seconds: List[float] = Field(default_factory=list)
+    metrics: Dict[str, Any] = Field(default_factory=dict)
 
 
 class PreviewSourceRequest(BaseModel):
@@ -177,28 +201,6 @@ class PreviewSourceResponse(BaseModel):
     video_url: Optional[str] = None
     from_cache: bool = False
 
-
-class AudioSeparateRequest(BaseModel):
-    source_type: Literal["file", "youtube"]
-    file_path: Optional[str] = None
-    youtube_url: Optional[str] = None
-    options: AudioSeparationOptions = Field(default_factory=lambda: AudioSeparationOptions(enable=True))
-
-
-class AudioSeparateResponse(BaseModel):
-    audio_stem: str
-    audio_url: Optional[str] = None
-    audio_stems: Dict[str, str] = Field(default_factory=dict)
-    audio_stem_urls: Dict[str, str] = Field(default_factory=dict)
-    source_video: Optional[str] = None
-    source_video_url: Optional[str] = None
-    audio_engine: str
-    audio_model: str
-    audio_device: str
-    output_dir: str
-    log_tail: List[str] = Field(default_factory=list)
-
-
 class RuntimeStatusResponse(BaseModel):
     overall_mode: Literal["gpu", "cpu"]
     ffmpeg_mode: str
@@ -210,16 +212,6 @@ class RuntimeStatusResponse(BaseModel):
     upscale_engine_hint: str = "none"
     hat_available: bool = False
     hat_device: str = "none"
-    audio_gpu_mode: str = "cpu"
-    audio_gpu_ready: bool = False
-    torch_version: Optional[str] = None
-    torch_cuda_available: bool = False
-    torch_cuda_version: Optional[str] = None
-    torch_cuda_device_count: int = 0
-    torch_cuda_device_name: Optional[str] = None
-    torch_mps_available: bool = False
-    torch_python: Optional[str] = None
-    torch_gpu_reason: str = "unknown"
 
 
 class CacheClearResponse(BaseModel):

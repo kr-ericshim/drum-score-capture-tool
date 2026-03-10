@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import platform
 import shutil
+import subprocess
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -16,8 +18,6 @@ from fastapi.staticfiles import StaticFiles
 
 from app.job_store import Job, JobStatus, JobStore
 from app.schemas import (
-    AudioSeparateRequest,
-    AudioSeparateResponse,
     CaptureCropRequest,
     CaptureCropResponse,
     CacheClearResponse,
@@ -30,23 +30,24 @@ from app.schemas import (
     JobStatusResponse,
     PreviewFrameRequest,
     PreviewFrameResponse,
+    PreviewRoiHealthRequest,
+    PreviewRoiHealthResponse,
     PreviewSourceRequest,
     PreviewSourceResponse,
     RuntimeStatusResponse,
 )
 from app.pipeline.acceleration import get_runtime_acceleration, runtime_public_info
-from app.pipeline.ffmpeg_runtime import resolve_ffmpeg_bin
+from app.pipeline.ffmpeg_runtime import resolve_ffmpeg_bin, resolve_ffprobe_bin
 from app.pipeline.extract import extract_frames, extract_preview_frame, prepare_preview_source
+from app.pipeline.roi_health import analyze_roi_health_for_source
 from app.pipeline.detect import detect_sheet_regions
 from app.pipeline.rectify import rectify_frames
 from app.pipeline.stitch import stitch_pages
 from app.pipeline.upscale import upscale_frames
-from app.pipeline.audio_uvr import separate_audio_stem
-from app.pipeline.torch_runtime import inspect_torch_runtime, select_torch_device
 from app.pipeline.export import export_frames
 
 
-app = FastAPI(title="Drum Sheet Capture API", version="0.1.0")
+app = FastAPI(title="Drum Sheet Capture API", version="0.1.14")
 
 app.add_middleware(
     CORSMiddleware,
@@ -62,8 +63,6 @@ jobs_root.mkdir(parents=True, exist_ok=True)
 app.mount("/jobs-files", StaticFiles(directory=str(jobs_root), check_dir=False), name="jobs-files")
 job_store = JobStore(jobs_root)
 executor = ThreadPoolExecutor(max_workers=1)
-AUDIO_SEPARATE_ALLOWED_EXTENSIONS = (".mp3", ".wav", ".mp4")
-AUDIO_SEPARATE_ALLOWED_EXTENSION_SET = set(AUDIO_SEPARATE_ALLOWED_EXTENSIONS)
 
 
 @app.get("/health")
@@ -76,21 +75,6 @@ def runtime_status() -> RuntimeStatusResponse:
     ffmpeg_bin = resolve_ffmpeg_bin(strict=platform.system().lower() == "windows")
     accel = get_runtime_acceleration(ffmpeg_bin=ffmpeg_bin)
     payload = runtime_public_info(accel)
-    torch_info = inspect_torch_runtime()
-    payload.update(
-        {
-            "audio_gpu_mode": select_torch_device(torch_info),
-            "audio_gpu_ready": bool(torch_info.get("gpu_ready", False)),
-            "torch_version": str(torch_info.get("torch_version")) if torch_info.get("torch_version") else None,
-            "torch_cuda_available": bool(torch_info.get("cuda_available", False)),
-            "torch_cuda_version": str(torch_info.get("cuda_version")) if torch_info.get("cuda_version") else None,
-            "torch_cuda_device_count": int(torch_info.get("cuda_device_count", 0) or 0),
-            "torch_cuda_device_name": str(torch_info.get("cuda_device_name")) if torch_info.get("cuda_device_name") else None,
-            "torch_mps_available": bool(torch_info.get("mps_available", False)),
-            "torch_python": str(torch_info.get("python_executable")) if torch_info.get("python_executable") else None,
-            "torch_gpu_reason": str(torch_info.get("gpu_reason", "unknown")),
-        }
-    )
     return RuntimeStatusResponse(**payload)
 
 
@@ -176,6 +160,52 @@ def preview_frame(payload: PreviewFrameRequest) -> PreviewFrameResponse:
         raise HTTPException(status_code=500, detail=f"preview frame extraction failed: {exc}")
 
 
+@app.post("/preview/roi-health", response_model=PreviewRoiHealthResponse)
+def preview_roi_health(payload: PreviewRoiHealthRequest) -> PreviewRoiHealthResponse:
+    try:
+        if payload.source_type == "file":
+            if not payload.file_path:
+                raise HTTPException(status_code=400, detail="file_path is required when source_type is file")
+            if not Path(payload.file_path).exists():
+                raise HTTPException(status_code=400, detail="file_path does not exist")
+        if payload.source_type == "youtube" and not payload.youtube_url:
+            raise HTTPException(status_code=400, detail="youtube_url is required when source_type is youtube")
+
+        preview_workspace = jobs_root / "_preview_health" / str(uuid.uuid4())
+        preview_workspace.mkdir(parents=True, exist_ok=True)
+        resolved_source_type = payload.source_type
+        resolved_file_path = payload.file_path
+        resolved_youtube_url = payload.youtube_url
+
+        if payload.source_type == "youtube" and payload.youtube_url:
+            cached_video, _ = _get_or_prepare_cached_youtube_video(payload.youtube_url, logger=lambda _: None)
+            resolved_source_type = "file"
+            resolved_file_path = str(cached_video)
+            resolved_youtube_url = None
+
+        analysis = analyze_roi_health_for_source(
+            source_type=resolved_source_type,
+            file_path=resolved_file_path,
+            youtube_url=resolved_youtube_url,
+            start_sec=payload.start_sec,
+            roi=payload.roi,
+            workspace=preview_workspace,
+            logger=lambda _: None,
+        )
+        return PreviewRoiHealthResponse(
+            risk_level=str(analysis.get("risk_level") or "info"),
+            summary=str(analysis.get("summary") or ""),
+            diagnostics=list(analysis.get("diagnostics") or []),
+            sampled_frames=int(analysis.get("sampled_frames") or 0),
+            checked_seconds=[float(value) for value in analysis.get("checked_seconds", [])],
+            metrics=dict(analysis.get("metrics") or {}),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"preview roi health failed: {exc}")
+
+
 @app.post("/preview/source", response_model=PreviewSourceResponse)
 def preview_source(payload: PreviewSourceRequest) -> PreviewSourceResponse:
     try:
@@ -199,88 +229,6 @@ def preview_source(payload: PreviewSourceRequest) -> PreviewSourceResponse:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"preview source preparation failed: {exc}")
-
-
-@app.post("/audio/separate", response_model=AudioSeparateResponse)
-def audio_separate(payload: AudioSeparateRequest) -> AudioSeparateResponse:
-    try:
-        logs: list[str] = []
-
-        def _audio_log(message: str) -> None:
-            text = str(message or "").strip()
-            if text:
-                logs.append(text)
-
-        if payload.source_type == "file":
-            if not payload.file_path:
-                raise HTTPException(status_code=400, detail="file_path is required when source_type is file")
-            source_path = Path(payload.file_path)
-            if not source_path.exists():
-                raise HTTPException(status_code=400, detail="file_path does not exist")
-            source_ext = source_path.suffix.lower()
-            if source_ext not in AUDIO_SEPARATE_ALLOWED_EXTENSION_SET:
-                allowed = ", ".join(ext.lstrip(".") for ext in AUDIO_SEPARATE_ALLOWED_EXTENSIONS)
-                raise HTTPException(status_code=400, detail=f"audio separation supports only {allowed} for local files")
-        if payload.source_type == "youtube" and not payload.youtube_url:
-            raise HTTPException(status_code=400, detail="youtube_url is required when source_type is youtube")
-
-        options = payload.options.model_copy(update={"enable": True})
-        workspace = jobs_root / "_audio" / str(uuid.uuid4())
-        workspace.mkdir(parents=True, exist_ok=True)
-        _audio_log(f"audio separation request accepted: source_type={payload.source_type}")
-        if payload.source_type == "youtube":
-            source_video, from_cache = _get_or_prepare_cached_youtube_video(payload.youtube_url or "", logger=_audio_log)
-            _audio_log("audio source cache hit: youtube preview cache reused" if from_cache else "audio source cache miss: youtube downloaded and cached")
-        else:
-            source_video = prepare_preview_source(
-                source_type=payload.source_type,
-                file_path=payload.file_path,
-                youtube_url=payload.youtube_url,
-                workspace=workspace / "source",
-                logger=_audio_log,
-            )
-        _audio_log(f"audio source ready: {source_video}")
-        source_video_url = _to_jobs_files_url(source_video)
-        result = separate_audio_stem(
-            source_video=source_video,
-            options=options,
-            workspace=workspace / "stem",
-            logger=_audio_log,
-        )
-        stem_path = Path(result.get("audio_stem", ""))
-        if not stem_path.exists():
-            raise RuntimeError("audio stem output file is missing")
-        audio_url = _to_jobs_files_url(stem_path)
-        stem_paths: Dict[str, str] = {}
-        stem_urls: Dict[str, str] = {}
-        raw_stems = result.get("audio_stems")
-        if isinstance(raw_stems, dict):
-            for stem_name, stem_file in raw_stems.items():
-                stem_value = str(stem_file)
-                stem_paths[str(stem_name)] = stem_value
-                try:
-                    stem_url = _to_jobs_files_url(Path(stem_value))
-                    if stem_url:
-                        stem_urls[str(stem_name)] = stem_url
-                except Exception:
-                    continue
-        return AudioSeparateResponse(
-            audio_stem=str(stem_path),
-            audio_url=audio_url,
-            audio_stems=stem_paths,
-            audio_stem_urls=stem_urls,
-            source_video=str(source_video),
-            source_video_url=source_video_url,
-            audio_engine=str(result.get("audio_engine", options.engine)),
-            audio_model=str(result.get("audio_model", options.model)),
-            audio_device=str(result.get("audio_device", "unknown")),
-            output_dir=str(stem_path.parent),
-            log_tail=logs[-120:],
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"audio separation failed: {exc}")
 
 
 @app.post("/jobs", response_model=JobCreateResponse)
@@ -387,6 +335,7 @@ def review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExpo
     result["images"] = export_result.get("images", [])
     result["pdf"] = export_result.get("pdf")
     result["raw_frames"] = export_result.get("raw_frames", [])
+    result["page_diagnostics"] = export_result.get("page_diagnostics", [])
     result["output_dir"] = str(export_workspace)
     result["review_candidates"] = [str(path) for path in resolved_paths]
     result["review_export"] = {
@@ -509,7 +458,6 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
         rectify_opts = options.rectify
         stitch_opts = options.stitch
         upscale_opts = options.upscale
-        audio_opts = options.audio
         export_opts = options.export
         runtime_capture: Dict[str, str] = {}
         resolved_source_type = payload.source_type
@@ -548,20 +496,6 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
             result["source_resolution"] = {"width": int(src_w), "height": int(src_h)}
             job_store.log(job_id, f"source resolution: {src_w}x{src_h}")
         job_store.set_state(job_id, JobStatus.RUNNING, 0.2, "detecting", "frame extraction completed")
-
-        if audio_opts.enable:
-            job_store.set_state(job_id, JobStatus.RUNNING, 0.3, "separating_audio", "starting audio separation")
-            source_video = runtime_capture.get("source_video")
-            if not source_video:
-                raise RuntimeError("source video path is unavailable for audio separation")
-            audio_result = separate_audio_stem(
-                source_video=Path(source_video),
-                options=audio_opts,
-                workspace=artifact_dir / "audio",
-                logger=lambda msg: _append(job_id, msg),
-            )
-            result.update(audio_result)
-            job_store.set_state(job_id, JobStatus.RUNNING, 0.38, "rectifying", "audio separation completed")
 
         if not frames:
             raise RuntimeError("No frames were extracted from source")
@@ -619,6 +553,7 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
         result["images"] = export_result.get("images", [])
         result["pdf"] = export_result.get("pdf")
         result["raw_frames"] = export_result.get("raw_frames", [])
+        result["page_diagnostics"] = export_result.get("page_diagnostics", [])
         result["output_dir"] = str(artifact_dir / "export")
         job_store.set_state(
             job_id,
@@ -768,6 +703,57 @@ def _detect_source_resolution(*, source_video_path: str | None, extracted_frames
 def _probe_video_resolution(path: Path) -> tuple[int, int]:
     if not path.exists():
         return 0, 0
+    width, height = _probe_video_resolution_with_ffprobe(path)
+    if width > 0 and height > 0:
+        return width, height
+    return _probe_video_resolution_with_opencv(path)
+
+
+def _probe_video_resolution_with_ffprobe(path: Path) -> tuple[int, int]:
+    try:
+        ffprobe = resolve_ffprobe_bin(strict=False)
+        completed = subprocess.run(
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height",
+                "-of",
+                "json",
+                str(path),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+    except (OSError, RuntimeError, ValueError):
+        return 0, 0
+
+    if completed.returncode != 0 or not completed.stdout:
+        return 0, 0
+
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return 0, 0
+
+    streams = payload.get("streams")
+    if not isinstance(streams, list) or not streams:
+        return 0, 0
+
+    stream = streams[0] if isinstance(streams[0], dict) else {}
+    width = int(round(float(stream.get("width") or 0)))
+    height = int(round(float(stream.get("height") or 0)))
+    if width > 0 and height > 0:
+        return width, height
+    return 0, 0
+
+
+def _probe_video_resolution_with_opencv(path: Path) -> tuple[int, int]:
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
         return 0, 0
