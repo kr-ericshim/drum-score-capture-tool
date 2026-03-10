@@ -50,7 +50,7 @@ from app.pipeline.export import export_frames
 PREVIEW_SOURCE_CACHE_NAMESPACE = "yt-v2"
 
 
-app = FastAPI(title="Drum Sheet Capture API", version="0.1.18")
+app = FastAPI(title="Drum Sheet Capture API", version="0.1.19")
 
 app.add_middleware(
     CORSMiddleware,
