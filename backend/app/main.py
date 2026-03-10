@@ -47,7 +47,10 @@ from app.pipeline.upscale import upscale_frames
 from app.pipeline.export import export_frames
 
 
-app = FastAPI(title="Drum Sheet Capture API", version="0.1.16")
+PREVIEW_SOURCE_CACHE_NAMESPACE = "yt-v2"
+
+
+app = FastAPI(title="Drum Sheet Capture API", version="0.1.17")
 
 app.add_middleware(
     CORSMiddleware,
@@ -590,7 +593,7 @@ def _find_cached_video(workspace: Path) -> Path | None:
 
 def _preview_source_cache_workspace(youtube_url: str) -> Path:
     cache_key = hashlib.sha1(youtube_url.encode("utf-8")).hexdigest()[:16]
-    cache_dir = jobs_root / "_preview_source" / cache_key
+    cache_dir = jobs_root / "_preview_source" / PREVIEW_SOURCE_CACHE_NAMESPACE / cache_key
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
 
