@@ -126,29 +126,51 @@ def _download_youtube(url: str, workspace: Path, logger) -> Path:
     download_dir.mkdir(parents=True, exist_ok=True)
     output_template = str(download_dir / "%(id)s.%(ext)s")
     logger(f"downloading youtube source: {url}")
-    ydl_opts = {
+    base_opts = {
         "outtmpl": output_template,
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
         "socket_timeout": 30,
         "retries": 2,
-        "format": "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best",
-        "merge_output_format": "mp4",
         "extractor_args": {
             "youtube": {
                 "player_client": ["android", "web"],
             },
         },
     }
-    with YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        path = ydl.prepare_filename(info)
-        download_path = Path(path)
-        if not download_path.exists():
-            raise RuntimeError(f"failed to download youtube source from {url}")
-    logger(f"youtube download saved: {download_path}")
-    return download_path
+    attempts = [
+        (
+            "quality-first",
+            {
+                "format": "bestvideo+bestaudio/best",
+            },
+        ),
+        (
+            "mp4-compatibility",
+            {
+                "format": "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best",
+                "merge_output_format": "mp4",
+            },
+        ),
+    ]
+    errors: List[str] = []
+    for name, extra_opts in attempts:
+        ydl_opts = {**base_opts, **extra_opts}
+        try:
+            logger(f"youtube download strategy={name}")
+            with YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                path = ydl.prepare_filename(info)
+                download_path = Path(path)
+                if not download_path.exists():
+                    raise RuntimeError(f"failed to download youtube source from {url}")
+            logger(f"youtube download saved: {download_path}")
+            return download_path
+        except Exception as exc:
+            errors.append(f"{name}: {exc}")
+            logger(f"youtube download strategy failed: {name}: {exc}")
+    raise RuntimeError(f"failed to download youtube source from {url}: {' | '.join(errors)}")
 
 
 def _extract_with_ffmpeg(
