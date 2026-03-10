@@ -240,7 +240,8 @@ def _split_long_page(image, *, page_ratio: float, page_fill_mode: PageFillMode =
     mode: PageFillMode = "performance" if page_fill_mode == "performance" else "balanced"
 
     target_h = int(np.clip(round(w / max(0.35, page_ratio)), 900, 2600))
-    if h <= int(target_h * 1.22):
+    min_single_page_scale = 0.94 if mode == "performance" else 0.97
+    if _estimate_single_page_frame_scale(height=h, width=w, page_ratio=page_ratio) >= min_single_page_scale:
         return [image]
 
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -258,7 +259,13 @@ def _split_long_page(image, *, page_ratio: float, page_fill_mode: PageFillMode =
     bands = _extract_active_bands(active, min_len=max(6, int(h * 0.004)))
 
     if not bands:
-        return _slice_by_whitespace(image, row_density=row_density, target_h=target_h, page_fill_mode=mode)
+        return _slice_by_whitespace(
+            image,
+            row_density=row_density,
+            target_h=target_h,
+            page_fill_mode=mode,
+            page_ratio=page_ratio,
+        )
 
     if mode == "performance":
         # Performance mode: fit more systems per page to reduce page turns.
@@ -300,6 +307,7 @@ def _split_long_page(image, *, page_ratio: float, page_fill_mode: PageFillMode =
             row_density=row_density,
             target_h=target_h,
             page_fill_mode=mode,
+            page_ratio=page_ratio,
         )
 
     normalized_pages: List[np.ndarray] = []
@@ -313,16 +321,36 @@ def _split_long_page(image, *, page_ratio: float, page_fill_mode: PageFillMode =
                     row_density=sub_density,
                     target_h=target_h,
                     page_fill_mode=mode,
+                    page_ratio=page_ratio,
                 )
             )
             continue
         normalized_pages.append(image[s:e].copy())
+
+    if len(normalized_pages) == 1:
+        only_page = normalized_pages[0]
+        if (
+            _estimate_single_page_frame_scale(
+                height=int(only_page.shape[0]),
+                width=int(only_page.shape[1]),
+                page_ratio=page_ratio,
+            )
+            < min_single_page_scale
+        ):
+            return _slice_by_whitespace(
+                image,
+                row_density=row_density,
+                target_h=target_h,
+                page_fill_mode=mode,
+                page_ratio=page_ratio,
+            )
 
     return normalized_pages or _slice_by_whitespace(
         image,
         row_density=row_density,
         target_h=target_h,
         page_fill_mode=mode,
+        page_ratio=page_ratio,
     )
 
 
@@ -398,6 +426,7 @@ def _slice_by_whitespace(
     row_density: np.ndarray,
     target_h: int,
     page_fill_mode: PageFillMode = "performance",
+    page_ratio: Optional[float] = None,
 ) -> List[np.ndarray]:
     mode: PageFillMode = "performance" if page_fill_mode == "performance" else "balanced"
     h = image.shape[0]
@@ -492,7 +521,12 @@ def _slice_by_whitespace(
         # Start exactly at the chosen cut to avoid duplicated strips across pages.
         start = cut
 
-    return _merge_short_trailing_page(pages, target_h=target_h, page_fill_mode=mode)
+    return _merge_short_trailing_page(
+        pages,
+        target_h=target_h,
+        page_fill_mode=mode,
+        page_ratio=page_ratio,
+    )
 
 
 def _refine_cut_boundary(
@@ -546,6 +580,7 @@ def _merge_short_trailing_page(
     *,
     target_h: int,
     page_fill_mode: PageFillMode = "performance",
+    page_ratio: Optional[float] = None,
 ) -> List[np.ndarray]:
     mode: PageFillMode = "performance" if page_fill_mode == "performance" else "balanced"
     if len(pages) < 2:
@@ -575,10 +610,36 @@ def _merge_short_trailing_page(
         if not can_hard_merge and not can_soft_merge:
             break
 
+        if page_ratio is not None:
+            min_single_page_scale = 0.94 if mode == "performance" else 0.97
+            merged_scale = _estimate_single_page_frame_scale(
+                height=prev_h + tail_h,
+                width=int(prev.shape[1]),
+                page_ratio=page_ratio,
+            )
+            if merged_scale < min_single_page_scale:
+                break
+
         result[-2] = np.vstack((prev, tail))
         result.pop()
 
     return result
+
+
+def _estimate_single_page_frame_scale(*, height: int, width: int, page_ratio: float) -> float:
+    if height <= 0 or width <= 0:
+        return 1.0
+
+    margin_x = max(10, int(width * 0.015))
+    margin_top = max(14, int(height * 0.026))
+    margin_bottom = max(24, int(height * 0.056))
+    canvas_w = width + (margin_x * 2)
+    target_ratio = max(0.6, float(page_ratio))
+    canvas_h = max(margin_top + margin_bottom + 1, int(round(canvas_w / target_ratio)))
+
+    inner_w = max(1, canvas_w - (margin_x * 2))
+    inner_h = max(1, canvas_h - margin_top - margin_bottom)
+    return float(min(1.0, inner_w / float(width), inner_h / float(height)))
 
 
 def _frame_as_printed_page(

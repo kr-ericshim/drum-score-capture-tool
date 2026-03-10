@@ -47,7 +47,7 @@ from app.pipeline.upscale import upscale_frames
 from app.pipeline.export import export_frames
 
 
-app = FastAPI(title="Drum Sheet Capture API", version="0.1.14")
+app = FastAPI(title="Drum Sheet Capture API", version="0.1.15")
 
 app.add_middleware(
     CORSMiddleware,
