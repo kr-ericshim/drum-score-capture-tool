@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install backend dependencies
+        run: python -m pip install -r backend/requirements.txt
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Run backend pagination tests
+        run: PYTHONPATH=backend python backend/tests/test_sheet_finalize.py
+
+      - name: Run backend ROI health tests
+        run: |
+          if [ -f backend/tests/test_roi_health.py ]; then
+            PYTHONPATH=backend python backend/tests/test_roi_health.py
+          else
+            echo "Skipping ROI health tests because backend/tests/test_roi_health.py is not present on this branch."
+          fi
+
+      - name: Check renderer syntax
+        working-directory: desktop
+        run: |
+          if [ -f renderer/modules/i18n.js ]; then
+            npm run check:renderer-syntax
+          else
+            echo "Skipping renderer syntax check because renderer/modules/i18n.js is not present on this branch."
+          fi
+
+      - name: Check locale bootstrap policy
+        working-directory: desktop
+        run: |
+          if [ -f renderer/modules/i18n.js ] && [ -f scripts/check-locale-init.js ]; then
+            npm run check:locale-init
+          else
+            echo "Skipping locale bootstrap policy check because locale bootstrap files are not present on this branch."
+          fi
+
+      - name: Verify release docs exist
+        run: |
+          test -f LICENSE
+          test -f README.md
+          test -f README.en.md
+          test -f README.ko.md
+          test -f docs/reports/2026-03-09-github-production-readiness-report.md
+          test -f docs/release/github-release-runbook.md

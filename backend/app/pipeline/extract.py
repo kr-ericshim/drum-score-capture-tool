@@ -126,20 +126,51 @@ def _download_youtube(url: str, workspace: Path, logger) -> Path:
     download_dir.mkdir(parents=True, exist_ok=True)
     output_template = str(download_dir / "%(id)s.%(ext)s")
     logger(f"downloading youtube source: {url}")
-    ydl_opts = {
+    base_opts = {
         "outtmpl": output_template,
         "quiet": True,
         "no_warnings": True,
-        "format": "bestvideo+bestaudio/best",
+        "noplaylist": True,
+        "socket_timeout": 30,
+        "retries": 2,
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "web"],
+            },
+        },
     }
-    with YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        path = ydl.prepare_filename(info)
-        download_path = Path(path)
-        if not download_path.exists():
-            raise RuntimeError(f"failed to download youtube source from {url}")
-    logger(f"youtube download saved: {download_path}")
-    return download_path
+    attempts = [
+        (
+            "quality-first",
+            {
+                "format": "bestvideo+bestaudio/best",
+            },
+        ),
+        (
+            "mp4-compatibility",
+            {
+                "format": "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best",
+                "merge_output_format": "mp4",
+            },
+        ),
+    ]
+    errors: List[str] = []
+    for name, extra_opts in attempts:
+        ydl_opts = {**base_opts, **extra_opts}
+        try:
+            logger(f"youtube download strategy={name}")
+            with YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                path = ydl.prepare_filename(info)
+                download_path = Path(path)
+                if not download_path.exists():
+                    raise RuntimeError(f"failed to download youtube source from {url}")
+            logger(f"youtube download saved: {download_path}")
+            return download_path
+        except Exception as exc:
+            errors.append(f"{name}: {exc}")
+            logger(f"youtube download strategy failed: {name}: {exc}")
+    raise RuntimeError(f"failed to download youtube source from {url}: {' | '.join(errors)}")
 
 
 def _extract_with_ffmpeg(
@@ -201,9 +232,15 @@ def _extract_single_frame_with_ffmpeg(
     logger,
 ) -> None:
     ffmpeg = resolve_ffmpeg_bin(strict=platform.system().lower() == "windows")
-    accel = get_runtime_acceleration(logger=logger, ffmpeg_bin=ffmpeg)
-    hwaccel_flag_sets = accel.ffmpeg_hwaccel_flags or [[]]
-    seek_candidates = [max(0.0, sec), max(0.0, sec + 0.8), max(0.0, sec + 1.8)]
+    # Single-frame preview extraction is more fragile on Windows than the main
+    # capture path. Favor CPU decode here to avoid driver/hwaccel-specific
+    # failures when opening the ROI setup screen.
+    if platform.system().lower() == "windows":
+        hwaccel_flag_sets = [[]]
+    else:
+        accel = get_runtime_acceleration(logger=logger, ffmpeg_bin=ffmpeg)
+        hwaccel_flag_sets = accel.ffmpeg_hwaccel_flags or [[]]
+    seek_candidates = _preview_seek_candidates(sec)
     attempt_errors: List[str] = []
 
     logger("running ffmpeg preview extraction")
@@ -237,8 +274,67 @@ def _extract_single_frame_with_ffmpeg(
                     except OSError:
                         pass
 
+    # Some packaged Windows builds can decode the video overall but fail on direct
+    # single-frame seeks near the beginning. Fall back to ffmpeg's thumbnail scan
+    # so ROI setup still opens with a representative frame.
+    logger("running ffmpeg preview thumbnail fallback")
+    thumbnail_start = max(0.0, sec)
+    thumbnail_window = 12.0
+    thumb_cmd = [
+        ffmpeg,
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-ss",
+        str(thumbnail_start),
+        "-i",
+        str(source_video),
+        "-t",
+        str(thumbnail_window),
+        "-vf",
+        "thumbnail=90",
+        "-frames:v",
+        "1",
+        str(out_path),
+    ]
+    thumb_result = subprocess.run(thumb_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if thumb_result.returncode == 0 and out_path.exists() and out_path.stat().st_size > 0:
+        return
+
+    thumb_stderr = thumb_result.stderr.strip() if thumb_result.stderr else "unknown ffmpeg error"
+    attempt_errors.append(f"thumbnail fallback: {thumb_stderr}")
+    if out_path.exists():
+        try:
+            out_path.unlink()
+        except OSError:
+            pass
+
     joined = " | ".join(attempt_errors[-3:])
     raise RuntimeError(f"ffmpeg preview failed after retries: {joined}")
+
+
+def _preview_seek_candidates(sec: float) -> List[float]:
+    base = max(0.0, float(sec or 0.0))
+    raw_candidates = [
+        base,
+        base + 0.8,
+        base + 1.8,
+        base + 3.5,
+        base + 6.0,
+    ]
+    if base >= 1.5:
+        raw_candidates.extend([max(0.0, base - 1.0), max(0.0, base - 3.0)])
+
+    ordered: List[float] = []
+    seen: set[float] = set()
+    for candidate in raw_candidates:
+        normalized = round(max(0.0, candidate), 2)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        ordered.append(normalized)
+    return ordered
 
 
 def _clear_extracted_frames(out_dir: Path) -> None:

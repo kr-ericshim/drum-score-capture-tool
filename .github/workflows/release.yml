@@ -1,0 +1,106 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_glob: dist/*.exe
+          - os: macos-14
+            artifact_glob: dist/*.dmg
+
+    runs-on: ${{ matrix.os }}
+
+    env:
+      DRUMSHEET_ENABLE_SIGNING: "false"
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install backend build dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -r backend/requirements.txt pyinstaller
+
+      - name: Build frozen backend runtime
+        shell: bash
+        run: |
+          python backend/scripts/build_frozen_backend.py
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            test -f backend/runtime/drumsheet-backend/drumsheet-backend.exe
+          else
+            test -f backend/runtime/drumsheet-backend/drumsheet-backend
+          fi
+
+      - name: Smoke test frozen backend
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/drumsheet-jobs"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            BACKEND_BIN="backend/runtime/drumsheet-backend/drumsheet-backend.exe"
+          else
+            BACKEND_BIN="backend/runtime/drumsheet-backend/drumsheet-backend"
+          fi
+          DRUMSHEET_PORT=8123 DRUMSHEET_JOBS_DIR="$RUNNER_TEMP/drumsheet-jobs" "$BACKEND_BIN" > "$RUNNER_TEMP/drumsheet-backend.log" 2>&1 &
+          BACKEND_PID=$!
+          trap 'kill $BACKEND_PID >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 18); do
+            sleep 5
+            if curl -sf http://127.0.0.1:8123/health >/dev/null; then
+              exit 0
+            fi
+          done
+          cat "$RUNNER_TEMP/drumsheet-backend.log"
+          exit 1
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Verify locale bootstrap policy
+        working-directory: desktop
+        shell: bash
+        run: |
+          if [ -f renderer/modules/i18n.js ] && [ -f scripts/check-locale-init.js ]; then
+            npm run check:locale-init
+          else
+            echo "Skipping locale bootstrap policy check because locale bootstrap files are not present on this branch."
+          fi
+
+      - name: Build release artifacts
+        working-directory: desktop
+        run: npm run dist:release
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ matrix.artifact_glob }}
+            dist/*.blockmap
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

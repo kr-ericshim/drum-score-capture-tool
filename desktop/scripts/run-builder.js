@@ -24,7 +24,12 @@ const localBuilder = process.platform === "win32"
   : path.join(__dirname, "..", "node_modules", ".bin", "electron-builder");
 
 let command = localBuilder;
-let args = ["--config", path.join(__dirname, "..", "electron-builder.config.js")];
+let args = [
+  "--config",
+  path.join(__dirname, "..", "electron-builder.config.js"),
+  "--publish",
+  "never",
+];
 if (action === "pack") {
   args.unshift("--dir");
 }
@@ -34,6 +39,38 @@ if (!fs.existsSync(localBuilder)) {
   command = "npx";
   args = ["electron-builder", ...args];
 }
+
+function stageRuntimeFfmpeg() {
+  const ffmpegPath = require("ffmpeg-static");
+  const ffprobeStatic = require("ffprobe-static");
+  const ffprobePath = ffprobeStatic && ffprobeStatic.path;
+  if (!ffmpegPath || !ffprobePath) {
+    console.error("[run-builder] ffmpeg-static / ffprobe-static could not resolve platform binaries.");
+    process.exit(1);
+  }
+
+  const backendBinDir = path.join(__dirname, "..", "..", "backend", "bin");
+  fs.mkdirSync(backendBinDir, { recursive: true });
+
+  const ffmpegName = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
+  const ffprobeName = process.platform === "win32" ? "ffprobe.exe" : "ffprobe";
+  const copies = [
+    [ffmpegPath, path.join(backendBinDir, ffmpegName)],
+    [ffprobePath, path.join(backendBinDir, ffprobeName)],
+  ];
+
+  for (const [source, target] of copies) {
+    if (fs.existsSync(target)) {
+      fs.chmodSync(target, 0o755);
+      fs.unlinkSync(target);
+    }
+    fs.copyFileSync(source, target);
+    fs.chmodSync(target, 0o755);
+    console.log(`[run-builder] staged runtime binary: ${target}`);
+  }
+}
+
+stageRuntimeFfmpeg();
 
 const result = spawnSync(command, args, {
   cwd: path.join(__dirname, ".."),
