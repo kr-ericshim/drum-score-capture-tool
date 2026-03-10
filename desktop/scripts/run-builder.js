@@ -40,6 +40,22 @@ if (!fs.existsSync(localBuilder)) {
   args = ["electron-builder", ...args];
 }
 
+const stageScript = path.join(__dirname, "..", "..", "backend", "scripts", "stage_runtime_ffmpeg.py");
+const pythonCommand = process.platform === "win32" ? "python" : "python3";
+const stageResult = spawnSync(pythonCommand, [stageScript], {
+  cwd: path.join(__dirname, "..", ".."),
+  stdio: "inherit",
+  shell: process.platform === "win32",
+  env: process.env,
+});
+
+if (stageResult.error || stageResult.status !== 0) {
+  if (stageResult.error) {
+    console.error(`[run-builder] failed to stage ffmpeg runtime: ${stageResult.error.message}`);
+  }
+  process.exit(stageResult.status || 1);
+}
+
 const result = spawnSync(command, args, {
   cwd: path.join(__dirname, ".."),
   stdio: "inherit",
