@@ -212,7 +212,7 @@ def _extract_single_frame_with_ffmpeg(
     ffmpeg = resolve_ffmpeg_bin(strict=platform.system().lower() == "windows")
     accel = get_runtime_acceleration(logger=logger, ffmpeg_bin=ffmpeg)
     hwaccel_flag_sets = accel.ffmpeg_hwaccel_flags or [[]]
-    seek_candidates = [max(0.0, sec), max(0.0, sec + 0.8), max(0.0, sec + 1.8)]
+    seek_candidates = _preview_seek_candidates(sec)
     attempt_errors: List[str] = []
 
     logger("running ffmpeg preview extraction")
@@ -246,8 +246,67 @@ def _extract_single_frame_with_ffmpeg(
                     except OSError:
                         pass
 
+    # Some packaged Windows builds can decode the video overall but fail on direct
+    # single-frame seeks near the beginning. Fall back to ffmpeg's thumbnail scan
+    # so ROI setup still opens with a representative frame.
+    logger("running ffmpeg preview thumbnail fallback")
+    thumbnail_start = max(0.0, sec)
+    thumbnail_window = 12.0
+    thumb_cmd = [
+        ffmpeg,
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-ss",
+        str(thumbnail_start),
+        "-i",
+        str(source_video),
+        "-t",
+        str(thumbnail_window),
+        "-vf",
+        "thumbnail=90",
+        "-frames:v",
+        "1",
+        str(out_path),
+    ]
+    thumb_result = subprocess.run(thumb_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if thumb_result.returncode == 0 and out_path.exists() and out_path.stat().st_size > 0:
+        return
+
+    thumb_stderr = thumb_result.stderr.strip() if thumb_result.stderr else "unknown ffmpeg error"
+    attempt_errors.append(f"thumbnail fallback: {thumb_stderr}")
+    if out_path.exists():
+        try:
+            out_path.unlink()
+        except OSError:
+            pass
+
     joined = " | ".join(attempt_errors[-3:])
     raise RuntimeError(f"ffmpeg preview failed after retries: {joined}")
+
+
+def _preview_seek_candidates(sec: float) -> List[float]:
+    base = max(0.0, float(sec or 0.0))
+    raw_candidates = [
+        base,
+        base + 0.8,
+        base + 1.8,
+        base + 3.5,
+        base + 6.0,
+    ]
+    if base >= 1.5:
+        raw_candidates.extend([max(0.0, base - 1.0), max(0.0, base - 3.0)])
+
+    ordered: List[float] = []
+    seen: set[float] = set()
+    for candidate in raw_candidates:
+        normalized = round(max(0.0, candidate), 2)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        ordered.append(normalized)
+    return ordered
 
 
 def _clear_extracted_frames(out_dir: Path) -> None:

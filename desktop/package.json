@@ -1,6 +1,6 @@
 {
   "name": "drum-sheet-capture",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "private": true,
   "description": "Local desktop tool for capturing drum sheet pages from video and exporting PNG, JPG, or PDF.",
   "author": "Eric Shim",
