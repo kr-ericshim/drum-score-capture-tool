@@ -38,6 +38,25 @@ function formatUpscaleEngine(runtime) {
   return getLocale() === "ko" ? "업스케일 가능" : "Available";
 }
 
+function formatVersionValue(version) {
+  const value = String(version || "").trim();
+  return value || (getLocale() === "ko" ? "확인 중" : "Checking");
+}
+
+function formatVersionMismatch(version, otherVersion) {
+  const current = String(version || "").trim();
+  const other = String(otherVersion || "").trim();
+  if (!current) {
+    return formatVersionValue(current);
+  }
+  if (other && current !== other) {
+    return getLocale() === "ko"
+      ? `${current} (불일치: ${other})`
+      : `${current} (mismatch: ${other})`;
+  }
+  return current;
+}
+
 function formatEngineMini(runtime) {
   const ffmpegMode = String(runtime?.ffmpeg_mode || "").toLowerCase();
   const ffmpeg = ffmpegMode ? ffmpegMode.toUpperCase() : (getLocale() === "ko" ? "확인 중" : "Checking");
@@ -77,12 +96,17 @@ export function renderRuntimeStatus(runtime) {
   const engineMini = el("runtimeEngineMini");
   const title = el("runtimeMainTitle");
   const desc = el("runtimeMainDesc");
+  const desktopVersion = el("runtimeDesktopVersion");
+  const backendVersion = el("runtimeBackendVersion");
+  const cacheNamespace = el("runtimeCacheNamespace");
   const ffmpeg = el("runtimeFfmpeg");
   const opencv = el("runtimeOpencv");
   const upscale = el("runtimeUpscale");
   const gpu = el("runtimeGpu");
   const cpu = el("runtimeCpu");
   const order = el("runtimeOrder");
+  const desktopAppVersion = String(window.drumSheetAPI?.desktopVersion || "").trim();
+  const backendAppVersion = String(runtime.app_version || "").trim();
 
   const usesGpu = String(runtime.overall_mode || "").toLowerCase() === "gpu";
   if (overallChip) {
@@ -101,6 +125,15 @@ export function renderRuntimeStatus(runtime) {
   }
   if (desc) {
     desc.textContent = summaryText(runtime);
+  }
+  if (desktopVersion) {
+    desktopVersion.textContent = formatVersionMismatch(desktopAppVersion, backendAppVersion);
+  }
+  if (backendVersion) {
+    backendVersion.textContent = formatVersionMismatch(backendAppVersion, desktopAppVersion);
+  }
+  if (cacheNamespace) {
+    cacheNamespace.textContent = formatVersionValue(runtime.preview_cache_namespace);
   }
   if (ffmpeg) {
     ffmpeg.textContent = formatMode(runtime.ffmpeg_mode);
@@ -127,8 +160,20 @@ export function renderRuntimeError() {
   if (desc) {
     desc.textContent = getLocale() === "ko" ? "엔진 정보를 불러오는 중입니다. 잠시 후 다시 확인합니다." : "Loading engine information. Check again shortly.";
   }
+  const desktopVersion = el("runtimeDesktopVersion");
+  const backendVersion = el("runtimeBackendVersion");
+  const cacheNamespace = el("runtimeCacheNamespace");
   const gpuMini = el("runtimeGpuMini");
   const engineMini = el("runtimeEngineMini");
+  if (desktopVersion) {
+    desktopVersion.textContent = formatVersionValue(window.drumSheetAPI?.desktopVersion || "");
+  }
+  if (backendVersion) {
+    backendVersion.textContent = getLocale() === "ko" ? "연결 대기" : "Waiting";
+  }
+  if (cacheNamespace) {
+    cacheNamespace.textContent = getLocale() === "ko" ? "연결 대기" : "Waiting";
+  }
   if (gpuMini) {
     gpuMini.textContent = getLocale() === "ko" ? "연결 대기" : "Waiting";
   }

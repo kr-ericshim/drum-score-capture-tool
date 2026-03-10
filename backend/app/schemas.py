@@ -212,6 +212,8 @@ class RuntimeStatusResponse(BaseModel):
     upscale_engine_hint: str = "none"
     hat_available: bool = False
     hat_device: str = "none"
+    app_version: str
+    preview_cache_namespace: str
 
 
 class CacheClearResponse(BaseModel):

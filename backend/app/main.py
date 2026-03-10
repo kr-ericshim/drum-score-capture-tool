@@ -50,7 +50,7 @@ from app.pipeline.export import export_frames
 PREVIEW_SOURCE_CACHE_NAMESPACE = "yt-v2"
 
 
-app = FastAPI(title="Drum Sheet Capture API", version="0.1.17")
+app = FastAPI(title="Drum Sheet Capture API", version="0.1.18")
 
 app.add_middleware(
     CORSMiddleware,
@@ -68,16 +68,23 @@ job_store = JobStore(jobs_root)
 executor = ThreadPoolExecutor(max_workers=1)
 
 
+def _runtime_metadata() -> Dict[str, str]:
+    return {
+        "app_version": str(app.version),
+        "preview_cache_namespace": PREVIEW_SOURCE_CACHE_NAMESPACE,
+    }
+
+
 @app.get("/health")
 def health() -> Dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", **_runtime_metadata()}
 
 
 @app.get("/runtime", response_model=RuntimeStatusResponse)
 def runtime_status() -> RuntimeStatusResponse:
     ffmpeg_bin = resolve_ffmpeg_bin(strict=platform.system().lower() == "windows")
     accel = get_runtime_acceleration(ffmpeg_bin=ffmpeg_bin)
-    payload = runtime_public_info(accel)
+    payload = {**runtime_public_info(accel), **_runtime_metadata()}
     return RuntimeStatusResponse(**payload)
 
 

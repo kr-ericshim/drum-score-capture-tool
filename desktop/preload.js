@@ -1,5 +1,6 @@
 const { contextBridge, ipcRenderer } = require("electron");
 const BACKEND_PORT = process.env.DRUMSHEET_PORT || 8000;
+const packageManifest = require("./package.json");
 
 contextBridge.exposeInMainWorld("drumSheetAPI", {
   selectVideoFile: () => ipcRenderer.invoke("select-video-file"),
@@ -25,5 +26,6 @@ contextBridge.exposeInMainWorld("drumSheetAPI", {
     ipcRenderer.on("backend-state", listener);
     return () => ipcRenderer.removeListener("backend-state", listener);
   },
+  desktopVersion: String(packageManifest.version || ""),
   apiBase: `http://127.0.0.1:${BACKEND_PORT}`,
 });
