@@ -105,6 +105,24 @@ class TestSheetFinalizePagination(unittest.TestCase):
         self.assertGreaterEqual(len(pages), 2)
         self.assertEqual(sum(int(page.shape[0]) for page in pages), h)
 
+    def test_split_long_page_avoids_single_page_shrink_for_near_oversize_score(self):
+        h, w = 3050, 1800
+        image = np.full((h, w, 3), 255, dtype=np.uint8)
+
+        starts = [120, 540, 960, 1380, 1800, 2220, 2640]
+        for start in starts:
+            for offset in [0, 10, 20, 30, 40]:
+                y = start + offset
+                cv2.line(image, (80, y), (1720, y), (0, 0, 0), 2)
+            cv2.circle(image, (250, start + 15), 8, (0, 0, 0), -1)
+            cv2.circle(image, (900, start + 27), 8, (0, 0, 0), -1)
+            cv2.circle(image, (1500, start + 37), 8, (0, 0, 0), -1)
+
+        pages = _split_long_page(image, page_ratio=1.0 / 1.4142, page_fill_mode="performance")
+
+        self.assertGreaterEqual(len(pages), 2)
+        self.assertLess(max(int(page.shape[0]) for page in pages), h)
+
     def test_slice_by_whitespace_avoids_cutting_through_dense_boundary(self):
         h, w = 4300, 1800
         image = np.full((h, w, 3), 255, dtype=np.uint8)
