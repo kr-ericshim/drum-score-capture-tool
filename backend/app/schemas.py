@@ -214,6 +214,7 @@ class RuntimeStatusResponse(BaseModel):
     hat_device: str = "none"
     app_version: str
     preview_cache_namespace: str
+    youtube_download_strategy: str
 
 
 class CacheClearResponse(BaseModel):

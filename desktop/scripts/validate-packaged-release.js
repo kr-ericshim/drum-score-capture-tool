@@ -103,9 +103,11 @@ function validate() {
 
   const packagedMainText = readText(packagedBackendMainPath);
   const packagedExtractText = readText(packagedExtractPath);
-  assert(packagedMainText.includes('PREVIEW_SOURCE_CACHE_NAMESPACE = "yt-v2"'), "Packaged backend is missing preview cache namespace invalidation");
+  assert(packagedMainText.includes('PREVIEW_SOURCE_CACHE_NAMESPACE = YOUTUBE_DOWNLOAD_STRATEGY_VERSION'), "Packaged backend is missing strategy-linked preview cache invalidation");
+  assert(packagedExtractText.includes('YOUTUBE_DOWNLOAD_STRATEGY_VERSION = "yt-v3"'), "Packaged backend is missing the latest YouTube strategy version");
   assert(packagedExtractText.includes("ffmpeg_location"), "Packaged backend is missing ffmpeg_location handoff to yt-dlp");
   assert(packagedExtractText.includes('"bestvideo+bestaudio/best"'), "Packaged backend is missing best-quality YouTube format selection");
+  assert(!packagedExtractText.includes('"player_client"'), "Packaged backend still forces a stale YouTube player client override");
 
   const metadataPath = latestMetadataPath();
   if (action === "dist" && metadataPath) {

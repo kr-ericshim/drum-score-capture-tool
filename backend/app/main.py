@@ -38,7 +38,12 @@ from app.schemas import (
 )
 from app.pipeline.acceleration import get_runtime_acceleration, runtime_public_info
 from app.pipeline.ffmpeg_runtime import resolve_ffmpeg_bin, resolve_ffprobe_bin
-from app.pipeline.extract import extract_frames, extract_preview_frame, prepare_preview_source
+from app.pipeline.extract import (
+    YOUTUBE_DOWNLOAD_STRATEGY_VERSION,
+    extract_frames,
+    extract_preview_frame,
+    prepare_preview_source,
+)
 from app.pipeline.roi_health import analyze_roi_health_for_source
 from app.pipeline.detect import detect_sheet_regions
 from app.pipeline.rectify import rectify_frames
@@ -47,10 +52,10 @@ from app.pipeline.upscale import upscale_frames
 from app.pipeline.export import export_frames
 
 
-PREVIEW_SOURCE_CACHE_NAMESPACE = "yt-v2"
+PREVIEW_SOURCE_CACHE_NAMESPACE = YOUTUBE_DOWNLOAD_STRATEGY_VERSION
 
 
-app = FastAPI(title="Drum Sheet Capture API", version="0.1.19")
+app = FastAPI(title="Drum Sheet Capture API", version="0.1.20")
 
 app.add_middleware(
     CORSMiddleware,
@@ -72,6 +77,7 @@ def _runtime_metadata() -> Dict[str, str]:
     return {
         "app_version": str(app.version),
         "preview_cache_namespace": PREVIEW_SOURCE_CACHE_NAMESPACE,
+        "youtube_download_strategy": YOUTUBE_DOWNLOAD_STRATEGY_VERSION,
     }
 
 
@@ -595,7 +601,10 @@ def _append(job_id: str, message: str) -> None:
 
 def _find_cached_video(workspace: Path) -> Path | None:
     candidates = sorted([p for p in workspace.glob("**/*") if p.is_file() and p.suffix.lower() in {".mp4", ".mkv", ".mov", ".webm", ".avi"}])
-    return candidates[0] if candidates else None
+    if not candidates:
+        return None
+    candidates.sort(key=_cached_video_rank, reverse=True)
+    return candidates[0]
 
 
 def _preview_source_cache_workspace(youtube_url: str) -> Path:
@@ -613,7 +622,15 @@ def _get_or_prepare_cached_youtube_video(youtube_url: str, *, logger) -> tuple[P
     cache_dir = _preview_source_cache_workspace(url)
     cached = _find_cached_video(cache_dir)
     if cached is not None:
-        return cached, True
+        width, height = _probe_video_resolution(cached)
+        if _is_low_quality_cached_video(width=width, height=height):
+            logger(f"youtube cache rejected: {cached.name} resolved to {width}x{height}; redownloading")
+            try:
+                cached.unlink()
+            except OSError:
+                pass
+        else:
+            return cached, True
 
     video_path = prepare_preview_source(
         source_type="youtube",
@@ -719,6 +736,24 @@ def _probe_video_resolution(path: Path) -> tuple[int, int]:
     if width > 0 and height > 0:
         return width, height
     return _probe_video_resolution_with_opencv(path)
+
+
+def _cached_video_rank(path: Path) -> tuple[int, int, int]:
+    width, height = _probe_video_resolution(path)
+    try:
+        stat = path.stat()
+        mtime_ns = int(stat.st_mtime_ns)
+    except OSError:
+        mtime_ns = 0
+    return (int(height), int(width), mtime_ns)
+
+
+def _is_low_quality_cached_video(*, width: int, height: int) -> bool:
+    if height > 0:
+        return height <= 360
+    if width > 0:
+        return width <= 640
+    return False
 
 
 def _probe_video_resolution_with_ffprobe(path: Path) -> tuple[int, int]:
