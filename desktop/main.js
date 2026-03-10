@@ -559,7 +559,7 @@ function stopSetupProcess() {
 }
 
 function registerIpc() {
-  ipcMain.handle("select-video-file", async () => {
+ipcMain.handle("select-video-file", async () => {
     const result = await dialog.showOpenDialog({
       title: "악보 영상 선택",
       properties: ["openFile"],
@@ -657,6 +657,10 @@ app.whenReady().then(async () => {
   registerIpc();
   createWindow();
   await startBackendAndWait({ showDialogOnFail: false });
+});
+
+ipcMain.on("get-app-version", (event) => {
+  event.returnValue = app.getVersion();
 });
 
 app.on("window-all-closed", () => {

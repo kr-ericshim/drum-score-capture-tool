@@ -20,7 +20,7 @@ import { renderRuntimeError, renderRuntimeStatus } from "./modules/runtime-statu
 import { appendLog, clearResultMeta, renderResultMeta, setPipelineState, setProgress, setStatus } from "./modules/status-ui.js";
 import { createVideoRangePicker } from "./modules/video-range-picker.js";
 
-const API_BASE = window.drumSheetAPI.apiBase || "http://127.0.0.1:8000";
+const API_BASE = window.drumSheetAPI?.apiBase || "http://127.0.0.1:8000";
 const THEME_STORAGE_KEY = "drum-sheet-theme";
 const THEME_MEDIA_QUERY = "(prefers-color-scheme: dark)";
 let activePoll = null;

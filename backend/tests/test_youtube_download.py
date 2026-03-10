@@ -45,11 +45,16 @@ class DownloadYoutubeTests(unittest.TestCase):
     def test_download_prefers_quality_first(self):
         FakeYoutubeDL.plans = [{"ext": "webm"}]
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch.object(extract, "YoutubeDL", FakeYoutubeDL):
+            with patch.object(extract, "YoutubeDL", FakeYoutubeDL), patch.object(
+                extract,
+                "_probe_download_resolution",
+                return_value=(1920, 1080),
+            ):
                 output = extract._download_youtube("https://example.com/watch?v=abc", Path(tmpdir), logger=lambda _: None)
                 self.assertTrue(output.exists())
         self.assertEqual(FakeYoutubeDL.seen_opts[0]["format"], "bestvideo+bestaudio/best")
         self.assertNotIn("merge_output_format", FakeYoutubeDL.seen_opts[0])
+        self.assertNotIn("extractor_args", FakeYoutubeDL.seen_opts[0])
 
     def test_download_passes_bundled_ffmpeg_to_ytdlp(self):
         FakeYoutubeDL.plans = [{"ext": "webm"}]
@@ -60,6 +65,10 @@ class DownloadYoutubeTests(unittest.TestCase):
                 extract,
                 "resolve_ffmpeg_bin",
                 return_value=str(ffmpeg_bin),
+            ), patch.object(
+                extract,
+                "_probe_download_resolution",
+                return_value=(1920, 1080),
             ), patch.object(extract, "ensure_runtime_bin_on_path") as ensure_path:
                 output = extract._download_youtube("https://example.com/watch?v=abc", Path(tmpdir), logger=lambda _: None)
                 self.assertTrue(output.exists())
@@ -73,7 +82,11 @@ class DownloadYoutubeTests(unittest.TestCase):
             {"ext": "mp4"},
         ]
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch.object(extract, "YoutubeDL", FakeYoutubeDL):
+            with patch.object(extract, "YoutubeDL", FakeYoutubeDL), patch.object(
+                extract,
+                "_probe_download_resolution",
+                return_value=(1920, 1080),
+            ):
                 output = extract._download_youtube("https://example.com/watch?v=abc", Path(tmpdir), logger=lambda _: None)
                 self.assertTrue(output.exists())
         self.assertEqual(FakeYoutubeDL.seen_opts[0]["format"], "bestvideo+bestaudio/best")
@@ -82,3 +95,18 @@ class DownloadYoutubeTests(unittest.TestCase):
             "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best",
         )
         self.assertEqual(FakeYoutubeDL.seen_opts[1]["merge_output_format"], "mp4")
+
+    def test_download_retries_when_first_result_is_low_resolution(self):
+        FakeYoutubeDL.plans = [{"ext": "mp4"}, {"ext": "mp4"}]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.object(extract, "YoutubeDL", FakeYoutubeDL), patch.object(
+                extract,
+                "_probe_download_resolution",
+                side_effect=[(640, 360), (1920, 1080)],
+            ):
+                output = extract._download_youtube("https://example.com/watch?v=abc", Path(tmpdir), logger=lambda _: None)
+                self.assertTrue(output.exists())
+
+        self.assertEqual(len(FakeYoutubeDL.seen_opts), 2)
+        self.assertEqual(FakeYoutubeDL.seen_opts[0]["format"], "bestvideo+bestaudio/best")
+        self.assertEqual(FakeYoutubeDL.seen_opts[1]["format"], "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best")

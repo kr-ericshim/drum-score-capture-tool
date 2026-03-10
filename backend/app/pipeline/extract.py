@@ -8,8 +8,11 @@ import platform
 from yt_dlp import YoutubeDL
 
 from app.pipeline.acceleration import get_runtime_acceleration
-from app.pipeline.ffmpeg_runtime import ensure_runtime_bin_on_path, resolve_ffmpeg_bin
+from app.pipeline.ffmpeg_runtime import ensure_runtime_bin_on_path, resolve_ffmpeg_bin, resolve_ffprobe_bin
 from app.schemas import ExtractOptions
+
+YOUTUBE_DOWNLOAD_STRATEGY_VERSION = "yt-v3"
+YOUTUBE_LOW_QUALITY_HEIGHT_THRESHOLD = 360
 
 
 def prepare_preview_source(
@@ -137,28 +140,24 @@ def _download_youtube(url: str, workspace: Path, logger) -> Path:
     base_opts = {
         "outtmpl": output_template,
         "quiet": True,
-        "no_warnings": True,
+        "no_warnings": False,
         "noplaylist": True,
         "socket_timeout": 30,
         "retries": 2,
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["android", "web"],
-            },
-        },
+        "logger": _YtDlpLogBridge(logger),
     }
     if ffmpeg_location:
         base_opts["ffmpeg_location"] = ffmpeg_location
 
     attempts = [
         (
-            "quality-first",
+            "default-best",
             {
                 "format": "bestvideo+bestaudio/best",
             },
         ),
         (
-            "mp4-compatibility",
+            "default-mp4",
             {
                 "format": "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best",
                 "merge_output_format": "mp4",
@@ -169,19 +168,163 @@ def _download_youtube(url: str, workspace: Path, logger) -> Path:
     for name, extra_opts in attempts:
         ydl_opts = {**base_opts, **extra_opts}
         try:
+            _clear_download_artifacts(download_dir)
             logger(f"youtube download strategy={name}")
             with YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
-                path = ydl.prepare_filename(info)
-                download_path = Path(path)
+                download_path = _resolve_download_path(download_dir=download_dir, ydl=ydl, info=info)
                 if not download_path.exists():
                     raise RuntimeError(f"failed to download youtube source from {url}")
+            selected_width, selected_height = _selected_format_resolution(info)
+            probe_width, probe_height = _probe_download_resolution(download_path)
+            width = probe_width or selected_width
+            height = probe_height or selected_height
+            logger(
+                f"youtube download selected={_selected_format_summary(info)} actual={width}x{height} strategy={name}"
+            )
+            if _is_low_quality_video(width=width, height=height):
+                logger(
+                    f"youtube download rejected: {download_path.name} resolved to {width}x{height}; retrying next strategy"
+                )
+                errors.append(f"{name}: low resolution {width}x{height}")
+                _clear_download_artifacts(download_dir)
+                continue
             logger(f"youtube download saved: {download_path}")
             return download_path
         except Exception as exc:
             errors.append(f"{name}: {exc}")
             logger(f"youtube download strategy failed: {name}: {exc}")
     raise RuntimeError(f"failed to download youtube source from {url}: {' | '.join(errors)}")
+
+
+class _YtDlpLogBridge:
+    def __init__(self, logger) -> None:
+        self._logger = logger
+
+    def debug(self, msg) -> None:
+        self._emit(msg)
+
+    def warning(self, msg) -> None:
+        self._emit(msg)
+
+    def error(self, msg) -> None:
+        self._emit(msg)
+
+    def _emit(self, msg) -> None:
+        text = str(msg or "").strip()
+        if not text:
+            return
+        if text.startswith("[debug]"):
+            return
+        self._logger(f"yt-dlp: {text}")
+
+
+def _clear_download_artifacts(download_dir: Path) -> None:
+    for file_path in download_dir.glob("*"):
+        if not file_path.is_file():
+            continue
+        try:
+            file_path.unlink()
+        except OSError:
+            continue
+
+
+def _resolve_download_path(*, download_dir: Path, ydl: YoutubeDL, info: Dict[str, object]) -> Path:
+    prepared = Path(ydl.prepare_filename(info))
+    if prepared.exists():
+        return prepared
+
+    video_id = str(info.get("id") or "").strip()
+    candidates: List[Path] = []
+    if video_id:
+        candidates.extend(sorted(download_dir.glob(f"{video_id}.*"), key=_download_sort_key, reverse=True))
+    if not candidates:
+        candidates.extend(sorted([p for p in download_dir.iterdir() if p.is_file()], key=_download_sort_key, reverse=True))
+    return candidates[0] if candidates else prepared
+
+
+def _download_sort_key(path: Path) -> tuple[int, int]:
+    try:
+        stat = path.stat()
+    except OSError:
+        return (0, 0)
+    return (int(stat.st_mtime_ns), int(stat.st_size))
+
+
+def _selected_format_summary(info: Dict[str, object]) -> str:
+    requested = info.get("requested_formats")
+    if isinstance(requested, list) and requested:
+        format_ids = [
+            str(fmt.get("format_id") or "?")
+            for fmt in requested
+            if isinstance(fmt, dict)
+        ]
+        ext = str(info.get("ext") or "").strip()
+        width, height = _selected_format_resolution(info)
+        detail = f"{'+'.join(format_ids)} {width}x{height}".strip()
+        return f"{detail} {ext}".strip()
+
+    format_id = str(info.get("format_id") or "unknown").strip()
+    ext = str(info.get("ext") or "").strip()
+    width, height = _selected_format_resolution(info)
+    detail = f"{format_id} {width}x{height}".strip()
+    return f"{detail} {ext}".strip()
+
+
+def _selected_format_resolution(info: Dict[str, object]) -> tuple[int, int]:
+    requested = info.get("requested_formats")
+    if isinstance(requested, list) and requested:
+        widths = [int(fmt.get("width") or 0) for fmt in requested if isinstance(fmt, dict)]
+        heights = [int(fmt.get("height") or 0) for fmt in requested if isinstance(fmt, dict)]
+        return (max(widths or [0]), max(heights or [0]))
+    return (int(info.get("width") or 0), int(info.get("height") or 0))
+
+
+def _probe_download_resolution(path: Path) -> tuple[int, int]:
+    try:
+        ffprobe = resolve_ffprobe_bin(strict=False)
+        completed = subprocess.run(
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height",
+                "-of",
+                "csv=p=0:s=x",
+                str(path),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+    except (OSError, RuntimeError, ValueError):
+        return (0, 0)
+
+    if completed.returncode != 0:
+        return (0, 0)
+
+    raw = str(completed.stdout or "").strip().splitlines()
+    if not raw:
+        return (0, 0)
+    parts = [segment.strip() for segment in raw[0].split("x", maxsplit=1)]
+    if len(parts) != 2:
+        return (0, 0)
+    try:
+        return (int(parts[0]), int(parts[1]))
+    except ValueError:
+        return (0, 0)
+
+
+def _is_low_quality_video(*, width: int, height: int) -> bool:
+    if height > 0:
+        return height <= YOUTUBE_LOW_QUALITY_HEIGHT_THRESHOLD
+    if width > 0:
+        return width <= 640
+    return False
 
 
 def _extract_with_ffmpeg(

@@ -91,4 +91,25 @@ if (result.error) {
   process.exit(1);
 }
 
-process.exit(result.status || 0);
+if (result.status && result.status !== 0) {
+  process.exit(result.status);
+}
+
+const validator = spawnSync(
+  process.execPath,
+  [path.join(__dirname, "validate-packaged-release.js"), action],
+  {
+    cwd: path.join(__dirname, ".."),
+    stdio: "inherit",
+    shell: false,
+    env: process.env,
+  },
+);
+
+if (validator.error) {
+  const code = validator.error.code ? ` (code: ${validator.error.code})` : "";
+  console.error(`[run-builder] failed to execute packaged release validator: ${validator.error.message}${code}`);
+  process.exit(1);
+}
+
+process.exit(validator.status || 0);
