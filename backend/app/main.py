@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import platform
 import shutil
+import subprocess
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -35,7 +37,7 @@ from app.schemas import (
     RuntimeStatusResponse,
 )
 from app.pipeline.acceleration import get_runtime_acceleration, runtime_public_info
-from app.pipeline.ffmpeg_runtime import resolve_ffmpeg_bin
+from app.pipeline.ffmpeg_runtime import resolve_ffmpeg_bin, resolve_ffprobe_bin
 from app.pipeline.extract import extract_frames, extract_preview_frame, prepare_preview_source
 from app.pipeline.roi_health import analyze_roi_health_for_source
 from app.pipeline.detect import detect_sheet_regions
@@ -45,7 +47,7 @@ from app.pipeline.upscale import upscale_frames
 from app.pipeline.export import export_frames
 
 
-app = FastAPI(title="Drum Sheet Capture API", version="0.1.0")
+app = FastAPI(title="Drum Sheet Capture API", version="0.1.14")
 
 app.add_middleware(
     CORSMiddleware,
@@ -703,6 +705,57 @@ def _detect_source_resolution(*, source_video_path: str | None, extracted_frames
 def _probe_video_resolution(path: Path) -> tuple[int, int]:
     if not path.exists():
         return 0, 0
+    width, height = _probe_video_resolution_with_ffprobe(path)
+    if width > 0 and height > 0:
+        return width, height
+    return _probe_video_resolution_with_opencv(path)
+
+
+def _probe_video_resolution_with_ffprobe(path: Path) -> tuple[int, int]:
+    try:
+        ffprobe = resolve_ffprobe_bin(strict=False)
+        completed = subprocess.run(
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height",
+                "-of",
+                "json",
+                str(path),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+    except (OSError, RuntimeError, ValueError):
+        return 0, 0
+
+    if completed.returncode != 0 or not completed.stdout:
+        return 0, 0
+
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return 0, 0
+
+    streams = payload.get("streams")
+    if not isinstance(streams, list) or not streams:
+        return 0, 0
+
+    stream = streams[0] if isinstance(streams[0], dict) else {}
+    width = int(round(float(stream.get("width") or 0)))
+    height = int(round(float(stream.get("height") or 0)))
+    if width > 0 and height > 0:
+        return width, height
+    return 0, 0
+
+
+def _probe_video_resolution_with_opencv(path: Path) -> tuple[int, int]:
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
         return 0, 0

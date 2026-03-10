@@ -17,7 +17,6 @@
 - 상태: MVP 확장 단계
 - 핵심 흐름:
   - `악보 캡처` 탭: 입력 -> 처리 -> 결과
-  - `드럼 음원 분리` 탭: 입력 -> 분리 실행 -> 결과 파일
 - 데스크톱: Electron
 - 로컬 백엔드: FastAPI + OpenCV + FFmpeg
 
@@ -39,7 +38,6 @@
 - 소스 변경 시 ROI/프리뷰 자동 초기화(이전 영상 프레임 혼입 방지)
 - 수동 ROI 편집 위치를 옵션 카드 근처로 이동
 - 상단 가속 상태 카드 추가 (CPU/GPU/장치명/엔진 표시)
-- 탭형 메뉴 추가 (`악보 캡처`, `드럼 음원 분리`)
 - 초보자용 원클릭 설치/실행 런처 추가 (`easy_setup_*.command/.bat`, `run_app_*.command/.bat`)
 - 앱 내부 GUI에 원클릭 설치/복구 버튼 추가 (백엔드 비연결 시 복구 동선 제공)
 
@@ -51,24 +49,8 @@
 - macOS `scale_vt`는 필터 존재 + 실행 self-test 통과 시에만 활성
 - 유튜브 입력 소스는 preview/source 캐시를 구간선택/영역선택/본 작업에서 공통 재사용
 
-### 3-4. 오디오 분리 (UVR Demucs 경로)
-- 오디오 전용 API: `POST /audio/separate`
-- 옵션:
-  - 엔진: `uvr_demucs`
-  - 모델: `htdemucs`, `htdemucs_ft`, `htdemucs_6s`
-  - stem: `drums`
-  - 형식: `wav`/`mp3`
-- 분리 결과 경로/장치 정보 UI 표시
-- 앱 내 내장 플레이어:
-  - 바로 재생/정지
-  - 재생 속도 조절
-  - stem별 볼륨 믹서
-
 ## 4. 현재 제약/주의 사항
-- 오디오 분리는 `demucs`, `torch`, `torchaudio` 설치가 필요하다.
-- 오디오 분리는 `torchcodec`도 필요하다.
 - `GPU 전용` 옵션 사용 시 CUDA/MPS 미감지 환경에서 작업 실패가 정상이다.
-- 상단 런타임의 GPU 감지(FFmpeg/OpenCV)와 오디오 분리 GPU(torch CUDA/MPS)는 기준이 다를 수 있다.
 - macOS 환경에서도 `scale_vt`가 시스템/ffmpeg 빌드 상태에 따라 비활성일 수 있다.
 - Windows 환경에서는 ffmpeg/ffprobe 경로가 상대 경로로 해석되면 실행 실패할 수 있어, 절대 경로 resolver를 우선 사용한다.
 - 유튜브 입력은 정책/네트워크/코덱 이슈로 실패 가능성이 있다.
@@ -79,12 +61,9 @@
   - Windows: `easy_setup_windows.bat` 실행
 - 초보자 원클릭 실행:
   - macOS: `run_app_mac.command` 실행
-  - Windows: `run_app_windows.bat` 실행
+- Windows: `run_app_windows.bat` 실행
 - 기본 백엔드:
   - `pip install -r backend/requirements.txt`
-- 오디오 분리 추가:
-  - `pip install -r backend/requirements-uvr.txt`
-  - `pip install torch torchaudio torchcodec`
 
 ## 6. 배포 용량 최적화
 - 기본(full) 빌드:
@@ -95,26 +74,23 @@
   - `npm run dist:compact` 또는 `npm run pack:compact`
   - `.venv`는 유지하면서 HAT 실험체크포인트/불필요 메타데이터만 제외
   - 목표: 기본 full 대비 체감 15~35% 축소
-- `dist:compact`를 쓰더라도 업스케일, 오디오 분리 기본 플래그는 동일하게 동작
+- `dist:compact`를 쓰더라도 캡처/업스케일 기본 플래그는 동일하게 동작
 - 다만 HAT 기본 가중치 파일은 기본 번들에서 제외될 수 있어 최초 실행 시 별도 다운로드/세팅이 필요할 수 있음
 - 경량(lean) 빌드:
   - `npm run dist:lean` 또는 `npm run pack:lean`
   - `.venv`, `third_party`, `requirements*`, `scripts`를 제외해 설치본 크기 축소
   - 동작 전제: 사용자 시스템 Python에서 필요한 패키지가 별도 설치되어 있어야 함
-  - 경량 빌드에서 음원 분리는 `.venv` 미포함 환경에서는 의존성 오류 없이 실행되지 않으므로 배포 노트에 의존성 안내 필요
+  - 경량 빌드에서는 `.venv` 미포함 환경이므로 사용자 시스템 Python/패키지 의존성 안내가 필요
 
 ## 8. 우선순위 백로그
 | ID | 우선순위 | 항목 | 상태 | 담당 |
 |---|---|---|---|---|
-| B-001 | P0 | 오디오 분리 페이지에 실시간 진행률(큐/실행/완료) 추가 | 진행 중 | 공동 |
-| B-002 | P0 | 오디오 분리 결과 미리듣기(내장 audio 플레이어) | 완료 | 공동 |
-| B-003 | P1 | 드럼 분리 모델별 품질/속도 가이드 문구 추가 | 대기 | 공동 |
-| B-004 | P1 | 캡처 결과 이미지 품질 튜닝 프리셋(선명/균형/원본) | 대기 | 공동 |
-| B-005 | P1 | 수동 ROI 편집을 모달화(스크롤 최소화) | 대기 | 공동 |
-| B-006 | P2 | 프로젝트 저장/재열기 기능 | 대기 | 공동 |
+| B-001 | P1 | 캡처 결과 이미지 품질 튜닝 프리셋(선명/균형/원본) | 대기 | 공동 |
+| B-002 | P1 | 수동 ROI 편집을 모달화(스크롤 최소화) | 대기 | 공동 |
+| B-003 | P2 | 프로젝트 저장/재열기 기능 | 대기 | 공동 |
 
 ## 9. 결정 사항 (Decision Log)
-- D-001: 악보 캡처와 오디오 분리는 탭으로 분리해 UX 복잡도를 낮춘다.
+- D-001: 데스크톱 UX는 악보 캡처 핵심 흐름에 집중한다.
 - D-002: 업스케일은 GPU 우선 원칙을 유지하고, 실행 불가 경로는 UI에서 비활성 처리한다.
 - D-003: 유튜브도 로컬과 동일하게 미니 플레이어 기반 구간 선택 흐름을 제공한다.
 - D-004: 유지보수를 위해 기능 모듈 분리를 우선한다. (단일 파일 집중 금지)
@@ -123,18 +99,17 @@
 | 날짜 | 작성 | 변경 내용 |
 |---|---|---|
 | 2026-02-22 | AI | 초기 문서 생성, 현재 기능/백로그/결정 사항 반영 |
-| 2026-02-22 | AI | 내장 stem 플레이어(속도/볼륨) UI 반영 |
+| 2026-02-22 | AI | 결과 검토 UI와 재생 보조 흐름 정리 |
 | 2026-02-22 | AI | null.value 방어 패치, 환경 점검 스크립트(`doctor.py`) 및 오류 대응 가이드 추가 |
-| 2026-02-22 | AI | ffmpeg/ffprobe 절대 경로 resolver 추가(Windows 상대 경로 오류 대응), 오디오/추출/업스케일 호출부 공통 적용 |
-| 2026-02-22 | AI | torch 런타임 진단 추가(오디오 GPU 분리 표기), CUDA 미탐지 원인 코드(`torch_gpu_reason`) 노출 |
-| 2026-02-22 | AI | 유튜브 다운로드 캐시를 preview/frame·jobs·audio/separate에 공통 적용, Stepper 자동 단계 이동 제거 |
+| 2026-02-22 | AI | ffmpeg/ffprobe 절대 경로 resolver 추가(Windows 상대 경로 오류 대응), 추출/업스케일 호출부 공통 적용 |
+| 2026-03-09 | AI | 드럼 음원 분리 기능(UI/API/파이프라인/의존성) 제거, 배포 용량 축소 방향으로 정리 |
 | 2026-02-22 | AI | ROI 프리뷰 요청 토큰 가드 및 소스 변경 시 ROI 초기화로 이전 영상 프레임이 섞이는 문제 완화 |
 | 2026-02-23 | AI | 컴맹 모드 원클릭 설치/실행 스크립트 추가(macOS/Windows) + README 초간단 설치 동선 추가 |
 | 2026-02-23 | AI | 앱 내부 GUI 원클릭 설치/복구 및 백엔드 재연결 버튼 추가, 로그/상태 표시 연동 |
 
 ## 11. 다음 액션
-- 1) 오디오 분리 진행률/로그를 Job 방식으로 확장
-- 2) 오디오 분리 모델별 품질/속도 가이드 문구 고도화
+- 1) 배포용 빌드 크기 재측정 및 compact/lean 전략 재정의
+- 2) DMG 산출물이 raw UDRW로 남는 원인 점검 및 압축 포맷 고정
 
 ## 12. 자주 나오는 오류와 대응
 - `npm error enoent Could not read package.json`
@@ -145,14 +120,10 @@
   - 조치:
     - `cd backend && source .venv/bin/activate && python scripts/doctor.py`
     - 필요시 `uvicorn app.main:app --reload`로 단독 실행 후 로그 확인
-- `demucs is not installed` / `No module named demucs`
-  - 조치: `pip install -r backend/requirements-uvr.txt` (반드시 `backend/.venv` 활성 상태)
-- `TorchCodec is required for save_with_torchcodec`
-  - 조치: `pip install torchcodec`
-- `Audio GPU 전용, but CUDA/MPS is not available`
+- `GPU-only upscaling requires OpenCV GPU mode (cuda/opencl).`
   - 조치:
     - GPU 전용 옵션 해제 후 실행
-    - `python scripts/doctor.py`에서 `torch.mps.is_available` 또는 `torch.cuda.is_available` 확인
+    - `python scripts/doctor.py`에서 OpenCV/FFmpeg 런타임 상태 확인
 - `ffmpeg` 실행 경로 오류 (`WinError 2`, 상대 경로 실행 실패)
   - 조치:
     - 앱이 자동으로 절대 경로 탐색(`DRUMSHEET_FFMPEG_BIN` → backend 번들 경로 → PATH)하도록 반영됨
@@ -163,6 +134,6 @@
 
 ## 13. 점검 스크립트
 - 경로: `backend/scripts/doctor.py`
-- 목적: 명령어(ffmpeg/ffprobe/yt-dlp), 필수/옵션 모듈, torch 장치, 앱 런타임 가속 상태를 한 번에 점검
+- 목적: 명령어(ffmpeg/ffprobe/yt-dlp), 필수 모듈, 앱 런타임 가속 상태를 한 번에 점검
 - 실행:
   - `cd backend && source .venv/bin/activate && python scripts/doctor.py`
