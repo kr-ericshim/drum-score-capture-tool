@@ -8,7 +8,7 @@ import platform
 from yt_dlp import YoutubeDL
 
 from app.pipeline.acceleration import get_runtime_acceleration
-from app.pipeline.ffmpeg_runtime import resolve_ffmpeg_bin
+from app.pipeline.ffmpeg_runtime import ensure_runtime_bin_on_path, resolve_ffmpeg_bin
 from app.schemas import ExtractOptions
 
 
@@ -126,6 +126,14 @@ def _download_youtube(url: str, workspace: Path, logger) -> Path:
     download_dir.mkdir(parents=True, exist_ok=True)
     output_template = str(download_dir / "%(id)s.%(ext)s")
     logger(f"downloading youtube source: {url}")
+    ffmpeg_bin = resolve_ffmpeg_bin(strict=False)
+    ffmpeg_location = ""
+    if ffmpeg_bin:
+        ffmpeg_candidate = Path(ffmpeg_bin).expanduser()
+        if ffmpeg_candidate.is_file():
+            ensure_runtime_bin_on_path(ffmpeg_bin=str(ffmpeg_candidate), logger=logger)
+            ffmpeg_location = str(ffmpeg_candidate)
+
     base_opts = {
         "outtmpl": output_template,
         "quiet": True,
@@ -139,6 +147,9 @@ def _download_youtube(url: str, workspace: Path, logger) -> Path:
             },
         },
     }
+    if ffmpeg_location:
+        base_opts["ffmpeg_location"] = ffmpeg_location
+
     attempts = [
         (
             "quality-first",
