@@ -8,6 +8,7 @@ Local desktop tool for capturing drum sheet pages from video and exporting PNG, 
 - [English User Guide](./README.en.md)
 - [Production Readiness Report](./docs/reports/2026-03-09-github-production-readiness-report.md)
 - [GitHub Release Runbook](./docs/release/github-release-runbook.md)
+- [Final Production Checklist](./docs/release/final-production-checklist.md)
 
 ## Release Targets
 

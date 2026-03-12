@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -110,3 +111,26 @@ class DownloadYoutubeTests(unittest.TestCase):
         self.assertEqual(len(FakeYoutubeDL.seen_opts), 2)
         self.assertEqual(FakeYoutubeDL.seen_opts[0]["format"], "bestvideo+bestaudio/best")
         self.assertEqual(FakeYoutubeDL.seen_opts[1]["format"], "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best")
+
+    def test_download_enables_node_js_runtime_when_configured(self):
+        FakeYoutubeDL.plans = [{"ext": "webm"}]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_node = Path(tmpdir) / "node"
+            fake_node.write_text("#!/bin/sh\n")
+            with patch.dict(os.environ, {"DRUMSHEET_NODE_BIN": str(fake_node)}, clear=False), patch.object(
+                extract,
+                "YoutubeDL",
+                FakeYoutubeDL,
+            ), patch.object(
+                extract,
+                "_probe_download_resolution",
+                return_value=(1920, 1080),
+            ):
+                output = extract._download_youtube("https://example.com/watch?v=abc", Path(tmpdir), logger=lambda _: None)
+                self.assertTrue(output.exists())
+
+        self.assertEqual(
+            FakeYoutubeDL.seen_opts[0]["js_runtimes"],
+            {"node": {"path": str(fake_node.resolve())}},
+        )
+        self.assertEqual(FakeYoutubeDL.seen_opts[0]["remote_components"], ["ejs:github"])

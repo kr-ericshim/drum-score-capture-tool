@@ -49,13 +49,13 @@ from app.pipeline.detect import detect_sheet_regions
 from app.pipeline.rectify import rectify_frames
 from app.pipeline.stitch import stitch_pages
 from app.pipeline.upscale import upscale_frames
-from app.pipeline.export import export_frames
+from app.pipeline.export import export_frames, export_selected_pages
 
 
 PREVIEW_SOURCE_CACHE_NAMESPACE = YOUTUBE_DOWNLOAD_STRATEGY_VERSION
 
 
-app = FastAPI(title="Drum Sheet Capture API", version="0.1.20")
+app = FastAPI(title="Drum Sheet Capture API", version="0.1.21")
 
 app.add_middleware(
     CORSMiddleware,
@@ -237,9 +237,18 @@ def preview_source(payload: PreviewSourceRequest) -> PreviewSourceResponse:
         if payload.source_type == "youtube":
             if not payload.youtube_url:
                 raise HTTPException(status_code=400, detail="youtube_url is required when source_type is youtube")
-            video_path, from_cache = _get_or_prepare_cached_youtube_video(payload.youtube_url, logger=lambda _: None)
+            log_lines: List[str] = []
+            video_path, from_cache = _get_or_prepare_cached_youtube_video(
+                payload.youtube_url,
+                logger=lambda line: log_lines.append(str(line or "").strip()),
+            )
             video_url = _to_jobs_files_url(video_path)
-            return PreviewSourceResponse(video_path=str(video_path), video_url=video_url, from_cache=from_cache)
+            return PreviewSourceResponse(
+                video_path=str(video_path),
+                video_url=video_url,
+                from_cache=from_cache,
+                log_lines=[line for line in log_lines if line],
+            )
 
         raise HTTPException(status_code=400, detail=f"unsupported source_type: {payload.source_type}")
     except HTTPException:
@@ -337,14 +346,11 @@ def review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExpo
     export_workspace = Path(job.artifact_dir) / "export"
 
     try:
-        export_options = _build_export_options(formats=[str(value) for value in requested_formats])
-        _clear_export_workspace(export_workspace)
-        export_result = export_frames(
-            frame_paths=resolved_paths,
-            options=export_options,
+        export_result = export_selected_pages(
+            page_paths=resolved_paths,
+            formats=[str(value) for value in requested_formats],
             workspace=export_workspace,
             logger=lambda msg: _append(job_id, msg),
-            source_frames=None,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"review export failed: {exc}")
@@ -355,9 +361,9 @@ def review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExpo
     result["raw_frames"] = export_result.get("raw_frames", [])
     result["page_diagnostics"] = export_result.get("page_diagnostics", [])
     result["output_dir"] = str(export_workspace)
-    result["review_candidates"] = [str(path) for path in resolved_paths]
+    result["review_candidates"] = [str(path) for path in export_result.get("images", [])]
     result["review_export"] = {
-        "kept_count": len(resolved_paths),  # capture count
+        "kept_count": len(resolved_paths),
         "requested_count": len(keep_raw),
     }
     job_store.set_state(
@@ -630,8 +636,10 @@ def _get_or_prepare_cached_youtube_video(youtube_url: str, *, logger) -> tuple[P
             except OSError:
                 pass
         else:
+            logger(f"youtube cache hit: {cached.name} {width}x{height}")
             return cached, True
 
+    logger("youtube cache miss: downloading source")
     video_path = prepare_preview_source(
         source_type="youtube",
         file_path=None,

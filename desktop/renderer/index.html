@@ -23,15 +23,27 @@
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
-    <main class="layout utility-layout">
-      <header class="utility-header">
-        <div class="utility-header-copy">
+    <main id="appShell" class="layout utility-layout" data-active-step="source" data-has-result="false" data-has-review="false" data-status-drawer-open="false" data-support-open="false">
+      <header class="utility-header work-header">
+        <div class="utility-header-copy work-header-copy">
           <p class="utility-kicker" data-i18n="header.kicker">Drum Sheet Capture</p>
           <h1 data-i18n="header.title">드럼 악보 캡처</h1>
           <p class="utility-subtitle" data-i18n="header.subtitle">영상에서 악보 영역을 지정해 PNG, JPG, PDF로 저장합니다.</p>
         </div>
+        <div class="work-header-overview" aria-live="polite">
+          <div class="work-overview-card">
+            <span id="headerSourceLabel" class="work-meta-label">현재 소스</span>
+            <strong id="headerSourceValue" class="work-meta-value">선택되지 않음</strong>
+          </div>
+          <div class="work-overview-card">
+            <span id="headerStageLabel" class="work-meta-label">현재 단계</span>
+            <strong id="headerStageValue" class="work-meta-value">1단계 · 소스 선택</strong>
+          </div>
+          <span id="headerStageChip" class="work-stage-chip">확인 필요</span>
+        </div>
         <div class="utility-header-actions">
           <button id="heroStart" class="primary utility-start-button" type="button" data-i18n="header.start">영상 선택</button>
+          <button id="openSupportPanel" class="secondary utility-help-button" type="button" data-i18n="support.title">문제 해결</button>
           <div class="locale-toggle" role="group" data-i18n-aria-label="header.languageToggle" aria-label="Language">
             <button id="localeKo" class="locale-toggle-btn" type="button" data-locale="ko" data-i18n="language.ko">KO</button>
             <button id="localeEn" class="locale-toggle-btn" type="button" data-locale="en" data-i18n="language.en">EN</button>
@@ -56,34 +68,43 @@
         </div>
       </header>
 
-      <section class="panel utility-status-strip capture-panel" data-i18n-aria-label="header.workflowAria" aria-label="capture workflow">
-        <div class="utility-step-strip">
-          <button id="stepperSource" class="stepper-item stepper-item-active" type="button">
-            <span class="stepper-number">1</span>
-            <span class="stepper-label" data-i18n="step.source">영상 선택</span>
-            <span id="stepBadgeSource" class="stepper-summary" data-i18n="step.source.pending">입력 대기</span>
-          </button>
-          <button id="stepperRoi" class="stepper-item" type="button">
-            <span class="stepper-number">2</span>
-            <span class="stepper-label" data-i18n="step.roi">영역 지정</span>
-            <span id="stepBadgeRoi" class="stepper-summary" data-i18n="step.roi.pending">미설정</span>
-          </button>
-          <button id="stepperExport" class="stepper-item" type="button">
-            <span class="stepper-number">3</span>
-            <span class="stepper-label" data-i18n="step.export">저장</span>
-            <span id="stepBadgeExport" class="stepper-summary" data-i18n="step.export.pending">형식 확인</span>
-          </button>
-        </div>
-        <div class="utility-runtime-strip">
-          <span id="runtimeOverallChip" class="runtime-chip runtime-chip-cpu" data-i18n="runtime.checking">확인 중</span>
-          <span class="runtime-mini-badge"><span data-i18n="runtime.deviceLabel">장치</span> <strong id="runtimeGpuMini" data-i18n="runtime.waiting">연결 대기</strong></span>
-          <span class="runtime-mini-badge"><span data-i18n="runtime.engineLabel">엔진</span> <strong id="runtimeEngineMini" data-i18n="runtime.waiting">연결 대기</strong></span>
-        </div>
-      </section>
+      <section class="utility-shell work-shell">
+        <aside class="panel step-rail capture-panel" data-i18n-aria-label="header.workflowAria" aria-label="capture workflow">
+          <div class="step-rail-list">
+            <button id="stepperSource" class="stepper-item stepper-item-active" type="button">
+              <span class="stepper-number">1</span>
+              <span class="stepper-copy">
+                <span class="stepper-label" data-i18n="step.source">영상 선택</span>
+                <span id="stepBadgeSource" class="stepper-summary" data-i18n="step.source.pending">입력 대기</span>
+              </span>
+            </button>
+            <button id="stepperRoi" class="stepper-item" type="button">
+              <span class="stepper-number">2</span>
+              <span class="stepper-copy">
+                <span class="stepper-label" data-i18n="step.roi">영역 지정</span>
+                <span id="stepBadgeRoi" class="stepper-summary" data-i18n="step.roi.pending">미설정</span>
+              </span>
+            </button>
+            <button id="stepperExport" class="stepper-item" type="button">
+              <span class="stepper-number">3</span>
+              <span class="stepper-copy">
+                <span class="stepper-label" data-i18n="step.export">저장</span>
+                <span id="stepBadgeExport" class="stepper-summary" data-i18n="step.export.pending">형식 확인</span>
+              </span>
+            </button>
+          </div>
+          <div class="step-rail-runtime">
+            <span id="runtimeOverallChip" class="runtime-chip runtime-chip-cpu" data-i18n="runtime.checking">확인 중</span>
+            <div class="runtime-mini-group">
+              <span class="runtime-mini-badge"><span data-i18n="runtime.deviceLabel">장치</span> <strong id="runtimeGpuMini" data-i18n="runtime.waiting">연결 대기</strong></span>
+              <span class="runtime-mini-badge"><span data-i18n="runtime.engineLabel">엔진</span> <strong id="runtimeEngineMini" data-i18n="runtime.waiting">연결 대기</strong></span>
+            </div>
+          </div>
+          <span id="stepReviewBadge" class="step-review-badge" hidden>검토 필요</span>
+        </aside>
 
-      <div class="utility-shell">
-        <div class="utility-main">
-      <section class="panel panel-step panel-step-source capture-panel">
+        <section class="utility-main workspace">
+          <section class="panel panel-step panel-step-source capture-panel workspace-card">
         <details id="stepSourceDetails" class="step-details" open>
           <summary>
             <span class="step-title"><span class="step-dot">1</span><span data-i18n="step.source">영상 선택</span></span>
@@ -108,12 +129,26 @@
               <span class="helper-text" data-i18n="source.prepareHint">준비가 끝나면 아래에서 대표 프레임과 처리 구간을 확인할 수 있습니다.</span>
             </div>
             <p id="youtubePrepareStatus" class="helper-text source-inline-status" hidden></p>
+            <div id="youtubeQualityGate" class="source-quality-gate roi-diagnostic-warning" hidden>
+              <div class="source-quality-gate-copy">
+                <strong id="youtubeQualityGateTitle" data-i18n="source.qualityGateTitle">고화질 영상을 확보하지 못했습니다</strong>
+                <p id="youtubeQualityGateBody" class="helper-text" data-i18n="source.qualityGateBody">현재 환경에서는 악보 판독에 충분한 해상도로 이 영상을 가져오지 못했습니다. 가능하면 다른 플랫폼 또는 직접 확보한 원본 영상 파일을 사용하세요.</p>
+              </div>
+              <div class="source-quality-gate-actions">
+                <button id="qualityGateOpenFile" type="button" class="primary" data-i18n="source.qualityGateOpenFile">로컬 파일 열기</button>
+                <button id="qualityGateShowLog" type="button" class="secondary" data-i18n="source.qualityGateShowLog">로그 보기</button>
+              </div>
+            </div>
+            <details id="youtubePrepareLogDetails" class="logs-detail youtube-prepare-log-details" hidden>
+              <summary data-i18n="source.prepareLog">유튜브 준비 로그</summary>
+              <div id="youtubePrepareLog" class="logs youtube-prepare-log"></div>
+            </details>
             <p class="helper-text" data-i18n="source.downloadHint">유튜브 다운로드 가능 여부는 영상 정책과 실행 환경에 따라 달라질 수 있습니다.</p>
           </div>
         </details>
       </section>
 
-      <section class="panel panel-step panel-step-roi capture-panel">
+      <section class="panel panel-step panel-step-roi capture-panel workspace-card">
         <details id="stepRoiDetails" class="step-details">
           <summary>
             <span class="step-title"><span class="step-dot">2</span><span data-i18n="step.roi">악보 영역 지정</span></span>
@@ -260,75 +295,141 @@
           </div>
         </details>
       </section>
-
-        </div>
-
-      <section class="panel panel-side utility-sidebar capture-panel">
-        <section class="panel panel-step panel-step-export export-rail-card">
-          <details id="stepExportDetails" class="step-details" open>
-            <summary>
-              <span class="step-title"><span class="step-dot">3</span><span data-i18n="step.export">저장 형식</span></span>
-              <span id="stepExportSummary" class="step-summary-badge" data-i18n="step.export.defaultSummary">PNG/PDF · 추천</span>
-            </summary>
-            <div class="step-body">
-              <div class="rail-head">
-                <strong data-i18n="export.settingsTitle">처리 설정</strong>
-                <p class="helper-text" data-i18n="export.settingsHelper">ROI 확인이 끝나면 바로 실행할 수 있도록 이 영역에서 저장 옵션을 정리합니다.</p>
+          <section class="sub-card result-card workspace-card">
+            <div class="panel-head result-panel-head">
+              <div>
+                <h2 data-i18n="result.title">결과</h2>
+                <p data-i18n="result.helper">검토가 필요한 페이지를 먼저 올려 표시합니다.</p>
               </div>
-              <div class="preset-row">
-                <button id="presetBasic" class="preset-btn preset-btn-active" type="button" data-i18n="export.preset.basic">기본</button>
-                <button id="presetScroll" class="preset-btn" type="button" data-i18n="export.preset.scroll">스크롤 맞춤</button>
-                <button id="presetQuality" class="preset-btn" type="button" data-i18n="export.preset.quality">선명도 우선</button>
-              </div>
-              <p id="presetHint" class="helper-text" data-i18n="export.preset.hint">기본은 페이지 넘김을 줄이는 연주 모드입니다. 필요할 때만 다른 모드를 선택하세요.</p>
-              <div class="choice-row format-choice-row">
-                <label class="choice-chip"><input class="format" type="checkbox" value="png" checked /> PNG</label>
-                <label class="choice-chip"><input class="format" type="checkbox" value="jpg" /> JPG</label>
-                <label class="choice-chip"><input class="format" type="checkbox" value="pdf" checked /> PDF</label>
-              </div>
-              <details id="advancedOptions" class="advanced-details">
-                <summary data-i18n="export.advanced">상세 설정</summary>
-                <div class="control-row stacked-mobile">
-                  <label class="choice-chip"><input id="enableStitch" type="checkbox" /> <span data-i18n="export.stitch">스크롤 악보를 한 장으로 합치기</span></label>
-                  <label class="field compact-field">
-                    <span data-i18n="export.overlap">겹침 판단 민감도</span>
-                    <input id="overlapThreshold" type="number" value="0.2" min="0" max="1" step="0.05" />
-                  </label>
-                </div>
-                <div class="control-row stacked-mobile">
-                  <label class="choice-chip"><input id="enableUpscale" type="checkbox" /> <span data-i18n="export.upscale">출력 선명도 향상</span></label>
-                  <label class="field compact-field">
-                    <span data-i18n="export.upscaleFactor">업스케일 배율</span>
-                    <select id="upscaleFactor" disabled>
-                      <option value="2.0" selected data-i18n="export.upscale2x">2x (권장)</option>
-                      <option value="3.0">3x</option>
-                    </select>
-                  </label>
-                </div>
-                <p id="upscaleHint" class="helper-text" data-i18n="export.upscaleHint">사용 시 업스케일은 GPU 전용으로 처리합니다. GPU를 사용할 수 없으면 시작 전에 안내합니다.</p>
-              </details>
+              <span id="resultReviewBadge" class="step-review-badge" hidden>검토 필요</span>
             </div>
-          </details>
+            <div id="resultMeta"></div>
+            <div class="result-actions">
+              <button id="openOutputDir" disabled class="secondary" data-i18n="result.openFolder">결과 폴더 열기</button>
+              <button id="openPdf" disabled class="secondary" data-i18n="result.openPdf">PDF 열기</button>
+              <button id="copyOutputPath" disabled class="secondary" data-i18n="result.copyPath">경로 복사</button>
+              <button id="toggleAlwaysOnTop" class="secondary" type="button" data-i18n="result.pinWindow">창 고정: 끔</button>
+            </div>
+            <p class="helper-text" data-i18n="result.pinHint">창 고정 사용 시 앱 창이 다른 창 위에 유지됩니다.</p>
+            <div id="resultReviewBar" class="result-review-bar" style="display: none">
+              <span id="resultReviewSummary" class="result-review-summary" data-i18n="result.reviewSummary">캡처 결과를 검토하고 제외할 항목을 선택합니다.</span>
+              <div class="result-review-actions">
+                <button id="resultKeepAll" class="secondary" type="button" data-i18n="result.keepAll">전체 포함</button>
+                <button id="resultApplyReview" class="primary" type="button" disabled data-i18n="result.applyReview">선택 반영 후 페이지 재생성</button>
+              </div>
+            </div>
+            <div id="resultPathChip" class="path-chip" data-i18n="result.pathChipEmpty">출력 경로: -</div>
+            <div class="result-review-workspace">
+              <div class="result-selection-pane">
+                <div class="result-selection-head">
+                  <strong data-i18n="result.selectionTitle">캡처 선택</strong>
+                  <span class="helper-text" data-i18n="result.selectionHint">포함할 이미지를 고른 뒤 바로 반영합니다.</span>
+                </div>
+                <div id="resultThumbGrid" class="result-thumb-grid"></div>
+              </div>
+              <div class="result-preview-pane">
+                <div class="result-selection-head">
+                  <strong data-i18n="result.previewTitle">큰 미리보기</strong>
+                  <span class="helper-text" data-i18n="result.previewHint">썸네일을 누르면 여기에서 바로 확인합니다.</span>
+                </div>
+                <div id="previewWrap" class="preview-wrap">
+                  <img id="resultPreviewImage" class="result-preview-image" alt="result preview" style="display: none" />
+                </div>
+              </div>
+            </div>
+          </section>
         </section>
 
-        <div id="captureStickyCta" class="capture-sticky-cta">
-          <p id="runCtaHint" class="helper-text" data-i18n="cta.initialHint">1단계에서 영상을 선택합니다.</p>
-          <div class="result-actions capture-cta-actions">
-            <button id="runJob" class="primary" disabled data-i18n="cta.runRequired">영상 선택 필요</button>
-            <button id="cancelRun" class="secondary" type="button" style="display: none" data-i18n="cta.cancel">조회 중단</button>
-            <button id="stickyOpenOutput" class="secondary" type="button" disabled data-i18n="cta.outputFolder">결과 폴더</button>
-          </div>
-        </div>
+        <aside class="panel panel-side utility-sidebar context-inspector capture-panel">
+          <section class="sub-card context-summary-card">
+            <div class="panel-head">
+              <h2 id="contextSummaryTitle">현재 작업</h2>
+              <p id="contextSummaryCopy">이 단계에서 해야 할 일을 짧게 안내합니다.</p>
+            </div>
+            <div class="context-summary-list">
+              <div class="context-row">
+                <span id="contextStepLabel" class="context-label">현재 단계</span>
+                <strong id="contextStepStatus" class="context-value">1단계 · 영상 선택</strong>
+              </div>
+              <div class="context-row">
+                <span id="contextNextLabel" class="context-label">다음 행동</span>
+                <strong id="contextNextAction" class="context-value">영상 선택</strong>
+              </div>
+              <div class="context-row">
+                <span id="contextReviewLabel" class="context-label">결과 검토</span>
+                <strong id="contextReviewStatus" class="context-value">아직 없음</strong>
+              </div>
+            </div>
+          </section>
 
-        <section class="sub-card progress-card">
-          <div class="panel-head">
-            <h2 data-i18n="progress.title">진행 현황</h2>
-            <p data-i18n="progress.helper">처리 시작 후 진행 상태를 표시합니다.</p>
+          <section class="panel panel-step panel-step-export export-rail-card">
+            <details id="stepExportDetails" class="step-details" open>
+              <summary>
+                <span class="step-title"><span class="step-dot">3</span><span data-i18n="step.export">저장 형식</span></span>
+                <span id="stepExportSummary" class="step-summary-badge" data-i18n="step.export.defaultSummary">PNG/PDF · 추천</span>
+              </summary>
+              <div class="step-body">
+                <div class="rail-head">
+                  <strong data-i18n="export.settingsTitle">처리 설정</strong>
+                  <p class="helper-text" data-i18n="export.settingsHelper">ROI 확인이 끝나면 바로 실행할 수 있도록 이 영역에서 저장 옵션을 정리합니다.</p>
+                </div>
+                <div class="preset-row">
+                  <button id="presetBasic" class="preset-btn preset-btn-active" type="button" data-i18n="export.preset.basic">기본</button>
+                  <button id="presetScroll" class="preset-btn" type="button" data-i18n="export.preset.scroll">스크롤 맞춤</button>
+                  <button id="presetQuality" class="preset-btn" type="button" data-i18n="export.preset.quality">선명도 우선</button>
+                </div>
+                <p id="presetHint" class="helper-text" data-i18n="export.preset.hint">기본은 페이지 넘김을 줄이는 연주 모드입니다. 필요할 때만 다른 모드를 선택하세요.</p>
+                <div class="choice-row format-choice-row">
+                  <label class="choice-chip"><input class="format" type="checkbox" value="png" checked /> PNG</label>
+                  <label class="choice-chip"><input class="format" type="checkbox" value="jpg" /> JPG</label>
+                  <label class="choice-chip"><input class="format" type="checkbox" value="pdf" checked /> PDF</label>
+                </div>
+                <details id="advancedOptions" class="advanced-details">
+                  <summary data-i18n="export.advanced">상세 설정</summary>
+                  <div class="control-row stacked-mobile">
+                    <label class="choice-chip"><input id="enableStitch" type="checkbox" /> <span data-i18n="export.stitch">스크롤 악보를 한 장으로 합치기</span></label>
+                    <label class="field compact-field">
+                      <span data-i18n="export.overlap">겹침 판단 민감도</span>
+                      <input id="overlapThreshold" type="number" value="0.2" min="0" max="1" step="0.05" />
+                    </label>
+                  </div>
+                  <div class="control-row stacked-mobile">
+                    <label class="choice-chip"><input id="enableUpscale" type="checkbox" /> <span data-i18n="export.upscale">출력 선명도 향상</span></label>
+                    <label class="field compact-field">
+                      <span data-i18n="export.upscaleFactor">업스케일 배율</span>
+                      <select id="upscaleFactor" disabled>
+                        <option value="2.0" selected data-i18n="export.upscale2x">2x (권장)</option>
+                        <option value="3.0">3x</option>
+                      </select>
+                    </label>
+                  </div>
+                  <p id="upscaleHint" class="helper-text" data-i18n="export.upscaleHint">사용 시 업스케일은 GPU 전용으로 처리합니다. GPU를 사용할 수 없으면 시작 전에 안내합니다.</p>
+                </details>
+              </div>
+            </details>
+          </section>
+
+          <div id="captureStickyCta" class="capture-sticky-cta">
+            <p id="runCtaHint" class="helper-text" data-i18n="cta.initialHint">1단계에서 영상을 선택합니다.</p>
+            <div class="result-actions capture-cta-actions">
+              <button id="runJob" class="primary" disabled data-i18n="cta.runRequired">영상 선택 필요</button>
+              <button id="cancelRun" class="secondary" type="button" style="display: none" data-i18n="cta.cancel">조회 중단</button>
+              <button id="stickyOpenOutput" class="secondary" type="button" disabled data-i18n="cta.outputFolder">결과 폴더</button>
+            </div>
           </div>
+        </aside>
+      </section>
+
+      <section id="statusDrawer" class="panel status-drawer capture-panel">
+        <div class="status-drawer-bar">
           <div class="status-shell">
             <span class="status-label" data-i18n="progress.current">현재 상태</span>
             <strong id="status" data-i18n="status.idle">대기 중</strong>
           </div>
+          <p id="statusDrawerSummary" class="status-drawer-summary">1단계에서 영상을 선택합니다.</p>
+          <button id="toggleStatusDrawer" class="secondary status-drawer-toggle" type="button" data-i18n="logs.detail">상세 로그</button>
+        </div>
+        <div class="status-drawer-body">
           <div class="progress-wrap"><div id="progressBar"></div></div>
           <div class="pipeline-track" data-i18n-aria-label="header.pipelineAria" aria-label="pipeline">
             <span id="pipeDownload" class="pipe-step" data-i18n="pipe.download">영상 준비</span>
@@ -342,42 +443,19 @@
             <summary data-i18n="logs.detail">상세 로그</summary>
             <div id="logs" class="logs"></div>
           </details>
-        </section>
-
-        <section class="sub-card result-card">
-          <div class="panel-head">
-            <h2 data-i18n="result.title">결과</h2>
-            <p data-i18n="result.helper">검토가 필요한 페이지를 먼저 올려 표시합니다.</p>
-          </div>
-          <div id="resultMeta"></div>
-          <div class="result-actions">
-            <button id="openOutputDir" disabled class="secondary" data-i18n="result.openFolder">결과 폴더 열기</button>
-            <button id="openPdf" disabled class="secondary" data-i18n="result.openPdf">PDF 열기</button>
-            <button id="copyOutputPath" disabled class="secondary" data-i18n="result.copyPath">경로 복사</button>
-            <button id="toggleAlwaysOnTop" class="secondary" type="button" data-i18n="result.pinWindow">창 고정: 끔</button>
-          </div>
-          <p class="helper-text" data-i18n="result.pinHint">창 고정 사용 시 앱 창이 다른 창 위에 유지됩니다.</p>
-          <div id="resultReviewBar" class="result-review-bar" style="display: none">
-            <span id="resultReviewSummary" class="result-review-summary" data-i18n="result.reviewSummary">캡처 결과를 검토하고 제외할 항목을 선택합니다.</span>
-            <div class="result-review-actions">
-              <button id="resultKeepAll" class="secondary" type="button" data-i18n="result.keepAll">전체 포함</button>
-              <button id="resultApplyReview" class="primary" type="button" disabled data-i18n="result.applyReview">선택 반영 후 페이지 재생성</button>
-            </div>
-          </div>
-          <div id="resultPathChip" class="path-chip" data-i18n="result.pathChipEmpty">출력 경로: -</div>
-          <div id="resultThumbGrid" class="result-thumb-grid"></div>
-          <div id="previewWrap" class="preview-wrap">
-            <img id="resultPreviewImage" class="result-preview-image" alt="result preview" style="display: none" />
-          </div>
-        </section>
+        </div>
       </section>
+    </main>
 
-      </div>
-
-      <section class="panel panel-runtime utility-support-panel capture-panel">
-        <div class="panel-head utility-support-head">
-          <h2 data-i18n="support.title">문제 해결</h2>
-          <p data-i18n="support.helper">실행 오류가 있거나 고급 설정이 필요할 때만 확인합니다.</p>
+    <div id="supportSheet" class="support-sheet" hidden aria-hidden="true">
+      <button id="supportSheetBackdrop" class="support-sheet-backdrop" type="button" aria-label="Close support panel"></button>
+      <section class="panel panel-runtime utility-support-panel support-sheet-panel capture-panel">
+        <div class="support-sheet-head">
+          <div class="panel-head utility-support-head">
+            <h2 data-i18n="support.title">문제 해결</h2>
+            <p data-i18n="support.helper">실행 오류가 있거나 고급 설정이 필요할 때만 확인합니다.</p>
+          </div>
+          <button id="closeSupportPanel" class="secondary" type="button" data-i18n="crop.close">닫기</button>
         </div>
         <details class="runtime-details setup-details">
           <summary data-i18n="support.setup">자동 설치 및 복구</summary>
@@ -419,7 +497,7 @@
           </div>
         </details>
       </section>
-    </main>
+    </div>
 
     <div id="captureCropModal" class="capture-crop-modal" style="display: none" aria-hidden="true">
       <div class="capture-crop-dialog" role="dialog" aria-modal="true" aria-labelledby="captureCropTitle">

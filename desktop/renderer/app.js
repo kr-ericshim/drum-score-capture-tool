@@ -29,6 +29,7 @@ let outputPdf = "";
 let activeCaptureJobId = "";
 let currentPreviewImagePath = "";
 let resultPageDiagnostics = [];
+let resultFocusPending = false;
 let currentPreviewFrame = {
   imagePath: "",
   sourcePath: "",
@@ -76,6 +77,7 @@ let lastSourceType = sourceType();
 let previewRequestToken = 0;
 let roiHealthRequestToken = 0;
 let roiHealthDebounceTimer = null;
+let runtimeRefreshInFlight = false;
 let youtubePrepareState = {
   status: "idle",
   fingerprint: "",
@@ -83,6 +85,7 @@ let youtubePrepareState = {
   fromCache: false,
   playable: "",
 };
+let youtubePrepareLogs = [];
 let roiFrameRequestState = {
   status: "idle",
   detail: "",
@@ -93,6 +96,8 @@ let cacheUsageText = "";
 let cacheUsageLoading = false;
 let lastCacheUsageFetchAt = 0;
 let alwaysOnTopEnabled = false;
+let supportSheetOpen = false;
+let statusDrawerOpen = false;
 let backendBridgeState = {
   ready: false,
   starting: true,
@@ -152,7 +157,6 @@ function youtubePrepareStatusText(state = youtubePrepareState) {
   if (sourceType() !== "youtube") {
     return "";
   }
-  const detail = compactErrorText(state.detail, "");
   switch (state.status) {
     case "preparing":
       return L(
@@ -164,12 +168,63 @@ function youtubePrepareStatusText(state = youtubePrepareState) {
         ? L("캐시된 영상을 사용합니다. 바로 악보 화면을 열 수 있습니다.", "Using the cached video. You can open the score frame immediately.")
         : L("영상 준비 완료. 아래 플레이어에서 구간을 확인한 뒤 악보 화면을 열 수 있습니다.", "Video ready. Check the range below, then open the score frame.");
     case "error":
-      return detail
-        ? L(`영상 준비 실패: ${detail}`, `Video preparation failed: ${detail}`)
-        : L("유튜브 영상을 준비하지 못했습니다. 다시 시도합니다.", "Could not prepare the YouTube video. Try again.");
+      return L(
+        "유튜브 영상을 준비하지 못했습니다. 상세 원인은 아래 로그에서 확인할 수 있습니다.",
+        "Could not prepare the YouTube video. Check the log below for details.",
+      );
     default:
       return L("유튜브 주소를 붙여넣고 영상 준비를 누르면 다운로드 상태가 여기 표시됩니다.", "Paste a YouTube URL and press Prepare Video to see download status here.");
   }
+}
+
+function extractYoutubeLowResolution(detail = "", logs = youtubePrepareLogs) {
+  const haystacks = [
+    String(detail || ""),
+    ...((Array.isArray(logs) ? logs : []).map((line) => String(line || ""))),
+  ];
+  for (const haystack of haystacks) {
+    const match = haystack.match(/low resolution\s+(\d+)x(\d+)/i) || haystack.match(/resolved to\s+(\d+)x(\d+)/i);
+    if (match) {
+      return {
+        width: Number(match[1]) || 0,
+        height: Number(match[2]) || 0,
+      };
+    }
+  }
+  return null;
+}
+
+function isYoutubeQualityFailure(detail = "", logs = youtubePrepareLogs) {
+  if (sourceType() !== "youtube" || youtubePrepareState.status !== "error") {
+    return false;
+  }
+  return Boolean(extractYoutubeLowResolution(detail, logs));
+}
+
+function renderYoutubeQualityGate() {
+  const gate = el("youtubeQualityGate");
+  const body = el("youtubeQualityGateBody");
+  if (!gate || !body) {
+    return;
+  }
+  const lowResolution = extractYoutubeLowResolution(youtubePrepareState.detail, youtubePrepareLogs);
+  const visible = isYoutubeQualityFailure(youtubePrepareState.detail, youtubePrepareLogs);
+  gate.hidden = !visible;
+  if (!visible) {
+    return;
+  }
+  const resolution = lowResolution?.width > 0 && lowResolution?.height > 0
+    ? `${lowResolution.width}x${lowResolution.height}`
+    : "";
+  body.textContent = resolution
+    ? L(
+        `현재 협상된 영상 해상도는 ${resolution}입니다. 이 해상도로는 악보 판독 정확도가 크게 떨어질 수 있으니, 다른 플랫폼 또는 직접 확보한 원본 영상 파일을 사용하는 편이 안전합니다.`,
+        `The negotiated video resolution is ${resolution}. That is likely too soft for reliable score capture, so using the original file or a copy from another platform is safer.`,
+      )
+    : L(
+        "현재 환경에서는 악보 판독에 충분한 해상도로 이 영상을 가져오지 못했습니다. 가능하면 다른 플랫폼 또는 직접 확보한 원본 영상 파일을 사용하세요.",
+        "The current environment could not fetch this video at a resolution that is reliable enough for score capture. If possible, use the original video file or a copy obtained from another platform.",
+      );
 }
 
 function roiFrameRequestStatusText(state = roiFrameRequestState) {
@@ -215,6 +270,8 @@ function renderYoutubePrepareState() {
         ? "error"
         : "idle";
   statusNode.textContent = youtubePrepareStatusText();
+  renderYoutubeQualityGate();
+  renderYoutubePrepareLogs();
 }
 
 function renderRoiFrameRequestState() {
@@ -251,11 +308,59 @@ function resetYoutubePrepareState() {
   renderYoutubePrepareState();
 }
 
+function renderYoutubePrepareLogs() {
+  const details = el("youtubePrepareLogDetails");
+  const logNode = el("youtubePrepareLog");
+  const isYoutube = sourceType() === "youtube";
+  if (logNode) {
+    logNode.textContent = youtubePrepareLogs.join("\n");
+    logNode.scrollTop = logNode.scrollHeight;
+  }
+  if (!details) {
+    return;
+  }
+  const hasLogs = youtubePrepareLogs.length > 0;
+  details.hidden = !(isYoutube && hasLogs);
+  if (!hasLogs) {
+    details.open = false;
+  } else if (youtubePrepareState.status === "preparing") {
+    details.open = true;
+  }
+}
+
+function resetYoutubePrepareLogs() {
+  youtubePrepareLogs = [];
+  renderYoutubePrepareLogs();
+}
+
+function appendYoutubePrepareLogLine(message) {
+  const text = String(message || "").trim();
+  if (!text) {
+    return;
+  }
+  if (youtubePrepareLogs[youtubePrepareLogs.length - 1] === text) {
+    return;
+  }
+  youtubePrepareLogs = [...youtubePrepareLogs, text].slice(-120);
+  renderYoutubePrepareLogs();
+}
+
+function appendYoutubePrepareLogLines(lines = []) {
+  lines.forEach((line) => appendYoutubePrepareLogLine(line));
+}
+
 function setYoutubePrepareState(next) {
+  const previousStatus = youtubePrepareState.status;
   youtubePrepareState = {
     ...youtubePrepareState,
     ...next,
   };
+  if (previousStatus === "preparing" && youtubePrepareState.status !== "preparing") {
+    const details = el("youtubePrepareLogDetails");
+    if (details) {
+      details.open = false;
+    }
+  }
   renderYoutubePrepareState();
 }
 
@@ -1139,6 +1244,7 @@ async function refreshBackendBridgeState() {
     return;
   }
   try {
+    const wasReady = backendBridgeState.ready;
     const state = await window.drumSheetAPI.getBackendState();
     backendBridgeState = {
       ready: Boolean(state?.ready),
@@ -1150,6 +1256,9 @@ async function refreshBackendBridgeState() {
     renderBackendBridgeState();
     if (backendBridgeState.ready) {
       void refreshCacheUsage();
+      if (!wasReady || !latestRuntime) {
+        void refreshRuntimeStatus({ force: true, syncBackendStateOnFailure: false });
+      }
     }
     refreshCaptureWorkflowUi();
   } catch (error) {
@@ -1367,6 +1476,96 @@ function exportSummaryText() {
   return `${label} · ${presetLabel(currentPreset)}`;
 }
 
+function stepLabel(key) {
+  if (key === "roi") {
+    return L("ROI 지정", "ROI");
+  }
+  if (key === "export") {
+    return L("저장/내보내기", "Export");
+  }
+  return L("소스 선택", "Source");
+}
+
+function stepOrdinalLabel(key) {
+  const order = STEP_KEYS.indexOf(key) + 1;
+  return L(`${order}단계 · ${stepLabel(key)}`, `Step ${order} · ${stepLabel(key)}`);
+}
+
+function stepVisualState(key, progressStep, completion) {
+  if (completion[key]) {
+    return "done";
+  }
+  if (key === "roi" && progressStep === "roi" && currentPreviewFrame.imagePath) {
+    return "active";
+  }
+  return "need";
+}
+
+function stepStateLabel({ key, progressStep, completion }) {
+  const state = stepVisualState(key, progressStep, completion);
+  if (state === "done") {
+    return L("완료", "Done");
+  }
+  if (state === "active") {
+    return L("진행 중", "In progress");
+  }
+  return L("확인 필요", "Needs attention");
+}
+
+function stepTone({ key, progressStep, completion }) {
+  const state = stepVisualState(key, progressStep, completion);
+  if (state === "done") {
+    return "ready";
+  }
+  if (state === "active") {
+    return "warn";
+  }
+  return "info";
+}
+
+function currentSourceDisplayText() {
+  if (!isSourceReady()) {
+    return L("선택되지 않음", "Not selected");
+  }
+  if (sourceType() === "youtube") {
+    const url = String(el("youtubeUrl")?.value || "").trim();
+    return truncateMiddle(url || L("유튜브 영상", "YouTube video"), 44);
+  }
+  return pathBaseName(String(el("filePath")?.value || "")) || L("로컬 파일", "Local file");
+}
+
+function countReviewCandidates() {
+  return buildResultEntries().filter((entry) => entry.suspicious).length;
+}
+
+function contextSummaryModel(activeStep) {
+  const reviewCount = countReviewCandidates();
+  if (activeStep === "roi") {
+    return {
+      title: L("ROI 작업대", "ROI workspace"),
+      copy: L(
+        "대표 프레임에서 악보 전체가 들어오도록 ROI를 잡고, 오른쪽 요약으로 경계 위험을 확인합니다.",
+        "Draw the ROI around the full score on the representative frame and confirm boundary risk in the summary.",
+      ),
+    };
+  }
+  if (activeStep === "export") {
+    return {
+      title: L("내보내기 준비", "Export setup"),
+      copy: reviewCount > 0
+        ? L("형식을 고른 뒤 실행합니다. 결과가 나오면 검토 필요 배지를 우선 확인합니다.", "Choose formats and run. After output appears, review the flagged pages first.")
+        : L("형식과 프리셋을 확인한 뒤 바로 실행할 수 있습니다.", "Confirm formats and preset, then run immediately."),
+    };
+  }
+  return {
+    title: L("소스 준비", "Source setup"),
+    copy: L(
+      "파일을 선택하거나 YouTube 주소를 붙여넣고, 대표 프레임을 열어 다음 단계로 넘어갑니다.",
+      "Choose a file or paste a YouTube URL, then open a representative frame for the next step.",
+    ),
+  };
+}
+
 function determineActiveStep() {
   if (!isSourceReady()) {
     return "source";
@@ -1452,7 +1651,10 @@ function focusSourceEntry({ openPicker = false } = {}) {
 
 function guideToIncompleteStep() {
   if (!backendBridgeState.ready) {
-    scrollToElement("runGuidedSetup");
+    openSupportPanel();
+    requestAnimationFrame(() => {
+      el("runGuidedSetup")?.focus();
+    });
     return;
   }
   if (!isSourceReady()) {
@@ -1485,18 +1687,157 @@ function updateCaptureEntryActions() {
 function updateCaptureLayoutState() {
   const hasSource = isSourceReady();
   const hasResult = Boolean(outputDir || outputPdf || resultImagePaths.length);
-  const showProgress = runState === "running" || runState === "done" || Boolean(activeCaptureJobId);
-  const progressCard = document.querySelector(".progress-card");
   const resultCard = document.querySelector(".result-card");
+  const shell = el("appShell");
+  const reviewCount = countReviewCandidates();
 
   document.body.classList.toggle("capture-has-source", hasSource);
   document.body.classList.toggle("capture-needs-setup", !backendBridgeState.ready);
-  if (progressCard) {
-    progressCard.hidden = !showProgress;
+  if (shell) {
+    shell.dataset.hasResult = hasResult ? "true" : "false";
+    shell.dataset.hasReview = reviewCount > 0 ? "true" : "false";
+    shell.dataset.statusDrawerOpen = statusDrawerOpen ? "true" : "false";
+    shell.dataset.supportOpen = supportSheetOpen ? "true" : "false";
   }
   if (resultCard) {
     resultCard.hidden = !hasResult;
   }
+}
+
+function renderHeaderState(progressStep, completion) {
+  const sourceLabel = el("headerSourceLabel");
+  const sourceValue = el("headerSourceValue");
+  const stageLabel = el("headerStageLabel");
+  const stageValue = el("headerStageValue");
+  const stageChip = el("headerStageChip");
+  const helpButton = el("openSupportPanel");
+
+  if (sourceLabel) {
+    sourceLabel.textContent = L("현재 소스", "Current source");
+  }
+  if (sourceValue) {
+    sourceValue.textContent = currentSourceDisplayText();
+  }
+  if (stageLabel) {
+    stageLabel.textContent = L("현재 단계", "Current step");
+  }
+  if (stageValue) {
+    stageValue.textContent = stepOrdinalLabel(progressStep);
+  }
+  if (stageChip) {
+    stageChip.textContent = stepStateLabel({ key: progressStep, progressStep, completion });
+    stageChip.dataset.tone = stepTone({ key: progressStep, progressStep, completion });
+  }
+  if (helpButton) {
+    helpButton.dataset.alert = !backendBridgeState.ready ? "true" : "false";
+    helpButton.setAttribute("aria-expanded", supportSheetOpen ? "true" : "false");
+  }
+}
+
+function renderStepRail(progressStep, activeStep, completion) {
+  const reviewBadge = el("stepReviewBadge");
+  const reviewCount = countReviewCandidates();
+  if (reviewBadge) {
+    reviewBadge.hidden = reviewCount <= 0;
+    reviewBadge.textContent = reviewCount > 0
+      ? L(`검토 필요 ${reviewCount}개`, `${reviewCount} review items`)
+      : "";
+  }
+
+  STEP_KEYS.forEach((key) => {
+    const button = el(STEP_BAR_BUTTON_IDS[key]);
+    if (!button) {
+      return;
+    }
+    button.dataset.state = stepVisualState(key, progressStep, completion);
+    button.setAttribute("aria-current", key === activeStep ? "step" : "false");
+  });
+}
+
+function renderInspectorState(activeStep, progressStep, completion) {
+  const title = el("contextSummaryTitle");
+  const copy = el("contextSummaryCopy");
+  const stepLabelNode = el("contextStepLabel");
+  const stepStatusNode = el("contextStepStatus");
+  const nextLabelNode = el("contextNextLabel");
+  const nextActionNode = el("contextNextAction");
+  const reviewLabelNode = el("contextReviewLabel");
+  const reviewStatusNode = el("contextReviewStatus");
+  const summary = contextSummaryModel(activeStep);
+  const reviewCount = countReviewCandidates();
+  const runButton = el("runJob");
+
+  if (title) {
+    title.textContent = summary.title;
+  }
+  if (copy) {
+    copy.textContent = summary.copy;
+  }
+  if (stepLabelNode) {
+    stepLabelNode.textContent = L("현재 단계", "Current step");
+  }
+  if (stepStatusNode) {
+    stepStatusNode.textContent = `${stepOrdinalLabel(progressStep)} · ${stepStateLabel({ key: progressStep, progressStep, completion })}`;
+  }
+  if (nextLabelNode) {
+    nextLabelNode.textContent = L("다음 행동", "Next action");
+  }
+  if (nextActionNode) {
+    nextActionNode.textContent = runButton?.textContent || L("입력 확인", "Check input");
+  }
+  if (reviewLabelNode) {
+    reviewLabelNode.textContent = L("결과 검토", "Result review");
+  }
+  if (reviewStatusNode) {
+    reviewStatusNode.textContent = reviewCount > 0
+      ? L(`검토 필요 ${reviewCount}개`, `${reviewCount} items need review`)
+      : hasResultOutput()
+        ? L("검토 경고 없음", "No flagged pages")
+        : L("아직 없음", "Not available yet");
+  }
+}
+
+function renderStatusDrawerState() {
+  const summary = el("statusDrawerSummary");
+  const toggle = el("toggleStatusDrawer");
+  if (summary) {
+    summary.textContent = el("runCtaHint")?.textContent || L("1단계에서 영상을 선택합니다.", "Start by selecting a video in step 1.");
+  }
+  if (toggle) {
+    toggle.textContent = statusDrawerOpen ? L("상태 접기", "Hide details") : L("상태 펼치기", "Show details");
+    toggle.setAttribute("aria-expanded", statusDrawerOpen ? "true" : "false");
+  }
+}
+
+function renderSupportSheetState() {
+  const sheet = el("supportSheet");
+  if (!sheet) {
+    return;
+  }
+  sheet.hidden = !supportSheetOpen;
+  sheet.setAttribute("aria-hidden", supportSheetOpen ? "false" : "true");
+}
+
+function hasResultOutput() {
+  return Boolean(outputDir || outputPdf || resultImagePaths.length);
+}
+
+function renderWorkLayoutState(progressStep = determineActiveStep(), activeStep = manualOpenStep || progressStep, completion = {
+  source: isSourceReady(),
+  roi: isRoiReady(),
+  export: isExportReady(),
+}) {
+  const shell = el("appShell");
+  if (shell) {
+    shell.dataset.activeStep = activeStep;
+    shell.dataset.stepState = stepVisualState(progressStep, progressStep, completion);
+  }
+  updateCaptureLayoutState();
+  renderHeaderState(progressStep, completion);
+  renderStepRail(progressStep, activeStep, completion);
+  renderInspectorState(activeStep, progressStep, completion);
+  renderStatusDrawerState();
+  renderSupportSheetState();
 }
 
 function resetRoiForSourceChange({ silent = true } = {}) {
@@ -1534,6 +1875,7 @@ function resetForSourceChange({ silent = true } = {}) {
 
   runState = "idle";
   resetYoutubePrepareState();
+  resetYoutubePrepareLogs();
   resetRoiForSourceChange({ silent });
   videoRangePicker.clearMedia();
   videoRangePicker.clearRangeState();
@@ -1670,7 +2012,7 @@ function refreshCaptureWorkflowUi() {
 
   openStep(activeStep);
   updateRunCta();
-  updateCaptureLayoutState();
+  renderWorkLayoutState(progressStep, activeStep, completion);
 }
 
 function updateSourceRows() {
@@ -1902,6 +2244,8 @@ function syncResultReviewUi() {
   const summary = el("resultReviewSummary");
   const keepAllButton = el("resultKeepAll");
   const applyButton = el("resultApplyReview");
+  const stepReviewBadge = el("stepReviewBadge");
+  const resultReviewBadge = el("resultReviewBadge");
 
   const total = resultImagePaths.length;
   const entries = buildResultEntries();
@@ -1912,6 +2256,18 @@ function syncResultReviewUi() {
 
   if (reviewBar) {
     reviewBar.style.display = total > 0 ? "flex" : "none";
+  }
+  if (stepReviewBadge) {
+    stepReviewBadge.hidden = suspiciousTotal <= 0;
+    stepReviewBadge.textContent = suspiciousTotal > 0
+      ? (getLocale() === "ko" ? `검토 필요 ${suspiciousTotal}개` : `${suspiciousTotal} review items`)
+      : "";
+  }
+  if (resultReviewBadge) {
+    resultReviewBadge.hidden = suspiciousTotal <= 0;
+    resultReviewBadge.textContent = suspiciousTotal > 0
+      ? (getLocale() === "ko" ? "검토 필요" : "Needs Review")
+      : "";
   }
   if (summary) {
     if (total <= 0) {
@@ -1941,6 +2297,7 @@ function syncResultReviewUi() {
     applyButton.disabled = reviewApplyRunning || !activeCaptureJobId || total <= 0 || kept <= 0 || excluded <= 0;
     applyButton.textContent = reviewApplyRunning ? (getLocale() === "ko" ? "반영 중..." : "Applying...") : (getLocale() === "ko" ? "선택 반영 후 페이지 다시 생성" : "Apply Selection and Regenerate");
   }
+  renderWorkLayoutState();
 }
 
 function renderResultThumbnails(imagePaths = [], pageDiagnostics = []) {
@@ -2458,6 +2815,7 @@ function resetResultView() {
   activeCaptureJobId = "";
   currentPreviewImagePath = "";
   reviewApplyRunning = false;
+  resultFocusPending = false;
 
   const openOutputDir = el("openOutputDir");
   const stickyOpenOutput = el("stickyOpenOutput");
@@ -2484,6 +2842,13 @@ function resetResultView() {
     previewImage.removeAttribute("src");
   }
   syncResultReviewUi();
+}
+
+function focusResultWorkspace({ review = false } = {}) {
+  const target = review
+    ? el("resultThumbGrid") || el("resultReviewBar") || document.querySelector(".result-card")
+    : document.querySelector(".result-card");
+  target?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function renderResultPreview(imagePath) {
@@ -2559,6 +2924,12 @@ function renderResult(job) {
   }
 
   refreshCaptureWorkflowUi();
+  if (resultFocusPending && reviewPaths.length > 0) {
+    resultFocusPending = false;
+    window.setTimeout(() => {
+      focusResultWorkspace({ review: countReviewCandidates() > 0 });
+    }, 80);
+  }
 }
 
 function onKeepAllResultPages() {
@@ -2681,6 +3052,7 @@ async function onRun() {
 
     const jobId = await createJob(API_BASE);
     activeCaptureJobId = String(jobId || "");
+    resultFocusPending = true;
     setStatus(statusText("작업 대기 중", "Job queued"));
     activePoll = setInterval(() => {
       poll(jobId).catch((error) => {
@@ -2717,7 +3089,16 @@ function onCancelRun() {
   refreshCaptureWorkflowUi();
 }
 
-async function refreshRuntimeStatus() {
+async function refreshRuntimeStatus({ force = false, syncBackendStateOnFailure = true } = {}) {
+  if (runtimeRefreshInFlight) {
+    return;
+  }
+  if (!force && latestRuntime && backendBridgeState.ready) {
+    renderRuntimeStatus(latestRuntime);
+    applyUpscaleAvailability(latestRuntime);
+    return;
+  }
+  runtimeRefreshInFlight = true;
   try {
     latestRuntime = await getRuntimeStatus(API_BASE);
     renderRuntimeStatus(latestRuntime);
@@ -2734,7 +3115,11 @@ async function refreshRuntimeStatus() {
   } catch (_) {
     renderRuntimeError();
     applyUpscaleAvailability(latestRuntime);
-    await refreshBackendBridgeState();
+    if (syncBackendStateOnFailure) {
+      await refreshBackendBridgeState();
+    }
+  } finally {
+    runtimeRefreshInFlight = false;
   }
 }
 
@@ -2841,6 +3226,7 @@ async function ensureYoutubePrepared({ reason = "manual" } = {}) {
   }
 
   const fingerprint = currentSourceFingerprint();
+  const previousFingerprint = youtubePrepareState.fingerprint;
   if (
     youtubePrepareState.status === "ready" &&
     youtubePrepareState.fingerprint === fingerprint &&
@@ -2861,6 +3247,14 @@ async function ensureYoutubePrepared({ reason = "manual" } = {}) {
     fromCache: false,
     playable: "",
   });
+  if (previousFingerprint !== fingerprint || youtubePrepareLogs.length === 0) {
+    resetYoutubePrepareLogs();
+  }
+  appendYoutubePrepareLogLine(
+    reason === "manual"
+      ? L("유튜브 준비 요청을 시작했습니다.", "Started YouTube preparation.")
+      : L("프레임을 열기 전에 유튜브 준비를 시작합니다.", "Preparing the YouTube source before opening a frame."),
+  );
   if (reason === "manual") {
     setStatus(statusText("유튜브 영상을 준비 중입니다", "Preparing YouTube video"));
     appendLocaleLog("유튜브 영상 준비 요청", "Requested YouTube video preparation");
@@ -2873,6 +3267,7 @@ async function ensureYoutubePrepared({ reason = "manual" } = {}) {
 
   try {
     const prepared = await requestPreviewSource(API_BASE);
+    appendYoutubePrepareLogLines(Array.isArray(prepared?.log_lines) ? prepared.log_lines : []);
     const playable = prepared.video_url ? `${API_BASE}${prepared.video_url}` : prepared.video_path;
     if (!playable) {
       throw new Error(L("재생 가능한 유튜브 영상을 준비하지 못했어요.", "Could not prepare a playable YouTube video."));
@@ -2888,6 +3283,11 @@ async function ensureYoutubePrepared({ reason = "manual" } = {}) {
       fromCache: Boolean(prepared.from_cache),
       playable,
     });
+    appendYoutubePrepareLogLine(
+      prepared.from_cache
+        ? L("캐시된 유튜브 영상을 사용할 수 있습니다.", "The cached YouTube video is ready to use.")
+        : L("유튜브 다운로드가 완료되어 바로 재생할 수 있습니다.", "The YouTube download is complete and ready to play."),
+    );
     return {
       playable,
       fromCache: Boolean(prepared.from_cache),
@@ -2902,6 +3302,7 @@ async function ensureYoutubePrepared({ reason = "manual" } = {}) {
         fromCache: false,
         playable: "",
       });
+      appendYoutubePrepareLogLine(L(`실패: ${error?.message || ""}`, `Failed: ${error?.message || ""}`));
     }
     throw error;
   }
@@ -2991,6 +3392,23 @@ function bindPresetButtons() {
   quality?.addEventListener("click", () => applyCapturePreset("quality"));
 }
 
+function openSupportPanel() {
+  supportSheetOpen = true;
+  renderSupportSheetState();
+  renderWorkLayoutState();
+}
+
+function closeSupportPanel() {
+  supportSheetOpen = false;
+  renderSupportSheetState();
+  renderWorkLayoutState();
+}
+
+function toggleStatusDrawer() {
+  statusDrawerOpen = !statusDrawerOpen;
+  renderWorkLayoutState();
+}
+
 document.querySelectorAll('input[name="sourceType"]').forEach((node) => {
   node.addEventListener("change", () => {
     manualOpenStep = "source";
@@ -3032,6 +3450,24 @@ if (browseFileButton) {
   });
 });
 
+const openSupportPanelButton = el("openSupportPanel");
+if (openSupportPanelButton) {
+  openSupportPanelButton.addEventListener("click", openSupportPanel);
+}
+
+["closeSupportPanel", "supportSheetBackdrop"].forEach((id) => {
+  const node = el(id);
+  if (!node) {
+    return;
+  }
+  node.addEventListener("click", closeSupportPanel);
+});
+
+const toggleStatusDrawerButton = el("toggleStatusDrawer");
+if (toggleStatusDrawerButton) {
+  toggleStatusDrawerButton.addEventListener("click", toggleStatusDrawer);
+}
+
 const loadPreviewForRoiButton = el("loadPreviewForRoi");
 if (loadPreviewForRoiButton) {
   loadPreviewForRoiButton.addEventListener("click", onLoadPreviewForRoi);
@@ -3050,6 +3486,30 @@ if (lockRoiFrameButton) {
 const prepareYoutubeVideoButton = el("prepareYoutubeVideo");
 if (prepareYoutubeVideoButton) {
   prepareYoutubeVideoButton.addEventListener("click", onPrepareYoutubeVideo);
+}
+
+const qualityGateOpenFileButton = el("qualityGateOpenFile");
+if (qualityGateOpenFileButton) {
+  qualityGateOpenFileButton.addEventListener("click", () => {
+    const fileRadio = document.querySelector('input[name="sourceType"][value="file"]');
+    if (fileRadio instanceof HTMLInputElement && !fileRadio.checked) {
+      fileRadio.checked = true;
+      fileRadio.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    el("browseFile")?.click();
+  });
+}
+
+const qualityGateShowLogButton = el("qualityGateShowLog");
+if (qualityGateShowLogButton) {
+  qualityGateShowLogButton.addEventListener("click", () => {
+    const details = el("youtubePrepareLogDetails");
+    if (details) {
+      details.hidden = false;
+      details.open = true;
+      details.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  });
 }
 
 const copySourcePathButton = el("copySourcePath");
@@ -3278,11 +3738,18 @@ window.addEventListener("resize", () => {
 });
 
 document.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape" || !captureCropState.open || captureCropState.applyRunning) {
+  if (event.key !== "Escape") {
     return;
   }
-  event.preventDefault();
-  closeCaptureCropModal();
+  if (captureCropState.open && !captureCropState.applyRunning) {
+    event.preventDefault();
+    closeCaptureCropModal();
+    return;
+  }
+  if (supportSheetOpen) {
+    event.preventDefault();
+    closeSupportPanel();
+  }
 });
 
 const runJobButton = el("runJob");
@@ -3344,6 +3811,7 @@ if (window.drumSheetAPI && typeof window.drumSheetAPI.onSetupState === "function
 
 if (window.drumSheetAPI && typeof window.drumSheetAPI.onBackendState === "function") {
   window.drumSheetAPI.onBackendState((payload) => {
+    const wasReady = backendBridgeState.ready;
     backendBridgeState = {
       ready: Boolean(payload?.ready),
       starting: Boolean(payload?.starting),
@@ -3352,6 +3820,9 @@ if (window.drumSheetAPI && typeof window.drumSheetAPI.onBackendState === "functi
       setupRunning: Boolean(payload?.setupRunning),
     };
     renderBackendBridgeState();
+    if (backendBridgeState.ready && (!wasReady || !latestRuntime)) {
+      void refreshRuntimeStatus({ force: true, syncBackendStateOnFailure: false });
+    }
     refreshCaptureWorkflowUi();
   });
 }

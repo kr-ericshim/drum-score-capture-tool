@@ -200,6 +200,7 @@ class PreviewSourceResponse(BaseModel):
     video_path: str
     video_url: Optional[str] = None
     from_cache: bool = False
+    log_lines: List[str] = Field(default_factory=list)
 
 class RuntimeStatusResponse(BaseModel):
     overall_mode: Literal["gpu", "cpu"]

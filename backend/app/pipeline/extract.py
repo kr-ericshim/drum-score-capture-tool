@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import subprocess
+import shutil
 from pathlib import Path
 from typing import Dict, List, Optional
 import platform
@@ -148,6 +150,13 @@ def _download_youtube(url: str, workspace: Path, logger) -> Path:
     }
     if ffmpeg_location:
         base_opts["ffmpeg_location"] = ffmpeg_location
+    node_runtime = _resolve_node_runtime_bin()
+    if node_runtime:
+        base_opts["js_runtimes"] = {"node": {"path": node_runtime}}
+        base_opts["remote_components"] = ["ejs:github"]
+        logger(f"yt-dlp js runtime enabled: node ({node_runtime})")
+    else:
+        logger("yt-dlp js runtime unavailable: node not found; some YouTube formats may be missing")
 
     attempts = [
         (
@@ -195,6 +204,18 @@ def _download_youtube(url: str, workspace: Path, logger) -> Path:
             errors.append(f"{name}: {exc}")
             logger(f"youtube download strategy failed: {name}: {exc}")
     raise RuntimeError(f"failed to download youtube source from {url}: {' | '.join(errors)}")
+
+
+def _resolve_node_runtime_bin() -> str:
+    configured = str(os.getenv("DRUMSHEET_NODE_BIN") or "").strip()
+    if configured:
+        candidate = Path(configured).expanduser()
+        if candidate.is_file():
+            return str(candidate.resolve())
+    located = shutil.which("node")
+    if located:
+        return str(Path(located).resolve())
+    return ""
 
 
 class _YtDlpLogBridge:

@@ -1,5 +1,6 @@
 const path = require("path");
 const fs = require("fs");
+const os = require("os");
 const { app, BrowserWindow, clipboard, dialog, ipcMain, shell } = require("electron");
 const { spawn, spawnSync } = require("child_process");
 
@@ -165,6 +166,59 @@ function resolveFfmpegBinaries(backendDir) {
     ffmpegBin,
     ffprobeBin,
   };
+}
+
+function resolveNodeRuntimeBinary() {
+  const configured = (process.env.DRUMSHEET_NODE_BIN || "").trim();
+  if (configured && existsFile(configured)) {
+    return configured;
+  }
+
+  const candidates = [];
+  if (process.execPath && existsFile(process.execPath) && /(^|[\\/])node(?:\.exe)?$/i.test(process.execPath)) {
+    candidates.push(process.execPath);
+  }
+
+  const nvmDir = path.join(os.homedir(), ".nvm", "versions", "node");
+  try {
+    if (fs.existsSync(nvmDir)) {
+      const versions = fs.readdirSync(nvmDir)
+        .filter((entry) => entry.startsWith("v"))
+        .sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: "base" }));
+      for (const version of versions) {
+        candidates.push(path.join(nvmDir, version, "bin", "node"));
+      }
+    }
+  } catch (_) {
+    // ignore
+  }
+
+  candidates.push("/opt/homebrew/bin/node");
+  candidates.push("/usr/local/bin/node");
+
+  for (const candidate of candidates) {
+    if (existsFile(candidate)) {
+      return candidate;
+    }
+  }
+
+  if (canLaunchCommand("node", ["--version"])) {
+    try {
+      const probe = spawnSync("node", ["-p", "process.execPath"], {
+        encoding: "utf8",
+        windowsHide: true,
+        shell: process.platform === "win32",
+      });
+      const resolved = String(probe.stdout || "").trim();
+      if (resolved && existsFile(resolved)) {
+        return resolved;
+      }
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  return "";
 }
 
 function findPythonCommand(backendDir) {
@@ -412,6 +466,13 @@ function runBackend() {
     ...(bins.ffmpegBin ? { DRUMSHEET_FFMPEG_BIN: bins.ffmpegBin } : {}),
     ...(bins.ffprobeBin ? { DRUMSHEET_FFPROBE_BIN: bins.ffprobeBin } : {}),
   };
+  const nodeRuntimeBin = resolveNodeRuntimeBinary();
+  if (nodeRuntimeBin) {
+    env.DRUMSHEET_NODE_BIN = nodeRuntimeBin;
+    console.log(`[backend] node runtime: ${nodeRuntimeBin}`);
+  } else {
+    console.log("[backend] node runtime: not found");
+  }
 
   let command = "";
   let args = [];

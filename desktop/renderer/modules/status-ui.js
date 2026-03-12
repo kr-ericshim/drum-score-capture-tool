@@ -124,7 +124,7 @@ export function renderResultMeta(job, friendlyStepName) {
     }
   }
   if (files.review_export?.kept_count) {
-    lines.push(getLocale() === "ko" ? `검토 반영: 캡처 ${files.review_export.kept_count}개 유지` : `Review applied: kept ${files.review_export.kept_count} captures`);
+    lines.push(getLocale() === "ko" ? `검토 반영: 페이지 ${files.review_export.kept_count}장 유지` : `Review applied: kept ${files.review_export.kept_count} pages`);
   }
   if (files.source_resolution?.width && files.source_resolution?.height) {
     lines.push(getLocale() === "ko" ? `원본 영상 크기: ${files.source_resolution.width}x${files.source_resolution.height}` : `Source resolution: ${files.source_resolution.width}x${files.source_resolution.height}`);
@@ -143,13 +143,7 @@ export function renderResultMeta(job, friendlyStepName) {
     firstImagePath: files.images?.[0] || "",
     hasResultImage: Boolean(files.images?.length),
     imagePaths: Array.isArray(files.images) ? files.images : [],
-    capturePaths: Array.isArray(files.review_candidates) && files.review_candidates.length
-      ? files.review_candidates
-      : Array.isArray(files.upscaled_frames) && files.upscaled_frames.length
-        ? files.upscaled_frames
-        : Array.isArray(files.stitched_frames)
-          ? files.stitched_frames
-          : [],
+    capturePaths: Array.isArray(files.images) ? files.images : [],
     pageDiagnostics: Array.isArray(files.page_diagnostics) ? files.page_diagnostics : [],
     pdfPath: files.pdf || "",
   };
