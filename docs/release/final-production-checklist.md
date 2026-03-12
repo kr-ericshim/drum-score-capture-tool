@@ -69,5 +69,5 @@ Use this checklist immediately before cutting a public release for Drum Sheet Ca
 ## Version Decision Rule
 
 - [ ] Use `1.0.0` only if this release is intended to be the first stable public baseline, the workflow is stable, and the manual smoke tests pass on target platforms.
-- [ ] Use `0.1.21` or `0.2.0` instead if you still expect release-process churn, platform-policy changes, or one more round of post-release fixes.
-- [ ] Never overwrite the existing `v0.1.20` tag for a new public build; cut a new version.
+- [ ] Use `0.1.22` or `0.2.0` instead if you still expect release-process churn, platform-policy changes, or one more round of post-release fixes.
+- [ ] Never overwrite the existing `v0.1.21` tag for a new public build; cut a new version.

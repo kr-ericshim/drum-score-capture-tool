@@ -55,7 +55,7 @@ from app.pipeline.export import export_frames, export_selected_pages
 PREVIEW_SOURCE_CACHE_NAMESPACE = YOUTUBE_DOWNLOAD_STRATEGY_VERSION
 
 
-app = FastAPI(title="Drum Sheet Capture API", version="0.1.21")
+app = FastAPI(title="Drum Sheet Capture API", version="0.1.22")
 
 app.add_middleware(
     CORSMiddleware,
