@@ -143,7 +143,13 @@ export function renderResultMeta(job, friendlyStepName) {
     firstImagePath: files.images?.[0] || "",
     hasResultImage: Boolean(files.images?.length),
     imagePaths: Array.isArray(files.images) ? files.images : [],
-    capturePaths: Array.isArray(files.images) ? files.images : [],
+    capturePaths: Array.isArray(files.review_candidates) && files.review_candidates.length
+      ? files.review_candidates
+      : Array.isArray(files.upscaled_frames) && files.upscaled_frames.length
+        ? files.upscaled_frames
+        : Array.isArray(files.stitched_frames) && files.stitched_frames.length
+          ? files.stitched_frames
+          : Array.isArray(files.images) ? files.images : [],
     pageDiagnostics: Array.isArray(files.page_diagnostics) ? files.page_diagnostics : [],
     pdfPath: files.pdf || "",
   };
