@@ -218,6 +218,13 @@ It verifies:
 - current production release is intentionally unsigned
 - this avoids accidental local certificate auto-discovery
 - macOS arm64 builds can still be produced in this mode, but Gatekeeper or trust warnings should be expected until signing and notarization are introduced
+- if a user reports that macOS blocked the DMG or app, document this workaround:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Drum Sheet Capture.app"
+```
+
+- if the DMG itself is blocked before opening, the same command can be run on the downloaded DMG path first
 - if signing is introduced later:
   - set `DRUMSHEET_ENABLE_SIGNING=true`
   - provide the necessary platform certificates and secrets

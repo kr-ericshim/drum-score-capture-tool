@@ -35,7 +35,6 @@ Other build profiles:
 
 - [`desktop/`](./desktop): Electron app
 - [`backend/`](./backend): FastAPI processing engine
-- [`docs/plans/`](./docs/plans): design and implementation plans
 - [`docs/reports/`](./docs/reports): release-readiness reports
 - [`docs/release/`](./docs/release): GitHub release and operations docs
 

@@ -51,6 +51,25 @@ GitHub Releases에서 운영체제에 맞는 파일을 받습니다.
 
 ## 문제 해결
 
+### macOS에서 Gatekeeper가 앱 실행을 막는 경우
+
+서명되지 않은 공개 빌드에서는 macOS Gatekeeper가 앱 또는 DMG 실행을 막을 수 있습니다.
+
+1. 먼저 DMG를 열고 앱을 `Applications`로 복사합니다.
+2. Terminal을 열고 아래 명령으로 격리 속성을 제거합니다.
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Drum Sheet Capture.app"
+```
+
+다운로드한 DMG 자체가 열리지 않으면 DMG 파일에 먼저 같은 명령을 적용할 수 있습니다.
+
+```bash
+xattr -dr com.apple.quarantine "/path/to/Drum.Sheet.Capture-arm64.dmg"
+```
+
+속성을 제거한 뒤 앱을 다시 실행합니다.
+
 ### 백엔드 연결 실패
 
 - 앱을 다시 실행합니다.
