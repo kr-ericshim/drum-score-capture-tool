@@ -1,25 +1,30 @@
 # Drum Sheet Capture v0.1.27
 
-## Highlights
+## What Changed
 
-- Release packaging now requires a bundled frozen backend runtime, so the packaged app does not depend on a separate Python install.
-- Local backend access is scoped to the desktop session token instead of accepting unauthenticated renderer requests.
-- Job metadata now survives app restarts and corrupt metadata is recovered into a visible error state instead of disappearing silently.
-- Review export now refinalizes selected captures and the redesigned desktop shell keeps review-state navigation aligned with the new workspace flow.
+- Public release packages now include the frozen backend runtime, so end users do not need a separate Python install.
+- Review export and the redesigned desktop shell now stay aligned, so the capture-to-review flow is easier to follow.
+- Local job state now recovers cleanly after restarts instead of disappearing silently.
 
-## macOS Install Note
+## macOS Install
 
-The current public macOS build is unsigned. Install from the DMG, copy the app to `Applications`, then run:
+The current public macOS build is unsigned. On first install:
+
+1. Open the DMG.
+2. Drag `Drum Sheet Capture.app` to `Applications`.
+3. Open Terminal and run:
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/Drum Sheet Capture.app"
 ```
 
-If Gatekeeper blocks the DMG itself before it opens, run:
+If Gatekeeper blocks the DMG before it opens, clear quarantine on the downloaded file first:
 
 ```bash
-xattr -dr com.apple.quarantine "/path/to/Drum Sheet Capture-0.1.27-arm64.dmg"
+xattr -dr com.apple.quarantine "/path/to/Drum.Sheet.Capture-0.1.27-arm64.dmg"
 ```
+
+Then open the app again.
 
 ## Known Limitation
 

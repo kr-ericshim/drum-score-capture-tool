@@ -55,20 +55,21 @@ You can review generated pages before exporting the final set.
 
 Because the current public macOS build is unsigned, Gatekeeper may block the DMG or the app on first launch.
 
-1. Open the DMG and copy the app to `Applications`.
-2. Open Terminal and remove the quarantine attribute:
+1. Open the DMG.
+2. Copy the app to `Applications`.
+3. Open Terminal and remove the quarantine attribute from the installed app:
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/Drum Sheet Capture.app"
 ```
 
-If macOS blocks the DMG itself before it opens, run the same command against the downloaded DMG first:
+If macOS blocks the DMG before it opens, run the same command against the downloaded DMG first:
 
 ```bash
-xattr -dr com.apple.quarantine "/path/to/Drum.Sheet.Capture-arm64.dmg"
+xattr -dr com.apple.quarantine "/path/to/Drum.Sheet.Capture-<version>-arm64.dmg"
 ```
 
-After that, try launching the app again.
+Then launch the app again.
 
 ### Backend connection failed
 
