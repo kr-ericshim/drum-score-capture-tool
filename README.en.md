@@ -19,7 +19,7 @@ Download the file for your operating system from GitHub Releases.
 - macOS: `.dmg`
 
 The default public release is a standalone build.
-It is intended to run without requiring a separate Python installation.
+It is intended to run without requiring a separate Python installation because the frozen backend runtime is bundled into the app.
 
 ## Launch
 
@@ -92,6 +92,7 @@ The public GitHub release build uses the `dist:release` profile.
 This profile keeps:
 
 - standalone installation
+- frozen backend runtime bundled into the app
 - Windows and macOS release focus
 - aggressive removal of caches, tests, docs, and non-runtime assets
 

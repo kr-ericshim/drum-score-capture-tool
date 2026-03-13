@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require("electron");
 const BACKEND_PORT = process.env.DRUMSHEET_PORT || 8000;
 const desktopVersion = ipcRenderer.sendSync("get-app-version");
+const apiToken = ipcRenderer.sendSync("get-session-token") || "";
 
 contextBridge.exposeInMainWorld("drumSheetAPI", {
   selectVideoFile: () => ipcRenderer.invoke("select-video-file"),
@@ -28,4 +29,5 @@ contextBridge.exposeInMainWorld("drumSheetAPI", {
   },
   desktopVersion: String(desktopVersion || ""),
   apiBase: `http://127.0.0.1:${BACKEND_PORT}`,
+  apiToken: String(apiToken || ""),
 });

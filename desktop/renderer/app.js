@@ -3268,7 +3268,7 @@ async function ensureYoutubePrepared({ reason = "manual" } = {}) {
   try {
     const prepared = await requestPreviewSource(API_BASE);
     appendYoutubePrepareLogLines(Array.isArray(prepared?.log_lines) ? prepared.log_lines : []);
-    const playable = prepared.video_url ? `${API_BASE}${prepared.video_url}` : prepared.video_path;
+    const playable = prepared.video_url || prepared.video_path;
     if (!playable) {
       throw new Error(L("재생 가능한 유튜브 영상을 준비하지 못했어요.", "Could not prepare a playable YouTube video."));
     }

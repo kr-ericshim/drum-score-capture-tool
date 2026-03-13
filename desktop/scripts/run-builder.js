@@ -2,18 +2,20 @@
 const path = require("path");
 const fs = require("fs");
 const { spawnSync } = require("child_process");
+const { SUPPORTED_BUILD_PROFILES, resolveBuildProfilePolicy } = require("./build-profile-policy.js");
 
 const [, , target = "dist", profileArg] = process.argv;
 const requestedProfile = (profileArg || process.env.DRUMSHEET_DIST_PROFILE || "full").toLowerCase();
-const profile = requestedProfile === "release" ? "compact" : requestedProfile;
+const policy = resolveBuildProfilePolicy(requestedProfile);
+const profile = policy.builderProfile;
 const action = target === "pack" ? "pack" : "dist";
 const signingEnabled = process.env.DRUMSHEET_ENABLE_SIGNING === "true";
-const supportedProfiles = new Set(["full", "compact", "lean", "release"]);
+const projectRoot = path.join(__dirname, "..", "..");
 if (!["pack", "dist"].includes(action)) {
   console.error("usage: node scripts/run-builder.js <pack|dist> <full|compact|lean|release>");
   process.exit(1);
 }
-if (!supportedProfiles.has(requestedProfile)) {
+if (!SUPPORTED_BUILD_PROFILES.has(requestedProfile)) {
   console.error(`[run-builder] unsupported profile: ${requestedProfile}`);
   console.error("supported profiles: full | compact | lean | release");
   process.exit(1);
@@ -70,7 +72,58 @@ function stageRuntimeFfmpeg() {
   }
 }
 
+function findBuildPython() {
+  const backendDir = path.join(projectRoot, "backend");
+  const candidates = process.platform === "win32"
+    ? [
+        path.join(backendDir, ".venv", "Scripts", "python.exe"),
+        "py",
+        "python",
+      ]
+    : [
+        path.join(backendDir, ".venv", "bin", "python3"),
+        path.join(backendDir, ".venv", "bin", "python"),
+        "python3",
+        "python",
+      ];
+
+  for (const candidate of candidates) {
+    const probeArgs = candidate === "py" ? ["-3", "-m", "PyInstaller", "--version"] : ["-m", "PyInstaller", "--version"];
+    const probe = spawnSync(candidate, probeArgs, {
+      stdio: "ignore",
+      shell: process.platform === "win32",
+    });
+    if (!probe.error && probe.status === 0) {
+      return candidate;
+    }
+  }
+
+  console.error("[run-builder] no Python interpreter with PyInstaller found for frozen backend build.");
+  console.error("[run-builder] install build dependencies first: backend/.venv/bin/pip install -r backend/requirements-build.txt");
+  process.exit(1);
+}
+
+function ensureFrozenBackendRuntime() {
+  if (!policy.requiresFrozenBackend) {
+    return;
+  }
+
+  const python = findBuildPython();
+  const buildScript = path.join(projectRoot, "backend", "scripts", "build_frozen_backend.py");
+  const args = python === "py" ? ["-3", buildScript] : [buildScript];
+  const result = spawnSync(python, args, {
+    cwd: projectRoot,
+    stdio: "inherit",
+    shell: process.platform === "win32",
+  });
+  if (result.error || result.status !== 0) {
+    console.error("[run-builder] frozen backend build failed.");
+    process.exit(result.status || 1);
+  }
+}
+
 stageRuntimeFfmpeg();
+ensureFrozenBackendRuntime();
 
 const result = spawnSync(command, args, {
   cwd: path.join(__dirname, ".."),

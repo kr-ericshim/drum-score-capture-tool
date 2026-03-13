@@ -10,11 +10,12 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, List
+from urllib.parse import urlsplit
 
 import cv2
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse
 
 from app.job_store import Job, JobStatus, JobStore
 from app.schemas import (
@@ -53,22 +54,30 @@ from app.pipeline.export import export_frames, export_selected_pages
 
 
 PREVIEW_SOURCE_CACHE_NAMESPACE = YOUTUBE_DOWNLOAD_STRATEGY_VERSION
+DRUMSHEET_SESSION_TOKEN = str(os.getenv("DRUMSHEET_SESSION_TOKEN") or "").strip()
+TOKEN_HEADER_NAME = "x-drumsheet-token"
+SUPPORTED_YOUTUBE_HOSTS = {
+    "www.youtube.com",
+    "youtube.com",
+    "m.youtube.com",
+    "music.youtube.com",
+    "youtu.be",
+}
 
 
 app = FastAPI(title="Drum Sheet Capture API", version="0.1.23")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["null"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-DrumSheet-Token"],
 )
 
 
 jobs_root = Path(os.getenv("DRUMSHEET_JOBS_DIR", Path(__file__).resolve().parents[1] / "jobs"))
 jobs_root.mkdir(parents=True, exist_ok=True)
-app.mount("/jobs-files", StaticFiles(directory=str(jobs_root), check_dir=False), name="jobs-files")
 job_store = JobStore(jobs_root)
 executor = ThreadPoolExecutor(max_workers=1)
 
@@ -79,6 +88,81 @@ def _runtime_metadata() -> Dict[str, str]:
         "preview_cache_namespace": PREVIEW_SOURCE_CACHE_NAMESPACE,
         "youtube_download_strategy": YOUTUBE_DOWNLOAD_STRATEGY_VERSION,
     }
+
+
+def _requires_session_token(path: str) -> bool:
+    normalized = str(path or "").strip() or "/"
+    return normalized != "/health"
+
+
+def _has_valid_session_token(headers, expected_token: str, query_params=None) -> bool:
+    expected = str(expected_token or "").strip()
+    if not expected:
+        return True
+
+    if headers is not None:
+        header_value = str(headers.get(TOKEN_HEADER_NAME, "") or headers.get("X-DrumSheet-Token", "") or "").strip()
+        if header_value == expected:
+            return True
+
+    if query_params is not None:
+        query_value = str(query_params.get("token") or "").strip()
+        if query_value == expected:
+            return True
+    return False
+
+
+def _normalize_supported_youtube_url(raw: str) -> str:
+    value = str(raw or "").strip()
+    if not value:
+        raise ValueError("youtube_url is required when source_type is youtube")
+
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("youtube_url must use http or https")
+    host = (parsed.hostname or "").lower()
+    if host not in SUPPORTED_YOUTUBE_HOSTS:
+        raise ValueError("youtube_url must point to a supported YouTube host")
+    return value
+
+
+def _normalize_existing_file_path(raw: str) -> str:
+    value = str(raw or "").strip()
+    if not value:
+        raise ValueError("file_path is required when source_type is file")
+    path = Path(value).expanduser()
+    if not path.exists():
+        raise ValueError("file_path does not exist")
+    if not path.is_file():
+        raise ValueError("file_path must be a file")
+    return str(path.resolve())
+
+
+def _normalize_source_inputs(*, source_type: str, file_path: str | None, youtube_url: str | None) -> tuple[str | None, str | None]:
+    if source_type == "file":
+        return _normalize_existing_file_path(file_path or ""), None
+    if source_type == "youtube":
+        return None, _normalize_supported_youtube_url(youtube_url or "")
+    raise ValueError(f"unsupported source_type: {source_type}")
+
+
+def _resolve_jobs_file_path(file_path: str) -> Path:
+    candidate = (jobs_root / str(file_path or "").lstrip("/")).resolve()
+    try:
+        candidate.relative_to(jobs_root.resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="job file path must stay inside jobs root")
+    if not candidate.exists() or not candidate.is_file():
+        raise HTTPException(status_code=404, detail="job file not found")
+    return candidate
+
+
+@app.middleware("http")
+async def enforce_session_token(request: Request, call_next):
+    if request.method != "OPTIONS" and _requires_session_token(request.url.path):
+        if not _has_valid_session_token(request.headers, DRUMSHEET_SESSION_TOKEN, request.query_params):
+            return JSONResponse(status_code=401, content={"detail": "missing or invalid session token"})
+    return await call_next(request)
 
 
 @app.get("/health")
@@ -92,6 +176,11 @@ def runtime_status() -> RuntimeStatusResponse:
     accel = get_runtime_acceleration(ffmpeg_bin=ffmpeg_bin)
     payload = {**runtime_public_info(accel), **_runtime_metadata()}
     return RuntimeStatusResponse(**payload)
+
+
+@app.get("/jobs-files/{file_path:path}")
+def read_job_file(file_path: str) -> FileResponse:
+    return FileResponse(_resolve_jobs_file_path(file_path))
 
 
 @app.post("/maintenance/clear-cache", response_model=CacheClearResponse)
@@ -135,22 +224,20 @@ def cache_usage() -> CacheUsageResponse:
 @app.post("/preview/frame", response_model=PreviewFrameResponse)
 def preview_frame(payload: PreviewFrameRequest) -> PreviewFrameResponse:
     try:
-        if payload.source_type == "file":
-            if not payload.file_path:
-                raise HTTPException(status_code=400, detail="file_path is required when source_type is file")
-            if not Path(payload.file_path).exists():
-                raise HTTPException(status_code=400, detail="file_path does not exist")
-        if payload.source_type == "youtube" and not payload.youtube_url:
-            raise HTTPException(status_code=400, detail="youtube_url is required when source_type is youtube")
+        normalized_file_path, normalized_youtube_url = _normalize_source_inputs(
+            source_type=payload.source_type,
+            file_path=payload.file_path,
+            youtube_url=payload.youtube_url,
+        )
 
         preview_workspace = jobs_root / "_preview" / str(uuid.uuid4())
         preview_workspace.mkdir(parents=True, exist_ok=True)
         resolved_source_type = payload.source_type
-        resolved_file_path = payload.file_path
-        resolved_youtube_url = payload.youtube_url
+        resolved_file_path = normalized_file_path
+        resolved_youtube_url = normalized_youtube_url
 
-        if payload.source_type == "youtube" and payload.youtube_url:
-            cached_video, _ = _get_or_prepare_cached_youtube_video(payload.youtube_url, logger=lambda _: None)
+        if payload.source_type == "youtube" and normalized_youtube_url:
+            cached_video, _ = _get_or_prepare_cached_youtube_video(normalized_youtube_url, logger=lambda _: None)
             resolved_source_type = "file"
             resolved_file_path = str(cached_video)
             resolved_youtube_url = None
@@ -170,6 +257,8 @@ def preview_frame(payload: PreviewFrameRequest) -> PreviewFrameResponse:
         except ValueError:
             image_url = None
         return PreviewFrameResponse(image_path=str(image_path), image_url=image_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except HTTPException:
         raise
     except Exception as exc:
@@ -180,22 +269,20 @@ def preview_frame(payload: PreviewFrameRequest) -> PreviewFrameResponse:
 @app.post("/preview/roi-health", response_model=PreviewRoiHealthResponse)
 def preview_roi_health(payload: PreviewRoiHealthRequest) -> PreviewRoiHealthResponse:
     try:
-        if payload.source_type == "file":
-            if not payload.file_path:
-                raise HTTPException(status_code=400, detail="file_path is required when source_type is file")
-            if not Path(payload.file_path).exists():
-                raise HTTPException(status_code=400, detail="file_path does not exist")
-        if payload.source_type == "youtube" and not payload.youtube_url:
-            raise HTTPException(status_code=400, detail="youtube_url is required when source_type is youtube")
+        normalized_file_path, normalized_youtube_url = _normalize_source_inputs(
+            source_type=payload.source_type,
+            file_path=payload.file_path,
+            youtube_url=payload.youtube_url,
+        )
 
         preview_workspace = jobs_root / "_preview_health" / str(uuid.uuid4())
         preview_workspace.mkdir(parents=True, exist_ok=True)
         resolved_source_type = payload.source_type
-        resolved_file_path = payload.file_path
-        resolved_youtube_url = payload.youtube_url
+        resolved_file_path = normalized_file_path
+        resolved_youtube_url = normalized_youtube_url
 
-        if payload.source_type == "youtube" and payload.youtube_url:
-            cached_video, _ = _get_or_prepare_cached_youtube_video(payload.youtube_url, logger=lambda _: None)
+        if payload.source_type == "youtube" and normalized_youtube_url:
+            cached_video, _ = _get_or_prepare_cached_youtube_video(normalized_youtube_url, logger=lambda _: None)
             resolved_source_type = "file"
             resolved_file_path = str(cached_video)
             resolved_youtube_url = None
@@ -217,6 +304,8 @@ def preview_roi_health(payload: PreviewRoiHealthRequest) -> PreviewRoiHealthResp
             checked_seconds=[float(value) for value in analysis.get("checked_seconds", [])],
             metrics=dict(analysis.get("metrics") or {}),
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except HTTPException:
         raise
     except Exception as exc:
@@ -227,19 +316,14 @@ def preview_roi_health(payload: PreviewRoiHealthRequest) -> PreviewRoiHealthResp
 def preview_source(payload: PreviewSourceRequest) -> PreviewSourceResponse:
     try:
         if payload.source_type == "file":
-            if not payload.file_path:
-                raise HTTPException(status_code=400, detail="file_path is required when source_type is file")
-            source_path = Path(payload.file_path)
-            if not source_path.exists():
-                raise HTTPException(status_code=400, detail="file_path does not exist")
+            source_path = Path(_normalize_existing_file_path(payload.file_path or ""))
             return PreviewSourceResponse(video_path=str(source_path), video_url=None, from_cache=True)
 
         if payload.source_type == "youtube":
-            if not payload.youtube_url:
-                raise HTTPException(status_code=400, detail="youtube_url is required when source_type is youtube")
+            normalized_youtube_url = _normalize_supported_youtube_url(payload.youtube_url or "")
             log_lines: List[str] = []
             video_path, from_cache = _get_or_prepare_cached_youtube_video(
-                payload.youtube_url,
+                normalized_youtube_url,
                 logger=lambda line: log_lines.append(str(line or "").strip()),
             )
             video_url = _to_jobs_files_url(video_path)
@@ -251,6 +335,8 @@ def preview_source(payload: PreviewSourceRequest) -> PreviewSourceResponse:
             )
 
         raise HTTPException(status_code=400, detail=f"unsupported source_type: {payload.source_type}")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except HTTPException:
         raise
     except Exception as exc:
@@ -260,13 +346,14 @@ def preview_source(payload: PreviewSourceRequest) -> PreviewSourceResponse:
 
 @app.post("/jobs", response_model=JobCreateResponse)
 def create_job(payload: JobCreate) -> JobCreateResponse:
-    if payload.source_type == "file":
-        if not payload.file_path:
-            raise HTTPException(status_code=400, detail="file_path is required when source_type is file")
-        if not Path(payload.file_path).exists():
-            raise HTTPException(status_code=400, detail="file_path does not exist")
-    if payload.source_type == "youtube" and not payload.youtube_url:
-        raise HTTPException(status_code=400, detail="youtube_url is required when source_type is youtube")
+    try:
+        normalized_file_path, normalized_youtube_url = _normalize_source_inputs(
+            source_type=payload.source_type,
+            file_path=payload.file_path,
+            youtube_url=payload.youtube_url,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     job_id = str(uuid.uuid4())
     artifact_dir = jobs_root / job_id
@@ -274,8 +361,8 @@ def create_job(payload: JobCreate) -> JobCreateResponse:
     job = Job(
         id=job_id,
         source_type=payload.source_type,
-        file_path=payload.file_path,
-        youtube_url=payload.youtube_url,
+        file_path=normalized_file_path,
+        youtube_url=normalized_youtube_url,
         options=payload.options.model_dump(),
         artifact_dir=str(artifact_dir),
     )
@@ -313,6 +400,8 @@ def review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExpo
         raise HTTPException(status_code=404, detail="job not found")
     if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
         raise HTTPException(status_code=409, detail="job is still running")
+    if isinstance(job.result, dict) and job.result.get("review_export"):
+        raise HTTPException(status_code=409, detail="review export is already applied")
 
     raw_inputs = payload.keep_captures if payload.keep_captures else payload.keep_images
     keep_raw = [str(path or "").strip() for path in raw_inputs]
@@ -320,11 +409,13 @@ def review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExpo
     if not keep_raw:
         raise HTTPException(status_code=400, detail="keep_captures must include at least one capture")
 
-    artifact_root = Path(job.artifact_dir).resolve()
+    selectable_paths = _resolve_selectable_capture_paths_for_job(job=job, preferred_keys=("review_candidates", "images"))
     resolved_paths: List[Path] = []
     seen: set[str] = set()
     for raw_path in keep_raw:
         resolved = _resolve_capture_path_for_job(job=job, raw_path=raw_path, must_exist=True)
+        if selectable_paths and resolved not in selectable_paths:
+            raise HTTPException(status_code=400, detail=f"capture is not selectable for this job: {raw_path}")
         key = str(resolved)
         if key in seen:
             continue
@@ -335,12 +426,16 @@ def review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExpo
         raise HTTPException(status_code=400, detail="no valid captures selected")
 
     configured_formats = ["png", "pdf"]
+    configured_page_fill_mode = "performance"
     if isinstance(job.options, dict):
         export_opts = job.options.get("export")
         if isinstance(export_opts, dict):
             candidate_formats = export_opts.get("formats")
             if isinstance(candidate_formats, list):
                 configured_formats = [str(value) for value in candidate_formats if str(value).strip()]
+            candidate_page_fill_mode = str(export_opts.get("page_fill_mode") or "").strip().lower()
+            if candidate_page_fill_mode in {"balanced", "performance"}:
+                configured_page_fill_mode = candidate_page_fill_mode
 
     requested_formats = payload.formats if payload.formats is not None else configured_formats
     export_workspace = Path(job.artifact_dir) / "export"
@@ -349,6 +444,7 @@ def review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExpo
         export_result = export_selected_pages(
             page_paths=resolved_paths,
             formats=[str(value) for value in requested_formats],
+            page_fill_mode=configured_page_fill_mode,
             workspace=export_workspace,
             logger=lambda msg: _append(job_id, msg),
         )
@@ -361,7 +457,9 @@ def review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExpo
     result["raw_frames"] = export_result.get("raw_frames", [])
     result["page_diagnostics"] = export_result.get("page_diagnostics", [])
     result["output_dir"] = str(export_workspace)
-    result["review_candidates"] = [str(path) for path in export_result.get("images", [])]
+    preview_candidates = export_result.get("preview_images") or export_result.get("images", [])
+    result["preview_images"] = [str(path) for path in export_result.get("preview_images", [])]
+    result["review_candidates"] = [str(path) for path in preview_candidates]
     result["review_export"] = {
         "kept_count": len(resolved_paths),
         "requested_count": len(keep_raw),
@@ -392,6 +490,33 @@ def crop_capture(job_id: str, payload: CaptureCropRequest) -> CaptureCropRespons
         raise HTTPException(status_code=409, detail="job is still running")
 
     capture_path = _resolve_capture_path_for_job(job=job, raw_path=payload.capture_path, must_exist=True)
+    result = dict(job.result or {})
+    selectable_paths = _resolve_selectable_capture_paths_for_job(
+        job=job,
+        preferred_keys=("review_candidates", "upscaled_frames", "images"),
+    )
+    if selectable_paths and capture_path not in selectable_paths:
+        raise HTTPException(status_code=400, detail=f"capture is not selectable for this job: {payload.capture_path}")
+
+    def _matches_result_path(key: str) -> bool:
+        values = result.get(key)
+        if not isinstance(values, list):
+            return False
+        for raw_entry in values:
+            candidate_raw = str(raw_entry or "").strip()
+            if not candidate_raw:
+                continue
+            try:
+                candidate_resolved = _resolve_capture_path_for_job(job=job, raw_path=candidate_raw, must_exist=False)
+            except HTTPException:
+                continue
+            if candidate_resolved == capture_path:
+                return True
+        return False
+
+    if result.get("review_export") and (_matches_result_path("preview_images") or _matches_result_path("images")):
+        raise HTTPException(status_code=409, detail="capture crop is unavailable after review export")
+
     if len(payload.roi) != 4:
         raise HTTPException(status_code=400, detail="roi must be 4 points: [[x,y], ...]")
 
@@ -427,8 +552,6 @@ def crop_capture(job_id: str, payload: CaptureCropRequest) -> CaptureCropRespons
 
     if not cv2.imwrite(str(capture_path), cropped):
         raise HTTPException(status_code=500, detail="failed to save cropped capture")
-
-    result = dict(job.result or {})
 
     def _is_same_capture_path(raw_entry: object) -> bool:
         candidate_raw = str(raw_entry or "").strip()
@@ -485,11 +608,16 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
         export_opts = options.export
         runtime_capture: Dict[str, str] = {}
         resolved_source_type = payload.source_type
-        resolved_file_path = payload.file_path
-        resolved_youtube_url = payload.youtube_url
+        normalized_file_path, normalized_youtube_url = _normalize_source_inputs(
+            source_type=payload.source_type,
+            file_path=payload.file_path,
+            youtube_url=payload.youtube_url,
+        )
+        resolved_file_path = normalized_file_path
+        resolved_youtube_url = normalized_youtube_url
 
-        if payload.source_type == "youtube" and payload.youtube_url:
-            cached_video, from_cache = _get_or_prepare_cached_youtube_video(payload.youtube_url, logger=lambda msg: _append(job_id, msg))
+        if payload.source_type == "youtube" and normalized_youtube_url:
+            cached_video, from_cache = _get_or_prepare_cached_youtube_video(normalized_youtube_url, logger=lambda msg: _append(job_id, msg))
             _append(job_id, "job source cache hit: youtube preview cache reused" if from_cache else "job source cache miss: youtube downloaded and cached")
             resolved_source_type = "file"
             resolved_file_path = str(cached_video)
@@ -684,6 +812,28 @@ def _resolve_capture_path_for_job(*, job: Job, raw_path: str, must_exist: bool) 
     if resolved.suffix.lower() not in {".png", ".jpg", ".jpeg"}:
         raise HTTPException(status_code=400, detail=f"unsupported capture format: {raw_path}")
     return resolved
+
+
+def _resolve_selectable_capture_paths_for_job(*, job: Job, preferred_keys: tuple[str, ...]) -> set[Path]:
+    result = job.result if isinstance(job.result, dict) else {}
+    for key in preferred_keys:
+        raw_values = result.get(key)
+        if not isinstance(raw_values, list):
+            continue
+        resolved_values: set[Path] = set()
+        for raw_value in raw_values:
+            candidate_raw = str(raw_value or "").strip()
+            if not candidate_raw:
+                continue
+            try:
+                resolved_values.add(
+                    _resolve_capture_path_for_job(job=job, raw_path=candidate_raw, must_exist=False)
+                )
+            except HTTPException:
+                continue
+        if resolved_values:
+            return resolved_values
+    return set()
 
 
 def _build_export_options(*, formats: List[str]):

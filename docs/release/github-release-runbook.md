@@ -2,17 +2,14 @@
 
 ## Overview
 
-This repository does not commit GitHub workflow files directly in the current batch.
+This repository now keeps the GitHub workflow files in-tree.
 
-Reason:
+The workflow YAML below must stay aligned with:
 
-- workflow push permissions are currently blocked
-- the YAML below is the source of truth for manual GitHub web entry
-
-Create these files manually in GitHub:
-
-1. `.github/workflows/ci.yml`
-2. `.github/workflows/release.yml`
+- `.github/workflows/ci.yml`
+- `.github/workflows/release.yml`
+- `desktop/scripts/run-builder.js`
+- `desktop/scripts/validate-packaged-release.js`
 
 ## Release Defaults
 
@@ -34,13 +31,14 @@ Create these files manually in GitHub:
 3. Run local checks
 
 ```bash
-PYTHONPATH=backend backend/.venv/bin/python backend/tests/test_sheet_finalize.py
-PYTHONPATH=backend backend/.venv/bin/python backend/tests/test_roi_health.py
+PYTHONPATH=backend backend/.venv/bin/python -m unittest discover -s backend/tests -p 'test_*.py'
+backend/.venv/bin/pip install -r backend/requirements-build.txt
 
 cd desktop
 npm ci
 npm run check:renderer-syntax
 npm run check:locale-init
+node --test tests/*.test.mjs
 npm run pack:release
 ```
 
@@ -68,7 +66,7 @@ git push origin v0.1.0
 
 ## CI Workflow
 
-Create `.github/workflows/ci.yml` with this content:
+The committed `.github/workflows/ci.yml` should continue to match this content:
 
 ```yaml
 name: CI
@@ -130,7 +128,7 @@ jobs:
 
 ## Release Workflow
 
-Create `.github/workflows/release.yml` with this content:
+The committed `.github/workflows/release.yml` should continue to match this content:
 
 ```yaml
 name: Release
@@ -176,12 +174,29 @@ jobs:
           cache: "npm"
           cache-dependency-path: desktop/package-lock.json
 
-      - name: Install backend dependencies
-        run: python -m pip install -r backend/requirements.txt
+      - name: Install backend build dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -r backend/requirements-build.txt
+
+      - name: Run backend test suite
+        shell: bash
+        run: PYTHONPATH=backend python -m unittest discover -s backend/tests -p 'test_*.py'
 
       - name: Install desktop dependencies
         working-directory: desktop
         run: npm ci
+
+      - name: Check renderer syntax
+        working-directory: desktop
+        shell: bash
+        run: npm run check:renderer-syntax
+
+      - name: Run desktop node tests
+        working-directory: desktop
+        shell: bash
+        run: node --test tests/*.test.mjs
 
       - name: Verify locale bootstrap policy
         working-directory: desktop
@@ -218,6 +233,7 @@ It verifies:
 - current production release is intentionally unsigned
 - this avoids accidental local certificate auto-discovery
 - macOS arm64 builds can still be produced in this mode, but Gatekeeper or trust warnings should be expected until signing and notarization are introduced
+- public install docs must include the exact `xattr` command below
 - if a user reports that macOS blocked the DMG or app, document this workaround:
 
 ```bash

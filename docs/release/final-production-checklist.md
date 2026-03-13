@@ -13,14 +13,15 @@ Use this checklist immediately before cutting a public release for Drum Sheet Ca
 
 ## Automated Checks
 
-- [ ] `PYTHONPATH=backend backend/.venv/bin/python backend/tests/test_sheet_finalize.py`
-- [ ] `PYTHONPATH=backend backend/.venv/bin/python backend/tests/test_roi_health.py`
+- [ ] `PYTHONPATH=backend backend/.venv/bin/python -m unittest discover -s backend/tests -p 'test_*.py'`
+- [ ] `backend/.venv/bin/pip install -r backend/requirements-build.txt`
 - [ ] `cd desktop && npm ci`
+- [ ] `cd desktop && node --test tests/*.test.mjs`
 - [ ] `cd desktop && npm run check:renderer-syntax`
 - [ ] `cd desktop && npm run check:locale-init`
 - [ ] `cd desktop && npm run pack:release`
 - [ ] If GitHub release assets will be generated locally, also run `cd desktop && npm run dist:release`
-- [ ] Confirm packaged artifact validation passes at the end of the build logs.
+- [ ] Confirm packaged artifact validation passes at the end of the build logs, including frozen backend runtime detection.
 
 ## Manual Smoke Test
 
@@ -47,6 +48,7 @@ Use this checklist immediately before cutting a public release for Drum Sheet Ca
 - [ ] macOS artifact exists in `dist/` as a DMG.
 - [ ] Windows artifact exists in `dist/` as an installer.
 - [ ] `dist/latest-mac.yml` or `dist/latest.yml` exists when using `dist:release`.
+- [ ] Packaged app includes `backend/runtime/drumsheet-backend/...` and does not include a packaged `.venv`.
 - [ ] Packaged backend version matches source version.
 - [ ] Packaged backend still includes the expected YouTube download strategy and ffmpeg handoff checks.
 
@@ -63,6 +65,7 @@ Use this checklist immediately before cutting a public release for Drum Sheet Ca
 ## Known Limitations To State Publicly
 
 - [ ] macOS build is currently unsigned, so Gatekeeper warnings are expected.
+- [ ] Release notes or install docs include the exact `xattr -dr com.apple.quarantine ...` command for the app and DMG paths.
 - [ ] macOS Intel or universal builds are not part of the default release target unless explicitly added.
 - [ ] Auto-update is not part of the current release checklist unless updater support is intentionally introduced.
 

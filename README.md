@@ -23,7 +23,7 @@ npm run dist:release
 ```
 
 `dist:release` is the standalone GitHub release profile.
-It keeps the bundled Python runtime and uses the compact packaging rules intended for end users.
+It builds and packages the frozen backend runtime and uses the compact packaging rules intended for end users.
 
 Other build profiles:
 

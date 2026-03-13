@@ -6,6 +6,28 @@ function L(ko, en) {
   return getLocale() === "ko" ? ko : en;
 }
 
+export function resolveApiToken() {
+  return String(window?.drumSheetAPI?.apiToken || "").trim();
+}
+
+export function buildApiHeaders(apiToken = resolveApiToken(), headers = {}) {
+  const merged = { ...headers };
+  const token = String(apiToken || "").trim();
+  if (token) {
+    merged["X-DrumSheet-Token"] = token;
+  }
+  return merged;
+}
+
+export function buildAuthorizedApiUrl(apiBase, path, apiToken = resolveApiToken()) {
+  const url = new URL(String(path || ""), String(apiBase || ""));
+  const token = String(apiToken || "").trim();
+  if (token) {
+    url.searchParams.set("token", token);
+  }
+  return url.toString();
+}
+
 export function sourceType() {
   const checked = document.querySelector('input[name="sourceType"]:checked');
   return checked ? checked.value : "file";
@@ -173,7 +195,7 @@ export async function createJob(apiBase) {
   const payload = buildPayload();
   const response = await fetch(`${apiBase}/jobs`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: buildApiHeaders(resolveApiToken(), { "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
@@ -185,7 +207,9 @@ export async function createJob(apiBase) {
 }
 
 export async function getJob(apiBase, jobId) {
-  const response = await fetch(`${apiBase}/jobs/${jobId}`);
+  const response = await fetch(`${apiBase}/jobs/${jobId}`, {
+    headers: buildApiHeaders(),
+  });
   if (!response.ok) {
     throw new Error(L("작업 조회 실패", "Failed to fetch job status."));
   }
@@ -206,7 +230,7 @@ export async function reviewExport(apiBase, jobId, { keepCaptures = [], formats 
 
   const response = await fetch(`${apiBase}/jobs/${jobId}/review-export`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: buildApiHeaders(resolveApiToken(), { "Content-Type": "application/json" }),
     body: JSON.stringify(body),
   });
   if (!response.ok) {
@@ -227,7 +251,7 @@ export async function cropCapture(apiBase, jobId, { capturePath = "", roi = [] }
 
   const response = await fetch(`${apiBase}/jobs/${jobId}/capture-crop`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: buildApiHeaders(resolveApiToken(), { "Content-Type": "application/json" }),
     body: JSON.stringify({
       capture_path: path,
       roi,
@@ -241,7 +265,9 @@ export async function cropCapture(apiBase, jobId, { capturePath = "", roi = [] }
 }
 
 export async function getRuntimeStatus(apiBase) {
-  const response = await fetch(`${apiBase}/runtime`);
+  const response = await fetch(`${apiBase}/runtime`, {
+    headers: buildApiHeaders(),
+  });
   if (!response.ok) {
     throw new Error(L("런타임 정보 조회 실패", "Failed to load runtime information."));
   }
@@ -251,6 +277,7 @@ export async function getRuntimeStatus(apiBase) {
 export async function clearCache(apiBase) {
   const response = await fetch(`${apiBase}/maintenance/clear-cache`, {
     method: "POST",
+    headers: buildApiHeaders(),
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: L("캐시 정리 실패", "Cache clear failed") }));
@@ -260,7 +287,9 @@ export async function clearCache(apiBase) {
 }
 
 export async function getCacheUsage(apiBase) {
-  const response = await fetch(`${apiBase}/maintenance/cache-usage`);
+  const response = await fetch(`${apiBase}/maintenance/cache-usage`, {
+    headers: buildApiHeaders(),
+  });
   if (!response.ok) {
     throw new Error(L("캐시 용량 조회 실패", "Failed to load cache usage."));
   }
@@ -289,14 +318,18 @@ export async function requestPreviewSource(apiBase) {
   const payload = buildSourcePayload();
   const response = await fetch(`${apiBase}/preview/source`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: buildApiHeaders(resolveApiToken(), { "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: L("영상 준비 실패", "Source preparation failed") }));
     throw new Error(friendlyApiError(error.detail || L("영상 준비 실패", "Source preparation failed")));
   }
-  return response.json();
+  const data = await response.json();
+  return {
+    ...data,
+    video_url: data.video_url ? buildAuthorizedApiUrl(apiBase, data.video_url) : data.video_url,
+  };
 }
 
 function buildPreviewPayload(startSecOverride = null) {
@@ -327,7 +360,7 @@ export async function requestPreviewFrame(apiBase, { startSecOverride = null } =
   const payload = buildPreviewPayload(startSecOverride);
   const response = await fetch(`${apiBase}/preview/frame`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: buildApiHeaders(resolveApiToken(), { "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
@@ -336,9 +369,7 @@ export async function requestPreviewFrame(apiBase, { startSecOverride = null } =
   }
   const data = await response.json();
   const resolvedImagePath = data.image_url
-    ? data.image_url.startsWith("http")
-      ? data.image_url
-      : `${apiBase}${data.image_url}`
+    ? buildAuthorizedApiUrl(apiBase, data.image_url)
     : data.image_path;
   return {
     imagePath: resolvedImagePath,
@@ -357,7 +388,7 @@ export async function requestPreviewRoiHealth(apiBase, { roi, startSecOverride =
   };
   const response = await fetch(`${apiBase}/preview/roi-health`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: buildApiHeaders(resolveApiToken(), { "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
   });
   if (!response.ok) {

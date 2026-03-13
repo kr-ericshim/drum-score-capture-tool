@@ -86,6 +86,45 @@ function relative(filePath) {
   return path.relative(projectRoot, filePath) || filePath;
 }
 
+function packagedRuntimeExecutableName(platformName = process.platform) {
+  return platformName === "win32" ? "drumsheet-backend.exe" : "drumsheet-backend";
+}
+
+function findPackagedRuntimeExecutable({
+  distDir: candidateDistDir = distDir,
+  packagedBackendMainPath,
+  platform = process.platform,
+}) {
+  const backendRoot = path.dirname(path.dirname(packagedBackendMainPath));
+  return path.join(
+    backendRoot,
+    "runtime",
+    "drumsheet-backend",
+    packagedRuntimeExecutableName(platform),
+  );
+}
+
+function findPackagedVenvPath(packagedBackendMainPath) {
+  const backendRoot = path.dirname(path.dirname(packagedBackendMainPath));
+  return path.join(backendRoot, ".venv");
+}
+
+function assertRuntimeContract({
+  packagedBackendMainPath,
+  runtimeExecutablePath,
+  runtimeExecutableExists,
+  packagedVenvExists,
+}) {
+  assert(
+    runtimeExecutableExists,
+    `Packaged backend is missing the frozen backend runtime: ${runtimeExecutablePath}`,
+  );
+  assert(
+    !packagedVenvExists,
+    `Packaged backend unexpectedly includes a virtualenv payload next to ${packagedBackendMainPath}`,
+  );
+}
+
 function validate() {
   assert(fs.existsSync(desktopPackageJsonPath), `Missing ${desktopPackageJsonPath}`);
   assert(fs.existsSync(sourceBackendMainPath), `Missing ${sourceBackendMainPath}`);
@@ -96,10 +135,18 @@ function validate() {
   const packagedBackendMainPath = findNewestPackagedBackendMain();
   const packagedBackendVersion = parseVersionFromPython(packagedBackendMainPath);
   const packagedExtractPath = path.join(path.dirname(packagedBackendMainPath), "pipeline", "extract.py");
+  const runtimeExecutablePath = findPackagedRuntimeExecutable({ packagedBackendMainPath });
+  const packagedVenvPath = findPackagedVenvPath(packagedBackendMainPath);
 
   assert(fs.existsSync(packagedExtractPath), `Missing packaged extract.py next to ${packagedBackendMainPath}`);
   assert(desktopVersion === sourceBackendVersion, `Desktop version ${desktopVersion} does not match backend source version ${sourceBackendVersion}`);
   assert(packagedBackendVersion === desktopVersion, `Packaged backend version ${packagedBackendVersion} does not match desktop version ${desktopVersion}`);
+  assertRuntimeContract({
+    packagedBackendMainPath,
+    runtimeExecutablePath,
+    runtimeExecutableExists: fs.existsSync(runtimeExecutablePath),
+    packagedVenvExists: fs.existsSync(packagedVenvPath),
+  });
 
   const packagedMainText = readText(packagedBackendMainPath);
   const packagedExtractText = readText(packagedExtractPath);
@@ -124,12 +171,22 @@ function validate() {
   if (action === "dist" && metadataPath && fs.existsSync(metadataPath)) {
     console.log(`- release metadata: ${relative(metadataPath)}`);
   }
+  console.log(`- runtime executable: ${relative(runtimeExecutablePath)}`);
 }
 
-try {
-  validate();
-} catch (error) {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(`[validate-packaged-release] ${message}`);
-  process.exit(1);
+module.exports = {
+  assertRuntimeContract,
+  findPackagedRuntimeExecutable,
+  findPackagedVenvPath,
+  validate,
+};
+
+if (require.main === module) {
+  try {
+    validate();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[validate-packaged-release] ${message}`);
+    process.exit(1);
+  }
 }

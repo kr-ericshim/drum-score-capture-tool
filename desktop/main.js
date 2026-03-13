@@ -1,11 +1,13 @@
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
+const crypto = require("crypto");
 const { app, BrowserWindow, clipboard, dialog, ipcMain, shell } = require("electron");
 const { spawn, spawnSync } = require("child_process");
 
 const BACKEND_PORT = Number(process.env.DRUMSHEET_PORT || 8000);
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
+const BACKEND_SESSION_TOKEN = crypto.randomBytes(24).toString("hex");
 
 let mainWindow = null;
 let backendProcess = null;
@@ -388,8 +390,10 @@ async function performGuidedSetup() {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1100,
-    height: 900,
+    width: 1440,
+    height: 960,
+    minWidth: 1120,
+    minHeight: 840,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -449,6 +453,9 @@ function runBackend() {
   if (!bundledBackendExecutable && !fs.existsSync(runPy)) {
     throw new Error(`Cannot find backend entrypoint: ${runPy}`);
   }
+  if (app.isPackaged && !bundledBackendExecutable) {
+    throw new Error("Packaged app is missing the bundled backend runtime. Rebuild the release package.");
+  }
   const bins = resolveFfmpegBinaries(backendDir);
   if (bins.ffmpegBin) {
     console.log(`[backend] ffmpeg bin: ${bins.ffmpegBin}`);
@@ -463,6 +470,7 @@ function runBackend() {
     DRUMSHEET_JOBS_DIR: path.join(backendDir, "jobs"),
     DRUMSHEET_HWACCEL: process.env.DRUMSHEET_HWACCEL || "auto",
     DRUMSHEET_OPENCV_ACCEL: process.env.DRUMSHEET_OPENCV_ACCEL || "auto",
+    DRUMSHEET_SESSION_TOKEN: BACKEND_SESSION_TOKEN,
     ...(bins.ffmpegBin ? { DRUMSHEET_FFMPEG_BIN: bins.ffmpegBin } : {}),
     ...(bins.ffprobeBin ? { DRUMSHEET_FFPROBE_BIN: bins.ffprobeBin } : {}),
   };
@@ -722,6 +730,10 @@ app.whenReady().then(async () => {
 
 ipcMain.on("get-app-version", (event) => {
   event.returnValue = app.getVersion();
+});
+
+ipcMain.on("get-session-token", (event) => {
+  event.returnValue = BACKEND_SESSION_TOKEN;
 });
 
 app.on("window-all-closed", () => {

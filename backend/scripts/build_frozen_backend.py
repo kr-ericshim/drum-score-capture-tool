@@ -14,6 +14,11 @@ SPEC_DIR = BUILD_DIR / "spec"
 WORK_DIR = BUILD_DIR / "work"
 
 
+def runtime_executable_path() -> Path:
+    executable = "drumsheet-backend.exe" if sys.platform == "win32" else "drumsheet-backend"
+    return RUNTIME_DIR / "drumsheet-backend" / executable
+
+
 def main() -> int:
     if RUNTIME_DIR.exists():
         shutil.rmtree(RUNTIME_DIR)
@@ -47,6 +52,9 @@ def main() -> int:
 
     print("[build_frozen_backend] running:", " ".join(command))
     subprocess.run(command, check=True, cwd=str(ROOT))
+    runtime_executable = runtime_executable_path()
+    if not runtime_executable.exists():
+        raise RuntimeError(f"frozen backend runtime missing after build: {runtime_executable}")
     return 0
 
 
