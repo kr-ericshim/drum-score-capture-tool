@@ -20,6 +20,14 @@ Object.defineProperty(globalThis, "document", {
   },
 });
 
+Object.defineProperty(globalThis, "navigator", {
+  configurable: true,
+  value: {
+    language: "en-US",
+    userLanguage: "en-US",
+  },
+});
+
 const { buildApiHeaders } = await import("../renderer/modules/job-api.js");
 
 test("buildApiHeaders adds the session token when present", () => {
