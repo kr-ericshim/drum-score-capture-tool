@@ -45,7 +45,11 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          python -m pip install -r backend/requirements.txt pyinstaller
+          python -m pip install -r backend/requirements-build.txt
+
+      - name: Run backend test suite
+        shell: bash
+        run: PYTHONPATH=backend python -m unittest discover -s backend/tests -p 'test_*.py'
 
       - name: Build frozen backend runtime
         shell: bash
@@ -81,6 +85,16 @@ jobs:
       - name: Install desktop dependencies
         working-directory: desktop
         run: npm ci
+
+      - name: Check renderer syntax
+        working-directory: desktop
+        shell: bash
+        run: npm run check:renderer-syntax
+
+      - name: Run desktop node tests
+        working-directory: desktop
+        shell: bash
+        run: node --test tests/*.test.mjs
 
       - name: Verify locale bootstrap policy
         working-directory: desktop
