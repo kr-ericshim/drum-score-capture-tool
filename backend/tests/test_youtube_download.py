@@ -134,3 +134,29 @@ class DownloadYoutubeTests(unittest.TestCase):
             {"node": {"path": str(fake_node.resolve())}},
         )
         self.assertEqual(FakeYoutubeDL.seen_opts[0]["remote_components"], ["ejs:github"])
+
+    def test_download_resolves_configured_node_runtime_command_name_from_env(self):
+        FakeYoutubeDL.plans = [{"ext": "webm"}]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_node = Path(tmpdir) / "node"
+            fake_node.write_text("#!/bin/sh\n")
+            with patch.dict(os.environ, {"DRUMSHEET_NODE_BIN": "custom-node"}, clear=False), patch.object(
+                extract,
+                "YoutubeDL",
+                FakeYoutubeDL,
+            ), patch.object(
+                extract,
+                "_probe_download_resolution",
+                return_value=(1920, 1080),
+            ), patch(
+                "app.pipeline.extract.shutil.which",
+                side_effect=lambda value: str(fake_node.resolve()) if value == "custom-node" else None,
+            ):
+                output = extract._download_youtube("https://example.com/watch?v=abc", Path(tmpdir), logger=lambda _: None)
+                self.assertTrue(output.exists())
+
+        self.assertEqual(
+            FakeYoutubeDL.seen_opts[0]["js_runtimes"],
+            {"node": {"path": str(fake_node.resolve())}},
+        )
+        self.assertEqual(FakeYoutubeDL.seen_opts[0]["remote_components"], ["ejs:github"])

@@ -212,6 +212,9 @@ def _resolve_node_runtime_bin() -> str:
         candidate = Path(configured).expanduser()
         if candidate.is_file():
             return str(candidate.resolve())
+        located = shutil.which(configured)
+        if located:
+            return str(Path(located).resolve())
     located = shutil.which("node")
     if located:
         return str(Path(located).resolve())

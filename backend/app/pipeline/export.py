@@ -10,7 +10,7 @@ import numpy as np
 from PIL import Image
 
 from app.pipeline.sheet_finalize import finalize_sheet_pages, finalize_sheet_sequence
-from app.schemas import ExportOptions
+from app.schemas import ExportOptions, PageFillMode
 
 PDF_IMAGE_MAX_EDGE = 2400
 PDF_JPEG_QUALITY = 86
@@ -135,36 +135,65 @@ def export_selected_pages(
     *,
     page_paths: List[Path],
     formats: List[str],
+    page_fill_mode: PageFillMode = "performance",
     workspace: Path,
     logger,
 ) -> Dict[str, object]:
     workspace.mkdir(parents=True, exist_ok=True)
-    output: Dict[str, object] = {"images": [], "pdf": None, "page_diagnostics": []}
+    output: Dict[str, object] = {"images": [], "pdf": None, "page_diagnostics": [], "preview_images": []}
     image_dir = workspace / "images"
     image_dir.mkdir(parents=True, exist_ok=True)
+    preview_dir = workspace / "preview"
+    preview_dir.mkdir(parents=True, exist_ok=True)
 
-    _clear_previous_review_outputs(workspace=workspace, image_dir=image_dir)
+    _clear_previous_review_outputs(workspace=workspace, image_dir=image_dir, preview_dir=preview_dir)
 
     normalized_formats = _normalize_formats(formats)
     wants_png = "png" in normalized_formats
     wants_jpg = "jpg" in normalized_formats
     wants_pdf = "pdf" in normalized_formats
 
-    pages: List = []
+    source_images: List = []
     for page_path in page_paths:
         image = cv2.imread(str(page_path))
         if image is None:
             continue
-        pages.append(image)
+        source_images.append(image)
 
-    if not pages:
+    if not source_images:
         raise RuntimeError("no valid pages available for review export")
 
+    finalized_pages = []
+    merged_sheet = None
+    used_frame_count = 0
+    if source_images:
+        finalized_pages, merged_sheet, used_frame_count = finalize_sheet_sequence(
+            source_images,
+            page_fill_mode=page_fill_mode,
+        )
+
+    if not finalized_pages:
+        for image in source_images:
+            fallback_pages = finalize_sheet_pages(image, page_fill_mode=page_fill_mode)
+            if fallback_pages:
+                finalized_pages.extend(fallback_pages)
+            else:
+                finalized_pages.append(image)
+
+    if not finalized_pages:
+        raise RuntimeError("no pages available after refinalizing selected captures")
+
+    if len(finalized_pages) > len(source_images) and source_images:
+        logger(f"review export page split: input#{len(source_images)} -> {len(finalized_pages)} pages")
+    elif used_frame_count >= 2 and merged_sheet is not None:
+        logger(f"review export refinalized captures: {used_frame_count} inputs -> {len(finalized_pages)} pages")
+
     image_paths: List[Path] = []
+    preview_paths: List[Path] = []
     pdf_images: List[Image.Image] = []
 
     export_idx = 1
-    for page in pages:
+    for page in finalized_pages:
         rgb_image = None
         if wants_pdf or wants_jpg:
             rgb_image = cv2.cvtColor(page, cv2.COLOR_BGR2RGB)
@@ -174,6 +203,9 @@ def export_selected_pages(
             png_out = image_dir / f"page_{export_idx:04d}.png"
             if cv2.imwrite(str(png_out), page):
                 image_paths.append(png_out)
+                preview_paths.append(png_out)
+        elif cv2.imwrite(str(preview_dir / f"preview_{export_idx:04d}.png"), page):
+            preview_paths.append(preview_dir / f"preview_{export_idx:04d}.png")
         if wants_jpg:
             jpg_out = image_dir / f"page_{export_idx:04d}.jpg"
             if rgb_image is None:
@@ -187,6 +219,7 @@ def export_selected_pages(
         raise RuntimeError("review export produced no image output")
 
     output["images"] = [str(path) for path in image_paths if path.suffix.lower() in {".png", ".jpg", ".jpeg"}]
+    output["preview_images"] = [str(path) for path in preview_paths]
 
     if wants_pdf:
         pdf_path = workspace / "sheet_export.pdf"
@@ -209,7 +242,7 @@ def export_selected_pages(
             image.close()
         output["pdf"] = str(pdf_path)
 
-    logger(f"review export saved: {len(pages)} pages kept")
+    logger(f"review export saved: {len(finalized_pages)} pages from {len(source_images)} selected captures")
     return output
 
 
@@ -226,13 +259,18 @@ def _normalize_formats(formats: List[str]) -> List[str]:
     return normalized
 
 
-def _clear_previous_review_outputs(*, workspace: Path, image_dir: Path) -> None:
+def _clear_previous_review_outputs(*, workspace: Path, image_dir: Path, preview_dir: Path) -> None:
     for pattern in ("*.png", "*.jpg", "*.jpeg"):
         for image_path in image_dir.glob(pattern):
             try:
                 image_path.unlink()
             except OSError:
                 continue
+    for image_path in preview_dir.glob("*.png"):
+        try:
+            image_path.unlink()
+        except OSError:
+            continue
     pdf_path = workspace / "sheet_export.pdf"
     if pdf_path.exists():
         try:
