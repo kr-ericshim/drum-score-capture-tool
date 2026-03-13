@@ -24,7 +24,7 @@ test("preload fetches the backend session token from Electron IPC", async () => 
           sendSync(channel) {
             calls.push(channel);
             if (channel === "get-app-version") {
-              return "0.1.23";
+              return "0.1.24";
             }
             if (channel === "get-session-token") {
               return "token-123";
