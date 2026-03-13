@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import path from "node:path";
 
 const validator = await import("../scripts/validate-packaged-release.js");
 
@@ -12,7 +13,12 @@ test("findPackagedRuntimeExecutable resolves the packaged frozen backend path", 
 
   assert.equal(
     runtimePath,
-    "/tmp/dist/mac-arm64/Drum Sheet Capture.app/Contents/Resources/backend/runtime/drumsheet-backend/drumsheet-backend",
+    path.join(
+      "/tmp/dist/mac-arm64/Drum Sheet Capture.app/Contents/Resources/backend",
+      "runtime",
+      "drumsheet-backend",
+      "drumsheet-backend",
+    ),
   );
 });
 

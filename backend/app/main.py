@@ -65,7 +65,7 @@ SUPPORTED_YOUTUBE_HOSTS = {
 }
 
 
-app = FastAPI(title="Drum Sheet Capture API", version="0.1.26")
+app = FastAPI(title="Drum Sheet Capture API", version="0.1.27")
 
 app.add_middleware(
     CORSMiddleware,

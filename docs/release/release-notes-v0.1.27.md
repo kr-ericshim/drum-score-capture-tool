@@ -1,4 +1,4 @@
-# Drum Sheet Capture v0.1.26
+# Drum Sheet Capture v0.1.27
 
 ## Highlights
 
@@ -18,7 +18,7 @@ xattr -dr com.apple.quarantine "/Applications/Drum Sheet Capture.app"
 If Gatekeeper blocks the DMG itself before it opens, run:
 
 ```bash
-xattr -dr com.apple.quarantine "/path/to/Drum Sheet Capture-0.1.26-arm64.dmg"
+xattr -dr com.apple.quarantine "/path/to/Drum Sheet Capture-0.1.27-arm64.dmg"
 ```
 
 ## Known Limitation
