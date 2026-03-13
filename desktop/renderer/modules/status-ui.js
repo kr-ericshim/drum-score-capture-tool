@@ -94,6 +94,8 @@ export function renderResultMeta(job, friendlyStepName) {
       hasResultImage: false,
       imagePaths: [],
       capturePaths: [],
+      thumbnailDiagnostics: [],
+      reviewDiagnostics: [],
       pageDiagnostics: [],
       pdfPath: "",
     };
@@ -108,8 +110,15 @@ export function renderResultMeta(job, friendlyStepName) {
   if (files.pdf) {
     lines.push(getLocale() === "ko" ? `PDF 파일: ${files.pdf}` : `PDF file: ${files.pdf}`);
   }
-  if (files.images?.length) {
-    const pageCount = Number(files.images.length || 0);
+  const previewCount = Number(
+    files.page_diagnostics?.length ||
+    files.preview_images?.length ||
+    files.review_candidates?.length ||
+    files.images?.length ||
+    0,
+  );
+  if (previewCount > 0) {
+    const pageCount = previewCount;
     lines.push(getLocale() === "ko" ? `생성 페이지: ${pageCount}장` : `Pages generated: ${pageCount}`);
     if (pageCount <= 2) {
       lines.push(getLocale() === "ko" ? "페이지 구성: 페이지 수가 적습니다." : "Page layout: low page count.");
@@ -124,7 +133,11 @@ export function renderResultMeta(job, friendlyStepName) {
     }
   }
   if (files.review_export?.kept_count) {
-    lines.push(getLocale() === "ko" ? `검토 반영: 페이지 ${files.review_export.kept_count}장 유지` : `Review applied: kept ${files.review_export.kept_count} pages`);
+    lines.push(
+      getLocale() === "ko"
+        ? `검토 반영: 선택 캡처 ${files.review_export.kept_count}개 반영`
+        : `Review applied: ${files.review_export.kept_count} captures selected`,
+    );
   }
   if (files.source_resolution?.width && files.source_resolution?.height) {
     lines.push(getLocale() === "ko" ? `원본 영상 크기: ${files.source_resolution.width}x${files.source_resolution.height}` : `Source resolution: ${files.source_resolution.width}x${files.source_resolution.height}`);
@@ -138,19 +151,31 @@ export function renderResultMeta(job, friendlyStepName) {
   }
 
   meta.textContent = lines.join("\n");
+  const previewImages = Array.isArray(files.preview_images) ? files.preview_images : [];
+  const finalImages = Array.isArray(files.images) ? files.images : [];
+  const pageDiagnostics = Array.isArray(files.page_diagnostics) ? files.page_diagnostics : [];
+  const reviewCandidates = Array.isArray(files.review_candidates) ? files.review_candidates : [];
+  const capturePaths = reviewCandidates.length
+    ? reviewCandidates
+    : Array.isArray(files.upscaled_frames) && files.upscaled_frames.length
+      ? files.upscaled_frames
+      : Array.isArray(files.stitched_frames) && files.stitched_frames.length
+        ? files.stitched_frames
+        : finalImages;
+  const thumbnailDiagnostics = reviewCandidates.length
+    ? (reviewCandidates.length === pageDiagnostics.length ? pageDiagnostics : [])
+    : pageDiagnostics;
+  const firstImagePath = finalImages[0] || previewImages[0] || "";
+  const hasResultImage = Boolean(finalImages.length || previewImages.length);
   return {
     outputDir: files.output_dir || "",
-    firstImagePath: files.images?.[0] || "",
-    hasResultImage: Boolean(files.images?.length),
-    imagePaths: Array.isArray(files.images) ? files.images : [],
-    capturePaths: Array.isArray(files.review_candidates) && files.review_candidates.length
-      ? files.review_candidates
-      : Array.isArray(files.upscaled_frames) && files.upscaled_frames.length
-        ? files.upscaled_frames
-        : Array.isArray(files.stitched_frames) && files.stitched_frames.length
-          ? files.stitched_frames
-          : Array.isArray(files.images) ? files.images : [],
-    pageDiagnostics: Array.isArray(files.page_diagnostics) ? files.page_diagnostics : [],
+    firstImagePath,
+    hasResultImage,
+    imagePaths: finalImages,
+    capturePaths,
+    thumbnailDiagnostics,
+    reviewDiagnostics: reviewCandidates.length === pageDiagnostics.length ? pageDiagnostics : [],
+    pageDiagnostics,
     pdfPath: files.pdf || "",
   };
 }

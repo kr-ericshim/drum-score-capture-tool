@@ -19,6 +19,7 @@ import { createRoiController } from "./modules/roi-controller.js";
 import { renderRuntimeError, renderRuntimeStatus } from "./modules/runtime-status-ui.js";
 import { appendLog, clearResultMeta, renderResultMeta, setPipelineState, setProgress, setStatus } from "./modules/status-ui.js";
 import { createVideoRangePicker } from "./modules/video-range-picker.js";
+import { resolveWorkflowActiveStep } from "./modules/workflow-shell.js";
 
 const API_BASE = window.drumSheetAPI?.apiBase || "http://127.0.0.1:8000";
 const THEME_STORAGE_KEY = "drum-sheet-theme";
@@ -53,6 +54,8 @@ let currentRoiHealthReport = {
 let resultImagePaths = [];
 let excludedResultIndices = new Set();
 let reviewApplyRunning = false;
+let recropDisabledForCurrentResult = false;
+let reviewApplyDisabledForCurrentResult = false;
 let captureCropState = {
   open: false,
   imagePath: "",
@@ -108,6 +111,8 @@ let backendBridgeState = {
 let themeMediaQuery = null;
 
 const STEP_KEYS = ["source", "roi", "export"];
+const FLOW_STEP_KEYS = [...STEP_KEYS, "review"];
+const REVIEW_STEP_KEY = "review";
 const STEP_DETAIL_IDS = {
   source: "stepSourceDetails",
   roi: "stepRoiDetails",
@@ -128,6 +133,8 @@ const STEP_BAR_BUTTON_IDS = {
   roi: "stepperRoi",
   export: "stepperExport",
 };
+const REVIEW_STEP_BUTTON_ID = "stepperReview";
+const REVIEW_STEP_SUMMARY_ID = "stepBadgeReview";
 
 function L(ko, en) {
   return getLocale() === "ko" ? ko : en;
@@ -1483,37 +1490,52 @@ function stepLabel(key) {
   if (key === "export") {
     return L("저장/내보내기", "Export");
   }
+  if (key === REVIEW_STEP_KEY) {
+    return L("결과 검토", "Review");
+  }
   return L("소스 선택", "Source");
 }
 
 function stepOrdinalLabel(key) {
-  const order = STEP_KEYS.indexOf(key) + 1;
+  const order = FLOW_STEP_KEYS.indexOf(key) + 1;
   return L(`${order}단계 · ${stepLabel(key)}`, `Step ${order} · ${stepLabel(key)}`);
 }
 
-function stepVisualState(key, progressStep, completion) {
-  if (completion[key]) {
+function stepVisualState(key, progressStep, completion, activeStep = progressStep) {
+  if (key === REVIEW_STEP_KEY) {
+    if (!hasResultOutput()) {
+      return "locked";
+    }
+    return activeStep === REVIEW_STEP_KEY || progressStep === REVIEW_STEP_KEY ? "active" : "done";
+  }
+  if (completion[key] && FLOW_STEP_KEYS.indexOf(key) < FLOW_STEP_KEYS.indexOf(progressStep)) {
     return "done";
   }
   if (key === "roi" && progressStep === "roi" && currentPreviewFrame.imagePath) {
     return "active";
   }
+  if (activeStep === key || progressStep === key) {
+    return "active";
+  }
   return "need";
 }
 
-function stepStateLabel({ key, progressStep, completion }) {
-  const state = stepVisualState(key, progressStep, completion);
+function stepStateLabel({ key, progressStep, completion, activeStep = progressStep }) {
+  const state = stepVisualState(key, progressStep, completion, activeStep);
   if (state === "done") {
     return L("완료", "Done");
   }
   if (state === "active") {
     return L("진행 중", "In progress");
   }
+  if (state === "locked") {
+    return L("대기", "Waiting");
+  }
   return L("확인 필요", "Needs attention");
 }
 
-function stepTone({ key, progressStep, completion }) {
-  const state = stepVisualState(key, progressStep, completion);
+function stepTone({ key, progressStep, completion, activeStep = progressStep }) {
+  const state = stepVisualState(key, progressStep, completion, activeStep);
   if (state === "done") {
     return "ready";
   }
@@ -1540,6 +1562,14 @@ function countReviewCandidates() {
 
 function contextSummaryModel(activeStep) {
   const reviewCount = countReviewCandidates();
+  if (activeStep === REVIEW_STEP_KEY) {
+    return {
+      title: L("결과 검토", "Review workspace"),
+      copy: reviewCount > 0
+        ? L("검토 우선순위가 높은 캡처가 먼저 보입니다. 제외할 페이지를 골라 다시 생성하거나 바로 결과를 엽니다.", "Review-priority captures appear first. Exclude pages to regenerate or open the result directly.")
+        : L("생성된 결과를 큰 미리보기와 함께 검토하고 바로 내보냅니다.", "Review generated pages with the large preview and export immediately."),
+    };
+  }
   if (activeStep === "roi") {
     return {
       title: L("ROI 작업대", "ROI workspace"),
@@ -1567,6 +1597,9 @@ function contextSummaryModel(activeStep) {
 }
 
 function determineActiveStep() {
+  if (hasResultOutput()) {
+    return REVIEW_STEP_KEY;
+  }
   if (!isSourceReady()) {
     return "source";
   }
@@ -1704,7 +1737,7 @@ function updateCaptureLayoutState() {
   }
 }
 
-function renderHeaderState(progressStep, completion) {
+function renderHeaderState(progressStep, activeStep, completion) {
   const sourceLabel = el("headerSourceLabel");
   const sourceValue = el("headerSourceValue");
   const stageLabel = el("headerStageLabel");
@@ -1722,11 +1755,11 @@ function renderHeaderState(progressStep, completion) {
     stageLabel.textContent = L("현재 단계", "Current step");
   }
   if (stageValue) {
-    stageValue.textContent = stepOrdinalLabel(progressStep);
+    stageValue.textContent = stepOrdinalLabel(activeStep);
   }
   if (stageChip) {
-    stageChip.textContent = stepStateLabel({ key: progressStep, progressStep, completion });
-    stageChip.dataset.tone = stepTone({ key: progressStep, progressStep, completion });
+    stageChip.textContent = stepStateLabel({ key: activeStep, progressStep, completion, activeStep });
+    stageChip.dataset.tone = stepTone({ key: activeStep, progressStep, completion, activeStep });
   }
   if (helpButton) {
     helpButton.dataset.alert = !backendBridgeState.ready ? "true" : "false";
@@ -1736,6 +1769,8 @@ function renderHeaderState(progressStep, completion) {
 
 function renderStepRail(progressStep, activeStep, completion) {
   const reviewBadge = el("stepReviewBadge");
+  const reviewButton = el(REVIEW_STEP_BUTTON_ID);
+  const reviewSummary = el(REVIEW_STEP_SUMMARY_ID);
   const reviewCount = countReviewCandidates();
   if (reviewBadge) {
     reviewBadge.hidden = reviewCount <= 0;
@@ -1749,9 +1784,25 @@ function renderStepRail(progressStep, activeStep, completion) {
     if (!button) {
       return;
     }
-    button.dataset.state = stepVisualState(key, progressStep, completion);
+    button.dataset.state = stepVisualState(key, progressStep, completion, activeStep);
     button.setAttribute("aria-current", key === activeStep ? "step" : "false");
   });
+
+  if (reviewButton) {
+    const hasResult = hasResultOutput();
+    reviewButton.dataset.state = stepVisualState(REVIEW_STEP_KEY, progressStep, completion, activeStep);
+    reviewButton.setAttribute("aria-current", activeStep === REVIEW_STEP_KEY ? "step" : "false");
+    reviewButton.disabled = !hasResult;
+  }
+  if (reviewSummary) {
+    if (!hasResultOutput()) {
+      reviewSummary.textContent = L("결과 대기", "Waiting");
+    } else if (reviewCount > 0) {
+      reviewSummary.textContent = L(`검토 ${reviewCount}개`, `${reviewCount} flagged`);
+    } else {
+      reviewSummary.textContent = L("검토 준비", "Ready");
+    }
+  }
 }
 
 function renderInspectorState(activeStep, progressStep, completion) {
@@ -1833,7 +1884,7 @@ function renderWorkLayoutState(progressStep = determineActiveStep(), activeStep 
     shell.dataset.stepState = stepVisualState(progressStep, progressStep, completion);
   }
   updateCaptureLayoutState();
-  renderHeaderState(progressStep, completion);
+  renderHeaderState(progressStep, activeStep, completion);
   renderStepRail(progressStep, activeStep, completion);
   renderInspectorState(activeStep, progressStep, completion);
   renderStatusDrawerState();
@@ -1905,9 +1956,12 @@ function updateRunCta() {
   const cancelButton = el("cancelRun");
   const hint = el("runCtaHint");
   const stickyOpenOutput = el("stickyOpenOutput");
+  const isKo = getLocale() === "ko";
+  const hasFinishedOutput = Boolean(outputPdf || outputDir);
 
   if (stickyOpenOutput) {
     stickyOpenOutput.disabled = !outputDir;
+    stickyOpenOutput.style.display = outputDir ? "inline-flex" : "none";
   }
 
   if (!runButton || !cancelButton || !hint) {
@@ -1919,67 +1973,77 @@ function updateRunCta() {
   if (!backendBridgeState.ready) {
     runButton.textContent =
       setupRunning || backendBridgeState.setupRunning
-        ? (getLocale() === "ko" ? "설치/복구 진행 중..." : "Repair running...")
-        : (getLocale() === "ko" ? "먼저 엔진 연결이 필요해요" : "Engine connection required");
+        ? (isKo ? "설치/복구 진행 중..." : "Repair running...")
+        : (isKo ? "먼저 엔진 연결이 필요해요" : "Engine connection required");
     runButton.disabled = true;
     cancelButton.style.display = "none";
     const errorText = compactErrorText(backendBridgeState.error, "");
     hint.textContent = errorText
-      ? (getLocale() === "ko" ? `엔진 연결 문제: ${errorText}` : `Engine connection issue: ${errorText}`)
-      : (getLocale() === "ko" ? "상단의 자동 설치/복구 또는 엔진 다시 연결 버튼을 눌러주세요." : "Use Auto Setup/Repair or Reconnect Engine above.");
+      ? (isKo ? `엔진 연결 문제: ${errorText}` : `Engine connection issue: ${errorText}`)
+      : (isKo ? "상단의 자동 설치/복구 또는 엔진 다시 연결 버튼을 눌러주세요." : "Use Auto Setup/Repair or Reconnect Engine above.");
     return;
   }
 
   if (runState === "running") {
-    runButton.textContent = getLocale() === "ko" ? "처리 중..." : "Processing...";
+    runButton.textContent = isKo ? "처리 중..." : "Processing...";
     runButton.disabled = true;
     cancelButton.style.display = "inline-flex";
-    hint.textContent = getLocale() === "ko" ? "처리 중입니다. 필요하면 중단 버튼으로 진행 조회를 멈출 수 있어요." : "Processing. You can stop status polling if needed.";
+    cancelButton.textContent = isKo ? "조회 중단" : "Stop Polling";
+    hint.textContent = isKo ? "처리 중입니다. 필요하면 중단 버튼으로 진행 조회를 멈출 수 있어요." : "Processing. You can stop status polling if needed.";
     return;
   }
 
   cancelButton.style.display = "none";
 
-  if (runState === "done" && outputDir) {
-    runButton.textContent = getLocale() === "ko" ? "다시 실행" : "Run Again";
-    runButton.disabled = !isSourceReady();
-    hint.textContent = getLocale() === "ko" ? "완료되었습니다. 결과 폴더를 열거나 다시 실행할 수 있어요." : "Done. Open the output folder or run again.";
+  if (runState === "done" && hasFinishedOutput) {
+    runButton.textContent = outputPdf
+      ? (isKo ? "PDF 열기" : "Open PDF")
+      : (isKo ? "결과 폴더 열기" : "Open Folder");
+    runButton.disabled = false;
+    cancelButton.style.display = "inline-flex";
+    cancelButton.textContent = isKo ? "다시 실행" : "Run Again";
+    if (stickyOpenOutput) {
+      stickyOpenOutput.style.display = outputPdf && outputDir ? "inline-flex" : "none";
+    }
+    hint.textContent = outputPdf
+      ? (isKo ? "결과가 준비되었습니다. PDF를 먼저 열고, 필요하면 결과 폴더를 확인하거나 다시 실행하세요." : "The result is ready. Open the PDF first, then check the output folder or run again if needed.")
+      : (isKo ? "결과가 준비되었습니다. 결과 폴더를 열어 확인하거나 다시 실행하세요." : "The result is ready. Open the output folder or run again if needed.");
     return;
   }
 
   if (!isSourceReady()) {
-    runButton.textContent = sourceType() === "youtube" ? (getLocale() === "ko" ? "유튜브 주소 입력으로 시작" : "Start with YouTube URL") : (getLocale() === "ko" ? "영상 선택" : "Select Video");
+    runButton.textContent = sourceType() === "youtube" ? (isKo ? "유튜브 주소 입력으로 시작" : "Start with YouTube URL") : (isKo ? "영상 선택" : "Select Video");
     runButton.disabled = false;
     hint.textContent = sourceType() === "youtube"
-      ? (getLocale() === "ko" ? "유튜브 주소를 붙여넣으면 다음 단계로 바로 넘어갈 수 있어요." : "Paste a YouTube URL to move directly to the next step.")
-      : (getLocale() === "ko" ? "가장 먼저 영상만 고르세요. 나머지 설정은 뒤에서 맞춰도 됩니다." : "Start by choosing a video. The rest can be adjusted later.");
+      ? (isKo ? "유튜브 주소를 붙여넣으면 다음 단계로 바로 넘어갈 수 있어요." : "Paste a YouTube URL to move directly to the next step.")
+      : (isKo ? "가장 먼저 영상만 고르세요. 나머지 설정은 뒤에서 맞춰도 됩니다." : "Start by choosing a video. The rest can be adjusted later.");
     return;
   }
 
   if (!isRangeValid()) {
-    runButton.textContent = getLocale() === "ko" ? "처리 범위 다시 확인" : "Review Range";
+    runButton.textContent = isKo ? "처리 범위 다시 확인" : "Review Range";
     runButton.disabled = false;
-    hint.textContent = getLocale() === "ko" ? "처리 범위를 줄이는 경우에는 끝 시간이 시작 시간보다 커야 합니다." : "If you limit the range, the end time must be later than the start time.";
+    hint.textContent = isKo ? "처리 범위를 줄이는 경우에는 끝 시간이 시작 시간보다 커야 합니다." : "If you limit the range, the end time must be later than the start time.";
     return;
   }
 
   if (!isRoiReady()) {
-    runButton.textContent = currentPreviewFrame.imagePath ? (getLocale() === "ko" ? "악보 영역 저장으로 이동" : "Apply ROI and Continue") : (getLocale() === "ko" ? "악보 화면 열기" : "Open Score Frame");
+    runButton.textContent = currentPreviewFrame.imagePath ? (isKo ? "악보 영역 저장으로 이동" : "Apply ROI and Continue") : (isKo ? "악보 화면 열기" : "Open Score Frame");
     runButton.disabled = false;
-    hint.textContent = getLocale() === "ko" ? "2단계에서 프레임을 열고, 악보 부분을 네모로 한 번만 잡아 주세요." : "Open a frame in step 2 and draw a single box around the score.";
+    hint.textContent = isKo ? "2단계에서 프레임을 열고, 악보 부분을 네모로 한 번만 잡아 주세요." : "Open a frame in step 2 and draw a single box around the score.";
     return;
   }
 
   if (!isExportReady()) {
-    runButton.textContent = getLocale() === "ko" ? "출력 형식 선택" : "Choose Export Format";
+    runButton.textContent = isKo ? "출력 형식 선택" : "Choose Export Format";
     runButton.disabled = false;
-    hint.textContent = getLocale() === "ko" ? "PNG/JPG/PDF 중 최소 하나를 선택해 주세요." : "Choose at least one export format: PNG, JPG, or PDF.";
+    hint.textContent = isKo ? "PNG/JPG/PDF 중 최소 하나를 선택해 주세요." : "Choose at least one export format: PNG, JPG, or PDF.";
     return;
   }
 
-  runButton.textContent = ready ? (getLocale() === "ko" ? "처리 시작" : "Start Processing") : (getLocale() === "ko" ? "입력 확인 중" : "Checking Input");
+  runButton.textContent = ready ? (isKo ? "처리 시작" : "Start Processing") : (isKo ? "입력 확인 중" : "Checking Input");
   runButton.disabled = !ready;
-  hint.textContent = getLocale() === "ko" ? "준비 완료. 처리 시작을 누르면 바로 진행됩니다." : "Ready. Processing starts immediately when you click Start Processing.";
+  hint.textContent = isKo ? "준비 완료. 처리 시작을 누르면 바로 진행됩니다." : "Ready. Processing starts immediately when you click Start Processing.";
 }
 
 function refreshCaptureWorkflowUi() {
@@ -2000,13 +2064,16 @@ function refreshCaptureWorkflowUi() {
   setStepSummaryTone("export", completion.export ? "ready" : "need");
 
   const progressStep = determineActiveStep();
-  if (!manualOpenStep) {
-    manualOpenStep = getOpenedStepFromDetails() || "source";
-  }
-  const activeStep = manualOpenStep;
+  const activeStep = resolveWorkflowActiveStep({
+    manualOpenStep,
+    progressStep,
+    hasResultOutput: hasResultOutput(),
+    openedStep: getOpenedStepFromDetails() || "",
+  });
+  manualOpenStep = activeStep;
 
   STEP_KEYS.forEach((key) => {
-    const isDone = completion[key] && STEP_KEYS.indexOf(key) < STEP_KEYS.indexOf(progressStep);
+    const isDone = completion[key] && FLOW_STEP_KEYS.indexOf(key) < FLOW_STEP_KEYS.indexOf(progressStep);
     setStepVisual(key, { done: isDone, active: key === activeStep });
   });
 
@@ -2272,6 +2339,10 @@ function syncResultReviewUi() {
   if (summary) {
     if (total <= 0) {
       summary.textContent = getLocale() === "ko" ? "캡처 결과가 생기면 검토가 필요한 페이지를 먼저 표시합니다." : "Pages that likely need review will be shown first after captures are generated.";
+    } else if (reviewApplyDisabledForCurrentResult) {
+      summary.textContent = getLocale() === "ko"
+        ? "검토 반영이 이미 적용된 결과입니다. 지금은 PDF 열기 또는 결과 폴더 열기로 최종 결과를 확인합니다."
+        : "Review export has already been applied. Open the PDF or output folder to inspect the final result.";
     } else if (excluded > 0) {
       summary.textContent = suspiciousTotal > 0
         ? (getLocale() === "ko"
@@ -2283,19 +2354,28 @@ function syncResultReviewUi() {
     } else {
       summary.textContent = suspiciousTotal > 0
         ? (getLocale() === "ko"
-            ? `검토 필요 페이지 ${suspiciousTotal}개가 먼저 표시됩니다. 제외할 캡처가 있으면 체크를 해제합니다.`
-            : `${suspiciousTotal} review-needed pages are shown first. Uncheck any captures you want to exclude.`)
+            ? `검토 필요 페이지 ${suspiciousTotal}개가 먼저 표시됩니다. 제외할 캡처가 없으면 PDF나 결과 폴더를 바로 열어 확인하면 됩니다.`
+            : `${suspiciousTotal} review-needed pages are shown first. If everything looks fine, open the PDF or output folder directly.`)
         : (getLocale() === "ko"
-            ? `전체 캡처 ${total}개가 포함 상태입니다. 문제 없어 보이면 바로 저장해도 됩니다.`
-            : `All ${total} captures are currently included. Export directly if everything looks fine.`);
+            ? `전체 캡처 ${total}개가 포함 상태입니다. 결과가 괜찮다면 PDF 열기 또는 결과 폴더 열기로 바로 확인하면 됩니다.`
+            : `All ${total} captures are currently included. Open the PDF or output folder directly if everything looks good.`);
     }
   }
   if (keepAllButton) {
     keepAllButton.disabled = total <= 0 || reviewApplyRunning;
   }
   if (applyButton) {
-    applyButton.disabled = reviewApplyRunning || !activeCaptureJobId || total <= 0 || kept <= 0 || excluded <= 0;
-    applyButton.textContent = reviewApplyRunning ? (getLocale() === "ko" ? "반영 중..." : "Applying...") : (getLocale() === "ko" ? "선택 반영 후 페이지 다시 생성" : "Apply Selection and Regenerate");
+    applyButton.disabled = reviewApplyDisabledForCurrentResult || reviewApplyRunning || !activeCaptureJobId || total <= 0 || kept <= 0 || excluded <= 0;
+    applyButton.textContent = reviewApplyRunning
+      ? (getLocale() === "ko" ? "반영 중..." : "Applying...")
+      : reviewApplyDisabledForCurrentResult
+        ? (getLocale() === "ko" ? "검토 반영 완료됨" : "Review Already Applied")
+        : (getLocale() === "ko" ? "선택 반영 후 페이지 다시 생성" : "Apply Selection and Regenerate");
+    applyButton.title = reviewApplyDisabledForCurrentResult
+      ? (getLocale() === "ko"
+          ? "현재 결과는 이미 검토 반영으로 다시 생성되었습니다. 다시 고르려면 원본 작업을 다시 실행합니다."
+          : "This result was already regenerated by review export. Rerun the original job to review again.")
+      : "";
   }
   renderWorkLayoutState();
 }
@@ -2363,7 +2443,16 @@ function renderResultThumbnails(imagePaths = [], pageDiagnostics = []) {
     recropButton.type = "button";
     recropButton.className = "secondary";
     recropButton.textContent = getLocale() === "ko" ? "다시 자르기" : "Recrop";
+    recropButton.disabled = recropDisabledForCurrentResult;
+    if (recropDisabledForCurrentResult) {
+      recropButton.title = getLocale() === "ko"
+        ? "검토 반영으로 다시 만든 결과 페이지는 다시 자르기를 지원하지 않습니다."
+        : "Recrop is unavailable for pages regenerated by review export.";
+    }
     recropButton.addEventListener("click", () => {
+      if (recropDisabledForCurrentResult) {
+        return;
+      }
       openCaptureCropModal(imagePath, idx);
     });
 
@@ -2737,7 +2826,7 @@ async function onApplyCaptureCrop() {
       roi,
     });
     bumpCaptureRenderVersion(targetPath);
-    renderResultThumbnails(resultImagePaths);
+    renderResultThumbnails(resultImagePaths, resultPageDiagnostics);
     if (currentPreviewImagePath === targetPath) {
       renderResultPreview(targetPath);
     }
@@ -2816,6 +2905,8 @@ function resetResultView() {
   currentPreviewImagePath = "";
   reviewApplyRunning = false;
   resultFocusPending = false;
+  recropDisabledForCurrentResult = false;
+  reviewApplyDisabledForCurrentResult = false;
 
   const openOutputDir = el("openOutputDir");
   const stickyOpenOutput = el("stickyOpenOutput");
@@ -2892,6 +2983,8 @@ function renderResult(job) {
   outputPdf = meta.pdfPath || "";
   activeCaptureJobId = String(job?.job_id || activeCaptureJobId || "");
   excludedResultIndices.clear();
+  recropDisabledForCurrentResult = Boolean(job?.result?.review_export);
+  reviewApplyDisabledForCurrentResult = Boolean(job?.result?.review_export);
 
   const openOutputDir = el("openOutputDir");
   const stickyOpenOutput = el("stickyOpenOutput");
@@ -2913,9 +3006,12 @@ function renderResult(job) {
 
   setPathChip(outputDir);
   const reviewPaths = Array.isArray(meta.capturePaths) && meta.capturePaths.length ? meta.capturePaths : meta.imagePaths || [];
-  renderResultThumbnails(reviewPaths, meta.pageDiagnostics);
+  renderResultThumbnails(reviewPaths, meta.thumbnailDiagnostics);
   const previewPath = firstIncludedImagePath() || meta.firstImagePath;
   renderResultPreview(previewPath);
+  if (reviewPaths.length > 0) {
+    manualOpenStep = REVIEW_STEP_KEY;
+  }
 
   if (job?.result?.runtime) {
     latestRuntime = job.result.runtime;
@@ -2937,12 +3033,19 @@ function onKeepAllResultPages() {
     return;
   }
   excludedResultIndices.clear();
-  renderResultThumbnails(resultImagePaths);
+  renderResultThumbnails(resultImagePaths, resultPageDiagnostics);
   appendLocaleLog("결과 검토: 모든 캡처를 포함 상태로 되돌렸습니다.", "Review reset: all captures were restored to included.");
 }
 
 async function onApplyResultReview() {
   if (reviewApplyRunning) {
+    return;
+  }
+  if (reviewApplyDisabledForCurrentResult) {
+    appendLocaleLog(
+      "안내: 현재 결과는 이미 검토 반영으로 다시 생성되었습니다. 다시 검토하려면 원본 작업을 다시 실행합니다.",
+      "Info: this result was already regenerated by review export. Rerun the original job to review again.",
+    );
     return;
   }
   if (!activeCaptureJobId) {
@@ -3072,6 +3175,20 @@ async function onRun() {
     setPipelineState({ currentStep: "exporting", progress: 1, status: "error", isYoutubeSource: sourceType() === "youtube" });
     refreshCaptureWorkflowUi();
   }
+}
+
+function onRunPrimaryAction() {
+  if (runState === "done") {
+    if (outputPdf) {
+      window.drumSheetAPI.openPath(outputPdf);
+      return;
+    }
+    if (outputDir) {
+      window.drumSheetAPI.openPath(outputDir);
+      return;
+    }
+  }
+  void onRun();
 }
 
 function onCancelRun() {
@@ -3381,6 +3498,17 @@ function bindStepNavigation() {
       details?.scrollIntoView({ behavior: "smooth", block: "center" });
     });
   });
+  const reviewButton = el(REVIEW_STEP_BUTTON_ID);
+  if (reviewButton) {
+    reviewButton.addEventListener("click", () => {
+      if (!hasResultOutput()) {
+        return;
+      }
+      manualOpenStep = REVIEW_STEP_KEY;
+      refreshCaptureWorkflowUi();
+      focusResultWorkspace({ review: countReviewCandidates() > 0 });
+    });
+  }
 }
 
 function bindPresetButtons() {
@@ -3754,12 +3882,18 @@ document.addEventListener("keydown", (event) => {
 
 const runJobButton = el("runJob");
 if (runJobButton) {
-  runJobButton.addEventListener("click", onRun);
+  runJobButton.addEventListener("click", onRunPrimaryAction);
 }
 
 const cancelRunButton = el("cancelRun");
 if (cancelRunButton) {
-  cancelRunButton.addEventListener("click", onCancelRun);
+  cancelRunButton.addEventListener("click", () => {
+    if (runState === "done") {
+      void onRun();
+      return;
+    }
+    onCancelRun();
+  });
 }
 
 const runGuidedSetupButton = el("runGuidedSetup");
