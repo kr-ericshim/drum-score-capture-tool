@@ -1,0 +1,22 @@
+:root {
+  --bg-app: #13110d;
+  --bg-panel: #1b1811;
+  --bg-panel-2: #221d13;
+  --bg-stage: #0d0b08;
+  --line-soft: rgba(236, 182, 19, 0.08);
+  --line-strong: rgba(236, 182, 19, 0.18);
+  --line-iron: rgba(99, 87, 58, 0.55);
+  --text-1: #f4f0e4;
+  --text-2: #b6aa8a;
+  --text-3: #7c745f;
+  --accent: #ecb613;
+  --accent-2: #86744a;
+  --success: #9ad28f;
+  --danger: #d28d87;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --shadow-1: 0 12px 28px rgba(0, 0, 0, 0.28);
+  --mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Consolas, monospace;
+  --sans: "Space Grotesk", "Pretendard", "SUIT", "Noto Sans KR", system-ui, sans-serif;
+  --focus: 0 0 0 2px rgba(236, 182, 19, 0.3);
+}

@@ -1,0 +1,54 @@
+@import "./tokens.css";
+@import "./layout.css";
+@import "./components.css";
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap");
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: linear-gradient(180deg, #17140e, var(--bg-app));
+  color: var(--text-1);
+  font-family: var(--sans);
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+img {
+  max-width: 100%;
+  display: block;
+}
+
+.skip-link {
+  position: absolute;
+  left: 12px;
+  top: -40px;
+  z-index: 999;
+  padding: 8px 12px;
+  background: var(--bg-panel);
+  color: var(--text-1);
+  border: 1px solid var(--line-strong);
+}
+
+.skip-link:focus {
+  top: 12px;
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}

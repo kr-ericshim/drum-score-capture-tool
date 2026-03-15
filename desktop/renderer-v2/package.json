@@ -1,0 +1,9 @@
+{
+  "name": "drum-sheet-capture-renderer-v2",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node ../scripts/check-renderer-v2.js",
+    "test": "node --test src/tests/*.test.js"
+  }
+}
