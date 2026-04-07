@@ -580,7 +580,7 @@ test("destroy removes root listeners and backend subscription", async () => {
   assert.equal(unsubscribeCalls, 1);
 });
 
-test("roi editor remounts when the ROI stage DOM is replaced after draft state sync", () => {
+test("roi editor keeps the mounted canvas when only the draft rect changes", () => {
   installBrowserStubs();
   let mountCalls = 0;
   let destroyCalls = 0;
@@ -629,8 +629,8 @@ test("roi editor remounts when the ROI stage DOM is replaced after draft state s
     return next;
   });
 
-  assert.equal(mountCalls, 2);
-  assert.equal(destroyCalls, 1);
+  assert.equal(mountCalls, 1);
+  assert.equal(destroyCalls, 0);
 });
 
 test("open and copy actions report user-facing notices", async () => {
@@ -869,4 +869,5 @@ test("export after prepared youtube submits a file-backed payload", async () => 
 
   assert.equal(seenPayload.source_type, "file");
   assert.equal(seenPayload.file_path, "/tmp/cache/youtube.mp4");
+  assert.equal(seenPayload.options.extract.start_sec, 0);
 });

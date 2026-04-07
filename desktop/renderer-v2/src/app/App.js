@@ -103,6 +103,11 @@ export function createApp(root, dependencies = {}) {
   let activeJobHandle = null;
   let activeSourceSelection = 0;
   let lastRenderedStep = "";
+  let lastTopBarMarkup = "";
+  let lastProcessRailMarkup = "";
+  let lastContextLaneMarkup = "";
+  let lastStageMarkup = "";
+  let lastStatusMarkup = "";
   const runtimeGuards = createRuntimeGuards();
 
   function setState(updater) {
@@ -208,18 +213,12 @@ export function createApp(root, dependencies = {}) {
   function render() {
     const state = store.getState();
     const locale = state.ui.locale || "en";
+    const stepLabel = t(`topbar.step.${state.ui.activeStep}`, { locale });
     const laneMarkup = renderContextLane(state);
-    if (shell.appShell) {
-      shell.appShell.dataset.step = state.ui.activeStep;
-    }
-    shell.processRail?.setAttribute?.("aria-label", t("app.aria.workflowSteps", { locale }));
-    shell.contextLane?.setAttribute?.("aria-label", t("app.aria.inspectionDetails", { locale }));
-    shell.topBar.innerHTML = renderTopBar(state, getTopBarSummary(state));
-    shell.processRail.innerHTML = renderProcessRail(state, getProcessRailItems(state));
-    shell.contextLane.innerHTML = laneMarkup;
-    shell.contextLane.hidden = !laneMarkup.trim();
-    shell.stagePane.innerHTML = stageMarkup(state);
-    shell.statusBar.innerHTML = `
+    const topBarMarkup = renderTopBar(state, getTopBarSummary(state));
+    const processRailMarkup = renderProcessRail(state, getProcessRailItems(state));
+    const stageMarkupValue = stageMarkup(state);
+    const statusMarkup = `
       <div class="status-bar-group">
         <span>${state.ui.backend?.ready ? t("status.engineReady", { locale }) : t("status.engineWaiting", { locale })}</span>
         <span>${state.source.displayName
@@ -236,10 +235,40 @@ export function createApp(root, dependencies = {}) {
         <span>${t("status.localTool", { locale })}</span>
       </div>
     `;
+    if (shell.appShell) {
+      shell.appShell.dataset.step = state.ui.activeStep;
+    }
+    shell.processRail?.setAttribute?.("aria-label", t("app.aria.workflowSteps", { locale }));
+    shell.contextLane?.setAttribute?.("aria-label", t("app.aria.inspectionDetails", { locale }));
+    shell.stagePane?.setAttribute?.("aria-label", t("app.aria.stagePane", { locale, replacements: { step: stepLabel } }));
+    if (topBarMarkup !== lastTopBarMarkup) {
+      shell.topBar.innerHTML = topBarMarkup;
+      lastTopBarMarkup = topBarMarkup;
+    }
+    if (processRailMarkup !== lastProcessRailMarkup) {
+      shell.processRail.innerHTML = processRailMarkup;
+      lastProcessRailMarkup = processRailMarkup;
+    }
+    if (laneMarkup !== lastContextLaneMarkup) {
+      shell.contextLane.innerHTML = laneMarkup;
+      lastContextLaneMarkup = laneMarkup;
+    }
+    shell.contextLane.hidden = !laneMarkup.trim();
+    if (stageMarkupValue !== lastStageMarkup) {
+      shell.stagePane.innerHTML = stageMarkupValue;
+      lastStageMarkup = stageMarkupValue;
+    }
+    if (statusMarkup !== lastStatusMarkup) {
+      shell.statusBar.innerHTML = statusMarkup;
+      lastStatusMarkup = statusMarkup;
+    }
     attachRoiEditor(state);
     if (state.ui.activeStep !== lastRenderedStep) {
       lastRenderedStep = state.ui.activeStep;
-      if (typeof shell.stagePane.focus === "function") {
+      const heading = shell.stagePane.querySelector?.("[data-screen-heading]");
+      if (typeof heading?.focus === "function") {
+        heading.focus();
+      } else if (typeof shell.stagePane.focus === "function") {
         shell.stagePane.focus();
       }
     }
@@ -424,7 +453,7 @@ export function createApp(root, dependencies = {}) {
         extract: {
           fps: 1.0,
           capture_sensitivity: "medium",
-          start_sec: Number.isFinite(state.roi.frameTime) ? state.roi.frameTime : 0,
+          start_sec: 0,
           end_sec: null,
         },
         detect: {
