@@ -62,6 +62,17 @@ test("initial export config includes the document-header contract with today's d
   assert.equal(state.exportConfig.documentHeader.memo, "");
 });
 
+test("initial export config keeps a clean metadata modal draft separate from confirmed document header", () => {
+  const exportConfig = createInitialExportConfig("/tmp/score-library/Take Five.mp4", new Date("2026-04-19T09:00:00Z"));
+
+  assert.deepEqual(exportConfig.metadataModal.draft, exportConfig.documentHeader);
+  assert.notEqual(exportConfig.metadataModal.draft, exportConfig.documentHeader);
+  assert.equal(exportConfig.metadataModal.isOpen, false);
+  assert.equal(exportConfig.metadataModal.dirty, false);
+  assert.deepEqual(exportConfig.metadataModal.validation, { title: "", bpm: "" });
+  assert.equal(exportConfig.metadataModal.showDiscardConfirm, false);
+});
+
 test("export config reset defaults the document title from the source filename stem", () => {
   const exportConfig = createInitialExportConfig("/tmp/score-library/My Autumn Leaves.mp4", new Date("2026-04-19T09:00:00Z"));
 

@@ -386,20 +386,19 @@ test("runExport does not create a job when zero formats are selected", async () 
   assert.match(app.debug.getState().exportConfig.error, /형식|format/i);
 });
 
-test("runExport submits normalized document header values before polling starts", async () => {
+test("runExport opens the metadata modal before polling when pdf is selected", async () => {
   installBrowserStubs();
-  let seenPayload = null;
-  const job = deferred();
+  let createJobCalls = 0;
   const root = createRoot();
   const app = createApp(root, {
     exposeTestApi: true,
     api: {
       requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
-      createJob: async (payload) => {
-        seenPayload = payload;
+      createJob: async () => {
+        createJobCalls += 1;
         return "job-1";
       },
-      getJob: async () => job.promise,
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, current_step: "done", message: "", result: {} }),
       reviewExport: async () => ({}),
     },
   });
@@ -411,31 +410,17 @@ test("runExport submits normalized document header values before polling starts"
     next.roi.appliedRect = ROI_RECT;
     next.exportConfig.formats = ["pdf"];
     next.exportConfig.pageFillMode = "balanced";
-    next.exportConfig.documentHeader = {
-      title: "  Custom Title  ",
-      performer: "  Bill Evans  ",
-      bpm: "128.8",
-      date: "",
-      memo: "   ",
-    };
     next.ui.activeStep = "export";
     return next;
   });
 
-  const pending = root.dispatchAction("run-export");
+  await root.dispatchAction("run-export");
   await flush();
 
-  assert.deepEqual(seenPayload.options.export.document_header, {
-    title: "Custom Title",
-    performer: "Bill Evans",
-    bpm: 128,
-    date: "",
-    memo: "",
-  });
-  assert.equal(seenPayload.options.export.page_fill_mode, "balanced");
-
-  job.resolve({ job_id: "job-1", status: "done", progress: 1, current_step: "done", message: "", result: {} });
-  await pending;
+  const state = app.debug.getState();
+  assert.equal(createJobCalls, 0);
+  assert.equal(state.exportConfig.metadataModal.isOpen, true);
+  assert.equal(state.exportConfig.runStatus, "idle");
 });
 
 test("applied review selection stays locked when a checkbox input fires later", () => {
