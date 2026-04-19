@@ -4,6 +4,10 @@ import { t } from "../../lib/i18n.js";
 const BRAND_TITLE = "Drum Sheet Capture";
 const BRAND_SUBTITLE = "Local score capture workflow";
 
+function renderArchiveButton(locale) {
+  return `<button class="topbar-archive" type="button" data-action="open-archive">${escapeHtml(t("topbar.archive", { locale }))}</button>`;
+}
+
 function renderLocaleButtons(locale) {
   const localeLabel = escapeAttr(t("topbar.localeLabel", { locale }));
   const koreanLabel = escapeHtml(t("topbar.locale.ko", { locale }));
@@ -34,6 +38,7 @@ export function renderTopBar(state, summary) {
           <span class="topbar-step">${stepLabel}</span>
         </div>
         <div class="topbar-tools topbar-tools-compact">
+          ${renderArchiveButton(locale)}
           ${renderLocaleButtons(locale)}
         </div>
       </div>
@@ -53,6 +58,7 @@ export function renderTopBar(state, summary) {
       <span class="topbar-step">${stepLabel}</span>
     </div>
     <div class="topbar-tools">
+      ${renderArchiveButton(locale)}
       ${renderLocaleButtons(locale)}
       <span class="engine-badge ${backendReady ? "is-ready" : "is-waiting"}">${engineLabel}</span>
     </div>

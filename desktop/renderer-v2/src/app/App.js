@@ -30,6 +30,7 @@ import { createSourceController } from "../features/source/sourceController.js";
 import { renderRoiScreen } from "../features/roi/RoiScreen.js";
 import { renderExportScreen } from "../features/export/ExportScreen.js";
 import { renderReviewScreen } from "../features/review/ReviewScreen.js";
+import { renderArchiveModal } from "../features/archive/ArchiveModal.js";
 import { mountRoiEditor } from "../features/roi/roiEditor.js";
 import {
   createJob,
@@ -254,8 +255,11 @@ export function createApp(root, dependencies = {}) {
   let lastProcessRailMarkup = "";
   let lastContextLaneMarkup = "";
   let lastStageMarkup = "";
+  let lastArchiveMarkup = "";
   let lastStatusMarkup = "";
   let lastBackendReady = false;
+  let lastArchiveOpen = false;
+  let archiveRestoreFocusTarget = null;
   let registryRefreshToken = 0;
   let archiveRefreshToken = 0;
   let activeSourceDropZone = null;
@@ -307,6 +311,26 @@ export function createApp(root, dependencies = {}) {
     if (state.ui.activeStep === "roi") return renderRoiScreen(state);
     if (state.ui.activeStep === "export") return renderExportScreen(state);
     return renderReviewScreen(state);
+  }
+
+  function syncArchiveShellState(isArchiveOpen) {
+    const shellSurfaces = [shell.topBar, shell.workspaceShell, shell.statusBar];
+    for (const surface of shellSurfaces) {
+      if (!surface) {
+        continue;
+      }
+      surface.inert = isArchiveOpen;
+      if (isArchiveOpen) {
+        surface.setAttribute?.("aria-hidden", "true");
+      } else {
+        surface.removeAttribute?.("aria-hidden");
+      }
+    }
+  }
+
+  function focusArchiveDialog() {
+    const dialog = shell.modalLayer?.querySelector?.("[data-archive-dialog]");
+    dialog?.focus?.();
   }
 
   function destroyRoiEditor() {
@@ -372,6 +396,9 @@ export function createApp(root, dependencies = {}) {
     const topBarMarkup = renderTopBar(state, topBarSummary);
     const processRailMarkup = renderProcessRail(state, getProcessRailItems(state));
     const stageMarkupValue = stageMarkup(state);
+    const archiveMarkupValue = renderArchiveModal(state);
+    const archiveMarkupChanged = archiveMarkupValue !== lastArchiveMarkup;
+    const isArchiveOpen = Boolean(state.archive?.isOpen);
     const engineStatus = escapeHtml(state.ui.backend?.ready ? t("status.engineReady", { locale }) : t("status.engineWaiting", { locale }));
     const sourceStatus = escapeHtml(sourceStatusLabel
       ? t("status.sourceLabel", { locale, replacements: { label: sourceStatusLabel } })
@@ -419,11 +446,27 @@ export function createApp(root, dependencies = {}) {
       lastStageMarkup = stageMarkupValue;
       restoreStageInputFocus(shell.stagePane, focusSnapshot);
     }
+    if (archiveMarkupChanged) {
+      shell.modalLayer.innerHTML = archiveMarkupValue;
+      lastArchiveMarkup = archiveMarkupValue;
+    }
+    syncArchiveShellState(isArchiveOpen);
     if (statusMarkup !== lastStatusMarkup) {
       shell.statusBar.innerHTML = statusMarkup;
       lastStatusMarkup = statusMarkup;
     }
     attachRoiEditor(state);
+    if (isArchiveOpen && !lastArchiveOpen) {
+      archiveRestoreFocusTarget = globalThis?.document?.activeElement || null;
+    }
+    if (isArchiveOpen && (archiveMarkupChanged || !lastArchiveOpen)) {
+      focusArchiveDialog();
+    } else if (!isArchiveOpen && lastArchiveOpen) {
+      const nextFocusTarget = archiveRestoreFocusTarget;
+      archiveRestoreFocusTarget = null;
+      nextFocusTarget?.focus?.();
+    }
+    lastArchiveOpen = isArchiveOpen;
     if (state.ui.activeStep !== lastRenderedStep) {
       lastRenderedStep = state.ui.activeStep;
       const heading = shell.stagePane.querySelector?.("[data-screen-heading]");
@@ -506,6 +549,38 @@ export function createApp(root, dependencies = {}) {
         return next;
       });
     }
+  }
+
+  function openArchive() {
+    const state = store.getState();
+    setState((next) => {
+      next.archive.isOpen = true;
+      return next;
+    });
+    if (state.ui.backend?.ready && (state.archive.status === "idle" || state.archive.status === "error")) {
+      void refreshArchiveLibrary();
+    }
+  }
+
+  function closeArchive() {
+    setState((next) => {
+      next.archive.isOpen = false;
+      next.archive.selectedSourceKey = "";
+      return next;
+    });
+  }
+
+  function getArchiveItem(sourceKey) {
+    const key = String(sourceKey || "").trim() || store.getState().archive.selectedSourceKey;
+    if (!key) {
+      return null;
+    }
+    return store.getState().archive.items.find((item) => item.sourceKey === key) || null;
+  }
+
+  function refreshCompletedLibraries() {
+    void refreshLocalMediaRegistry();
+    void refreshArchiveLibrary();
   }
 
   async function loadSourceFromPath(filePath) {
@@ -610,7 +685,7 @@ export function createApp(root, dependencies = {}) {
       if (job.status === "done" || job.status === "error") {
         stopPolling();
         if (job.status === "done") {
-          void refreshLocalMediaRegistry();
+          refreshCompletedLibraries();
         }
         return;
       }
@@ -1142,7 +1217,7 @@ export function createApp(root, dependencies = {}) {
         return;
       }
       applyJobSnapshot(refreshed);
-      void refreshLocalMediaRegistry();
+      refreshCompletedLibraries();
       setInlineNotice(notice("review.applied", { locale: store.getState().ui.locale || "en" }));
     } catch (error) {
       setState((next) => {
@@ -1230,6 +1305,32 @@ export function createApp(root, dependencies = {}) {
       });
       return;
     }
+    if (action === "open-archive") {
+      openArchive();
+      return;
+    }
+    if (action === "close-archive") {
+      closeArchive();
+      return;
+    }
+    if (action === "retry-archive") {
+      void refreshArchiveLibrary();
+      return;
+    }
+    if (action === "select-archive-item") {
+      setState((next) => {
+        next.archive.selectedSourceKey = String(target.dataset.sourceKey || "");
+        return next;
+      });
+      return;
+    }
+    if (action === "back-archive-detail") {
+      setState((next) => {
+        next.archive.selectedSourceKey = "";
+        return next;
+      });
+      return;
+    }
     if (action === "open-step") {
       const { step } = target.dataset;
       if (canOpenStep(store.getState(), step)) {
@@ -1302,6 +1403,18 @@ export function createApp(root, dependencies = {}) {
     if (action === "copy-output-dir") {
       const locale = store.getState().ui.locale || "en";
       await handleCopyText(store.getState().review.outputDir, t("label.outputPath", { locale }));
+      return;
+    }
+    if (action === "open-archive-pdf") {
+      const locale = store.getState().ui.locale || "en";
+      const item = getArchiveItem(target.dataset.sourceKey);
+      await handleOpenPath(item?.pdfPath, t("archive.pathLabel.pdf", { locale }));
+      return;
+    }
+    if (action === "open-archive-folder") {
+      const locale = store.getState().ui.locale || "en";
+      const item = getArchiveItem(target.dataset.sourceKey);
+      await handleOpenPath(item?.outputDir, t("archive.pathLabel.folder", { locale }));
     }
   };
 
@@ -1399,8 +1512,16 @@ export function createApp(root, dependencies = {}) {
     }
   };
 
+  const handleKeyDown = (event) => {
+    if (event.key === "Escape" && store.getState().archive.isOpen) {
+      event.preventDefault?.();
+      closeArchive();
+    }
+  };
+
   root.addEventListener("click", handleClick);
   root.addEventListener("input", handleInput);
+  root.addEventListener("keydown", handleKeyDown);
   root.addEventListener("dragenter", handleDragEnter);
   root.addEventListener("dragover", handleDragOver);
   root.addEventListener("dragleave", handleDragLeave);
@@ -1446,6 +1567,7 @@ export function createApp(root, dependencies = {}) {
       if (typeof root.removeEventListener === "function") {
         root.removeEventListener("click", handleClick);
         root.removeEventListener("input", handleInput);
+        root.removeEventListener("keydown", handleKeyDown);
         root.removeEventListener("dragenter", handleDragEnter);
         root.removeEventListener("dragover", handleDragOver);
         root.removeEventListener("dragleave", handleDragLeave);

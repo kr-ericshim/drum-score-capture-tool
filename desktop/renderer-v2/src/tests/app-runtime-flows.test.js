@@ -75,9 +75,44 @@ function createEventTarget({ action = "", dataset = {}, dropZone = null } = {}) 
   };
 }
 
+function createElementNode(overrides = {}) {
+  const attributes = new Map();
+  const node = {
+    innerHTML: "",
+    hidden: false,
+    inert: false,
+    dataset: {},
+    setAttribute(name, value) {
+      attributes.set(name, String(value));
+    },
+    getAttribute(name) {
+      return attributes.has(name) ? attributes.get(name) : null;
+    },
+    removeAttribute(name) {
+      attributes.delete(name);
+    },
+    hasAttribute(name) {
+      return attributes.has(name);
+    },
+    focus() {
+      if (globalThis.document) {
+        globalThis.document.activeElement = node;
+      }
+    },
+    querySelector() {
+      return null;
+    },
+  };
+  Object.defineProperties(node, Object.getOwnPropertyDescriptors(overrides));
+  return node;
+}
+
 function createRoot() {
   const listeners = createListenerStore();
   const sourceDropZone = createDropZoneTarget();
+  const modalNodes = {
+    dialog: createElementNode({ dataset: { archiveDialog: "true" } }),
+  };
   const stageNodes = {
     "#roiImage": { complete: true, naturalWidth: 1920, naturalHeight: 1080 },
     "#roiCanvas": {
@@ -92,16 +127,28 @@ function createRoot() {
     "#roiInput": { value: "" },
   };
   const nodes = {
-    "#topBar": { innerHTML: "" },
-    "#processRail": { innerHTML: "" },
-    "#stagePane": {
-      innerHTML: "",
+    '[data-shell="renderer-v2"]': createElementNode({ dataset: {} }),
+    "#topBar": createElementNode(),
+    "#workspaceShell": createElementNode(),
+    "#processRail": createElementNode(),
+    "#stagePane": createElementNode({
       querySelector(selector) {
         return stageNodes[selector] || null;
       },
-    },
-    "#contextLane": { innerHTML: "" },
-    "#statusBar": { innerHTML: "" },
+    }),
+    "#contextLane": createElementNode(),
+    "#statusBar": createElementNode(),
+    "#shellModalLayer": createElementNode({
+      querySelector(selector) {
+        if (!this.innerHTML) {
+          return null;
+        }
+        if (selector === "[data-archive-dialog]") {
+          return modalNodes.dialog;
+        }
+        return null;
+      },
+    }),
   };
 
   return {
@@ -118,6 +165,17 @@ function createRoot() {
     async dispatchAction(action, dataset = {}) {
       const target = createEventTarget({ action, dataset });
       await listeners.dispatch("click", { target });
+    },
+    async dispatchKeydown(key) {
+      const event = {
+        key,
+        defaultPrevented: false,
+        preventDefault() {
+          this.defaultPrevented = true;
+        },
+      };
+      await listeners.dispatch("keydown", event);
+      return event;
     },
     dispatchInput(target) {
       listeners.syncDispatch("input", { target });
@@ -169,9 +227,11 @@ function createDynamicStageRoot() {
   }
 
   const nodes = {
-    "#topBar": { innerHTML: "" },
-    "#processRail": { innerHTML: "" },
-    "#stagePane": {
+    '[data-shell="renderer-v2"]': createElementNode({ dataset: {} }),
+    "#topBar": createElementNode(),
+    "#workspaceShell": createElementNode(),
+    "#processRail": createElementNode(),
+    "#stagePane": createElementNode({
       _innerHTML: "",
       set innerHTML(value) {
         this._innerHTML = value;
@@ -193,9 +253,10 @@ function createDynamicStageRoot() {
         }
         return bucket[selector] || null;
       },
-    },
-    "#contextLane": { innerHTML: "" },
-    "#statusBar": { innerHTML: "" },
+    }),
+    "#contextLane": createElementNode(),
+    "#statusBar": createElementNode(),
+    "#shellModalLayer": createElementNode(),
   };
 
   return {
@@ -213,8 +274,29 @@ function createDynamicStageRoot() {
       const target = createEventTarget({ action, dataset });
       await listeners.dispatch("click", { target });
     },
+    async dispatchKeydown(key) {
+      const event = {
+        key,
+        defaultPrevented: false,
+        preventDefault() {
+          this.defaultPrevented = true;
+        },
+      };
+      await listeners.dispatch("keydown", event);
+      return event;
+    },
     dispatchInput(target) {
       listeners.syncDispatch("input", { target });
+    },
+  };
+}
+
+function createDocumentStub() {
+  return {
+    activeElement: null,
+    documentElement: { lang: "en" },
+    querySelector() {
+      return null;
     },
   };
 }
@@ -233,6 +315,10 @@ function installBrowserStubs(api = {}) {
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: { drumSheetAPI },
+  });
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: createDocumentStub(),
   });
 }
 
@@ -1453,4 +1539,135 @@ test("archive state starts closed and empty", () => {
     error: "",
     selectedSourceKey: "",
   });
+});
+
+test("archive modal mounts at the shell root, makes the shell inert, and closes on Escape", async () => {
+  installBrowserStubs({
+    getBackendState: async () => ({ ready: true, starting: false, running: true, error: "" }),
+    onBackendState: () => () => {},
+  });
+
+  const root = createRoot();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    api: {
+      getArchiveLibrary: async () => ({
+        items: [
+          {
+            sourceKey: "source-a",
+            sourceKind: "file",
+            displayName: "Archive Source A",
+            completedAt: 1713526200,
+            pdfPath: "/tmp/source-a.pdf",
+            outputDir: "/tmp/source-a",
+          },
+        ],
+      }),
+    },
+  });
+
+  await flush();
+  const opener = createElementNode();
+  opener.focus();
+  await root.dispatchAction("open-archive");
+  await flush();
+
+  assert.equal(app.debug.getState().archive.isOpen, true);
+  assert.doesNotMatch(root.querySelector("#stagePane").innerHTML, /data-archive-modal/);
+  assert.match(root.querySelector("#shellModalLayer").innerHTML, /data-archive-modal/);
+  assert.equal(root.querySelector("#topBar").inert, true);
+  assert.equal(root.querySelector("#workspaceShell").inert, true);
+  assert.equal(root.querySelector("#statusBar").inert, true);
+  assert.equal(root.querySelector("#topBar").getAttribute("aria-hidden"), "true");
+  assert.equal(globalThis.document.activeElement, root.querySelector("#shellModalLayer").querySelector("[data-archive-dialog]"));
+
+  const escapeEvent = await root.dispatchKeydown("Escape");
+  await flush();
+
+  assert.equal(escapeEvent.defaultPrevented, true);
+  assert.equal(app.debug.getState().archive.isOpen, false);
+  assert.equal(root.querySelector("#shellModalLayer").innerHTML, "");
+  assert.equal(root.querySelector("#topBar").inert, false);
+  assert.equal(root.querySelector("#workspaceShell").inert, false);
+  assert.equal(root.querySelector("#statusBar").inert, false);
+  assert.equal(root.querySelector("#topBar").getAttribute("aria-hidden"), null);
+  assert.equal(globalThis.document.activeElement, opener);
+});
+
+test("archive runtime wiring covers retry loading, selection, and open path actions", async () => {
+  installBrowserStubs({
+    getBackendState: async () => ({ ready: false, starting: false, running: false, error: "" }),
+    onBackendState: () => () => {},
+  });
+
+  const archiveRequest = deferred();
+  const openPathCalls = [];
+  globalThis.window.drumSheetAPI.openPath = async (targetPath) => {
+    openPathCalls.push(targetPath);
+    return "";
+  };
+
+  let archiveRequests = 0;
+  const root = createRoot();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    api: {
+      getArchiveLibrary: async () => {
+        archiveRequests += 1;
+        return archiveRequest.promise;
+      },
+    },
+  });
+
+  app.debug.setState((next) => {
+    next.ui.backend = { ready: true, starting: false, running: true, error: "" };
+    next.archive.isOpen = true;
+    next.archive.status = "error";
+    next.archive.error = "archive failed";
+    next.archive.items = [
+      {
+        sourceKey: "source-b",
+        sourceKind: "file",
+        displayName: "Stale Archive Item",
+        completedAt: 1713526200,
+        pdfPath: "/tmp/stale.pdf",
+        outputDir: "/tmp/stale",
+      },
+    ];
+    return next;
+  });
+
+  await root.dispatchAction("retry-archive");
+  await flush();
+
+  assert.equal(archiveRequests, 1);
+  assert.equal(app.debug.getState().archive.status, "loading");
+  assert.match(root.querySelector("#shellModalLayer").innerHTML, /Loading archive\.\.\.|보관함을 불러오는 중입니다\./);
+  assert.doesNotMatch(root.querySelector("#shellModalLayer").innerHTML, /Stale Archive Item/);
+
+  archiveRequest.resolve({
+    items: [
+      {
+        sourceKey: "source-c",
+        sourceKind: "file",
+        displayName: "Archive Source C",
+        completedAt: 1713526200,
+        pdfPath: "/tmp/source-c.pdf",
+        outputDir: "/tmp/source-c",
+      },
+    ],
+  });
+  await flush();
+
+  await root.dispatchAction("select-archive-item", { sourceKey: "source-c" });
+  assert.equal(app.debug.getState().archive.selectedSourceKey, "source-c");
+
+  await root.dispatchAction("open-archive-pdf", { sourceKey: "source-c" });
+  await root.dispatchAction("open-archive-folder", { sourceKey: "source-c" });
+
+  assert.deepEqual(openPathCalls, ["/tmp/source-c.pdf", "/tmp/source-c"]);
+
+  await root.dispatchAction("close-archive");
+  assert.equal(app.debug.getState().archive.isOpen, false);
+  assert.equal(app.debug.getState().archive.selectedSourceKey, "");
 });

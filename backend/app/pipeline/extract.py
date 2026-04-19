@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import shutil
@@ -15,6 +16,17 @@ from app.schemas import ExtractOptions
 
 YOUTUBE_DOWNLOAD_STRATEGY_VERSION = "yt-v3"
 YOUTUBE_LOW_QUALITY_HEIGHT_THRESHOLD = 360
+
+
+def _write_download_metadata(download_dir: Path, *, source_key: str, video_title: str) -> None:
+    payload = {
+        "source_key": str(source_key or "").strip(),
+        "video_title": str(video_title or "").strip(),
+    }
+    (download_dir / "source.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
 def prepare_preview_source(
@@ -139,6 +151,14 @@ def _download_youtube(url: str, workspace: Path, logger, progress_callback=None)
     download_dir.mkdir(parents=True, exist_ok=True)
     output_template = str(download_dir / "%(id)s.%(ext)s")
     logger(f"downloading youtube source: {url}")
+    _emit_prepare_progress(
+        progress_callback,
+        {
+            "stage": "metadata",
+            "progress_mode": "indeterminate",
+            "message": "checking stream metadata",
+        },
+    )
     ffmpeg_bin = resolve_ffmpeg_bin(strict=False)
     ffmpeg_location = ""
     if ffmpeg_bin:
@@ -155,6 +175,8 @@ def _download_youtube(url: str, workspace: Path, logger, progress_callback=None)
         "socket_timeout": 30,
         "retries": 2,
         "logger": _YtDlpLogBridge(logger),
+        "progress_hooks": [_build_youtube_progress_hook(progress_callback=progress_callback, logger=logger)],
+        "postprocessor_hooks": [_build_youtube_postprocessor_hook(progress_callback=progress_callback, logger=logger)],
     }
     if progress_callback:
         base_opts["progress_hooks"] = [
@@ -194,6 +216,14 @@ def _download_youtube(url: str, workspace: Path, logger, progress_callback=None)
         try:
             _clear_download_artifacts(download_dir)
             logger(f"youtube download strategy={name}")
+            _emit_prepare_progress(
+                progress_callback,
+                {
+                    "stage": "metadata",
+                    "progress_mode": "indeterminate",
+                    "message": f"checking stream metadata ({name})",
+                },
+            )
             with YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 download_path = _resolve_download_path(download_dir=download_dir, ydl=ydl, info=info)
@@ -206,6 +236,14 @@ def _download_youtube(url: str, workspace: Path, logger, progress_callback=None)
             logger(
                 f"youtube download selected={_selected_format_summary(info)} actual={width}x{height} strategy={name}"
             )
+            _emit_prepare_progress(
+                progress_callback,
+                {
+                    "stage": "validate",
+                    "progress_mode": "indeterminate",
+                    "message": "validating final source",
+                },
+            )
             if _is_low_quality_video(width=width, height=height):
                 logger(
                     f"youtube download rejected: {download_path.name} resolved to {width}x{height}; retrying next strategy"
@@ -213,12 +251,116 @@ def _download_youtube(url: str, workspace: Path, logger, progress_callback=None)
                 errors.append(f"{name}: low resolution {width}x{height}")
                 _clear_download_artifacts(download_dir)
                 continue
+            title = str(info.get("title") or info.get("fulltitle") or "").strip()
+            _write_download_metadata(download_dir, source_key=url, video_title=title)
             logger(f"youtube download saved: {download_path}")
             return download_path
         except Exception as exc:
             errors.append(f"{name}: {exc}")
             logger(f"youtube download strategy failed: {name}: {exc}")
     raise RuntimeError(f"failed to download youtube source from {url}: {' | '.join(errors)}")
+
+
+def _emit_prepare_progress(progress_callback, update: Dict[str, object]) -> None:
+    if not progress_callback:
+        return
+    progress_callback(dict(update or {}))
+
+
+def _build_youtube_progress_hook(*, progress_callback, logger):
+    def hook(status: Dict[str, object]) -> None:
+        state = str(status.get("status") or "").strip().lower()
+        if state == "downloading":
+            progress = _download_progress_fraction(status)
+            percent = int(round(progress * 100)) if progress is not None else None
+            message = f"downloading video {percent}%" if percent is not None else "downloading video"
+            update = {
+                "stage": "download",
+                "progress_mode": "determinate" if progress is not None else "indeterminate",
+                "message": message,
+            }
+            if progress is not None:
+                update["progress"] = progress
+            _emit_prepare_progress(progress_callback, update)
+            return
+
+        if state == "finished":
+            filename = str(status.get("filename") or "").strip()
+            if filename:
+                logger(f"yt-dlp: download finished: {filename}")
+            _emit_prepare_progress(
+                progress_callback,
+                {
+                    "stage": "postprocess",
+                    "progress_mode": "indeterminate",
+                    "message": "processing downloaded media",
+                },
+            )
+
+    return hook
+
+
+def _build_youtube_postprocessor_hook(*, progress_callback, logger):
+    def hook(status: Dict[str, object]) -> None:
+        state = str(status.get("status") or "").strip().lower()
+        postprocessor = str(status.get("postprocessor") or "").strip()
+        message = _postprocessor_message(postprocessor)
+        if state in {"started", "processing"}:
+            logger(f"yt-dlp: postprocess started: {postprocessor or 'unknown'}")
+            _emit_prepare_progress(
+                progress_callback,
+                {
+                    "stage": "postprocess",
+                    "progress_mode": "indeterminate",
+                    "message": message,
+                },
+            )
+            return
+        if state == "finished":
+            logger(f"yt-dlp: postprocess finished: {postprocessor or 'unknown'}")
+            _emit_prepare_progress(
+                progress_callback,
+                {
+                    "stage": "validate",
+                    "progress_mode": "indeterminate",
+                    "message": "validating final source",
+                },
+            )
+
+    return hook
+
+
+def _download_progress_fraction(status: Dict[str, object]) -> Optional[float]:
+    total = _int_from_status(status.get("total_bytes"))
+    if total <= 0:
+        total = _int_from_status(status.get("total_bytes_estimate"))
+    downloaded = _int_from_status(status.get("downloaded_bytes"))
+    if total > 0 and downloaded >= 0:
+        return max(0.0, min(1.0, downloaded / total))
+
+    percent_text = str(status.get("_percent_str") or "").strip().replace("%", "")
+    if not percent_text:
+        return None
+    try:
+        return max(0.0, min(1.0, float(percent_text) / 100.0))
+    except ValueError:
+        return None
+
+
+def _int_from_status(value: object) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _postprocessor_message(postprocessor: str) -> str:
+    label = str(postprocessor or "").lower()
+    if "merger" in label:
+        return "merge audio and video"
+    if "ffmpeg" in label:
+        return "processing downloaded media"
+    return "post-processing media"
 
 
 def _resolve_node_runtime_bin() -> str:

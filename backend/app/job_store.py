@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from threading import Lock
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 _ERROR_CODE_UNSET = object()
 
@@ -31,6 +31,8 @@ class Job:
     youtube_url: Optional[str]
     options: Dict
     artifact_dir: str
+    source_identity: Dict = field(default_factory=dict)
+    completed_at: Optional[float] = None
     status: JobStatus = JobStatus.QUEUED
     progress: float = 0.0
     current_step: str = "queued"
@@ -49,6 +51,8 @@ class Job:
             "youtube_url": self.youtube_url,
             "options": self.options,
             "artifact_dir": self.artifact_dir,
+            "source_identity": dict(self.source_identity),
+            "completed_at": self.completed_at,
             "status": self.status.value,
             "progress": self.progress,
             "current_step": self.current_step,
@@ -69,6 +73,12 @@ class Job:
             youtube_url=payload.get("youtube_url"),
             options=dict(payload.get("options") or {}),
             artifact_dir=str(payload.get("artifact_dir") or ""),
+            source_identity=dict(payload.get("source_identity") or {}),
+            completed_at=(
+                None
+                if payload.get("completed_at") in (None, "")
+                else float(payload.get("completed_at"))
+            ),
             status=JobStatus(str(payload.get("status") or JobStatus.QUEUED.value)),
             progress=float(payload.get("progress") or 0.0),
             current_step=str(payload.get("current_step") or "queued"),
@@ -90,6 +100,71 @@ class Job:
             "result": self.result,
             "error_code": self.error_code,
             "log_tail": self.log[-20:],
+        }
+
+
+@dataclass
+class SourcePrepareJob:
+    id: str
+    youtube_url: str
+    artifact_dir: str
+    status: JobStatus = JobStatus.QUEUED
+    stage: str = "queued"
+    message: str = ""
+    progress: float = 0.0
+    progress_mode: ProgressMode = ProgressMode.INDETERMINATE
+    result: Dict = field(default_factory=dict)
+    error_code: Optional[str] = None
+    log: List[str] = field(default_factory=list)
+    created_at: float = field(default_factory=time.time)
+    updated_at: float = field(default_factory=time.time)
+
+    def to_record(self) -> Dict:
+        return {
+            "id": self.id,
+            "youtube_url": self.youtube_url,
+            "artifact_dir": self.artifact_dir,
+            "status": self.status.value,
+            "stage": self.stage,
+            "message": self.message,
+            "progress": self.progress,
+            "progress_mode": self.progress_mode.value,
+            "result": self.result,
+            "error_code": self.error_code,
+            "log": list(self.log),
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_record(cls, payload: Dict) -> "SourcePrepareJob":
+        return cls(
+            id=str(payload.get("id") or ""),
+            youtube_url=str(payload.get("youtube_url") or ""),
+            artifact_dir=str(payload.get("artifact_dir") or ""),
+            status=JobStatus(str(payload.get("status") or JobStatus.QUEUED.value)),
+            stage=str(payload.get("stage") or "queued"),
+            message=str(payload.get("message") or ""),
+            progress=float(payload.get("progress") or 0.0),
+            progress_mode=ProgressMode(str(payload.get("progress_mode") or ProgressMode.INDETERMINATE.value)),
+            result=dict(payload.get("result") or {}),
+            error_code=str(payload.get("error_code") or "") or None,
+            log=[str(line) for line in payload.get("log", [])],
+            created_at=float(payload.get("created_at") or time.time()),
+            updated_at=float(payload.get("updated_at") or time.time()),
+        )
+
+    def to_public_dict(self) -> Dict:
+        return {
+            "job_id": self.id,
+            "status": self.status.value,
+            "stage": self.stage,
+            "message": self.message,
+            "progress": self.progress,
+            "progress_mode": self.progress_mode.value,
+            "result": self.result,
+            "error_code": self.error_code,
+            "log_tail": self.log[-40:],
         }
 
 
@@ -141,7 +216,7 @@ class JobStore:
         current_step: Optional[str] = None,
         message: Optional[str] = None,
         result: Optional[Dict] = None,
-        error_code: object = _ERROR_CODE_UNSET,
+        error_code: Optional[str] | object = _ERROR_CODE_UNSET,
     ) -> None:
         with self._lock:
             job = self._jobs.get(job_id)
@@ -158,6 +233,8 @@ class JobStore:
                 job.result = result
             if error_code is not _ERROR_CODE_UNSET:
                 job.error_code = error_code
+            if status == JobStatus.DONE and job.completed_at is None:
+                job.completed_at = time.time()
             job.updated_at = time.time()
             self._persist_job_locked(job)
 
@@ -223,73 +300,6 @@ class JobStore:
         )
 
 
-@dataclass
-class SourcePrepareJob:
-    id: str
-    youtube_url: str
-    artifact_dir: str
-    status: JobStatus = JobStatus.QUEUED
-    stage: str = "queued"
-    progress: float = 0.0
-    progress_mode: ProgressMode = ProgressMode.INDETERMINATE
-    message: str = ""
-    result: Dict[str, Any] = field(default_factory=dict)
-    error_code: Optional[str] = None
-    log: List[str] = field(default_factory=list)
-    created_at: float = field(default_factory=time.time)
-    updated_at: float = field(default_factory=time.time)
-
-    def to_record(self) -> Dict[str, Any]:
-        return {
-            "id": self.id,
-            "youtube_url": self.youtube_url,
-            "artifact_dir": self.artifact_dir,
-            "status": self.status.value,
-            "stage": self.stage,
-            "progress": self.progress,
-            "progress_mode": self.progress_mode.value,
-            "message": self.message,
-            "result": self.result,
-            "error_code": self.error_code,
-            "log": list(self.log),
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-        }
-
-    @classmethod
-    def from_record(cls, payload: Dict[str, Any]) -> "SourcePrepareJob":
-        raw_progress_mode = str(payload.get("progress_mode") or ProgressMode.INDETERMINATE.value).strip().lower()
-        progress_mode = ProgressMode.DETERMINATE if raw_progress_mode == ProgressMode.DETERMINATE.value else ProgressMode.INDETERMINATE
-        return cls(
-            id=str(payload.get("id") or ""),
-            youtube_url=str(payload.get("youtube_url") or ""),
-            artifact_dir=str(payload.get("artifact_dir") or ""),
-            status=JobStatus(str(payload.get("status") or JobStatus.QUEUED.value)),
-            stage=str(payload.get("stage") or "queued"),
-            progress=float(payload.get("progress") or 0.0),
-            progress_mode=progress_mode,
-            message=str(payload.get("message") or ""),
-            result=dict(payload.get("result") or {}),
-            error_code=str(payload.get("error_code") or "") or None,
-            log=[str(line) for line in payload.get("log", [])],
-            created_at=float(payload.get("created_at") or time.time()),
-            updated_at=float(payload.get("updated_at") or time.time()),
-        )
-
-    def to_public_dict(self) -> Dict[str, Any]:
-        return {
-            "job_id": self.id,
-            "status": self.status.value,
-            "stage": self.stage,
-            "message": self.message,
-            "progress": self.progress,
-            "progress_mode": self.progress_mode.value,
-            "error_code": self.error_code,
-            "log_tail": self.log[-20:],
-            "result": self.result,
-        }
-
-
 class SourcePrepareStore:
     def __init__(self, root: Path):
         self._jobs: Dict[str, SourcePrepareJob] = {}
@@ -297,10 +307,6 @@ class SourcePrepareStore:
         self._root = root
         self._root.mkdir(parents=True, exist_ok=True)
         self._load_existing_jobs()
-
-    @property
-    def root(self) -> Path:
-        return self._root
 
     def create(self, job: SourcePrepareJob) -> None:
         with self._lock:
@@ -329,8 +335,8 @@ class SourcePrepareStore:
         progress: Optional[float] = None,
         progress_mode: Optional[ProgressMode] = None,
         message: Optional[str] = None,
-        result: Optional[Dict[str, Any]] = None,
-        error_code: object = _ERROR_CODE_UNSET,
+        result: Optional[Dict] = None,
+        error_code: Optional[str] | object = _ERROR_CODE_UNSET,
     ) -> None:
         with self._lock:
             job = self._jobs.get(job_id)
@@ -352,6 +358,10 @@ class SourcePrepareStore:
             job.updated_at = time.time()
             self._persist_job_locked(job)
 
+    @property
+    def root(self) -> Path:
+        return self._root
+
     def _job_metadata_path(self, artifact_dir: str) -> Path:
         return Path(artifact_dir) / "job.json"
 
@@ -370,12 +380,12 @@ class SourcePrepareStore:
                 payload = json.loads(metadata_path.read_text(encoding="utf-8"))
                 job = SourcePrepareJob.from_record(payload)
             except (OSError, ValueError, TypeError, json.JSONDecodeError):
-                continue
+                job = self._recover_corrupt_job(metadata_path)
 
             if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
                 job.status = JobStatus.ERROR
                 job.stage = "failed"
-                job.message = "source prepare recovered after restart; rerun the prepare step"
+                job.message = "source prepare recovered after restart; retry the YouTube source"
                 job.error_code = "RECOVERED_AFTER_RESTART"
                 job.log.append("source prepare recovered after restart")
                 job.updated_at = time.time()
@@ -385,3 +395,22 @@ class SourcePrepareStore:
                 self._persist_job_locked(job)
             except OSError:
                 continue
+
+    def _recover_corrupt_job(self, metadata_path: Path) -> SourcePrepareJob:
+        backup_path = metadata_path.with_name("job.corrupt.json")
+        if backup_path.exists():
+            backup_path.unlink()
+        metadata_path.replace(backup_path)
+        now = time.time()
+        return SourcePrepareJob(
+            id=metadata_path.parent.name,
+            youtube_url="",
+            artifact_dir=str(metadata_path.parent),
+            status=JobStatus.ERROR,
+            stage="failed",
+            message="source prepare metadata was corrupt after restart; retry the YouTube source",
+            error_code="RECOVERED_CORRUPT_METADATA",
+            log=["source prepare metadata was corrupt after restart"],
+            created_at=now,
+            updated_at=now,
+        )

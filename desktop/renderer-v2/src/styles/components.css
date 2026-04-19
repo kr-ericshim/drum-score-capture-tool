@@ -161,12 +161,30 @@
   font-weight: 600;
 }
 
+.topbar-archive {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid rgba(236, 182, 19, 0.18);
+  border-radius: var(--radius-sm);
+  background: rgba(236, 182, 19, 0.08);
+  color: var(--accent);
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.topbar-archive:hover {
+  border-color: rgba(236, 182, 19, 0.32);
+  background: rgba(236, 182, 19, 0.14);
+}
+
 .topbar-locale.is-active {
   border-color: rgba(236, 182, 19, 0.28);
   background: rgba(236, 182, 19, 0.12);
   color: var(--accent);
 }
 
+.topbar-archive:focus-visible,
 .topbar-locale:focus-visible,
 .process-step:focus-visible,
 .rail-action:focus-visible,
@@ -661,6 +679,185 @@
   border: 1px solid rgba(210, 141, 135, 0.18);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
+}
+
+.archive-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  z-index: 20;
+}
+
+.archive-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(14, 11, 8, 0.72);
+}
+
+.archive-modal {
+  position: relative;
+  z-index: 1;
+  width: min(720px, 100%);
+  max-height: min(720px, calc(100vh - 96px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid rgba(236, 182, 19, 0.16);
+  border-radius: calc(var(--radius-sm) + 6px);
+  background:
+    linear-gradient(180deg, rgba(41, 33, 23, 0.98), rgba(24, 19, 14, 0.98));
+  box-shadow:
+    0 24px 60px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 247, 230, 0.04);
+}
+
+.archive-modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 16px;
+  padding: 20px 22px 18px;
+  border-bottom: 1px solid rgba(236, 182, 19, 0.08);
+}
+
+.archive-modal-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.archive-modal-kicker,
+.archive-detail-kicker {
+  margin: 0;
+  color: var(--text-3);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.archive-modal-copy h2,
+.archive-detail-card h3 {
+  margin: 0;
+  font-size: 24px;
+  letter-spacing: -0.03em;
+}
+
+.archive-modal-copy p,
+.archive-detail-meta {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.archive-close,
+.archive-back {
+  border: 1px solid rgba(236, 182, 19, 0.14);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 247, 230, 0.04);
+  color: var(--text-1);
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.archive-close {
+  min-height: 40px;
+  padding: 0 14px;
+}
+
+.archive-back {
+  min-height: 40px;
+  padding: 0 12px;
+  align-self: start;
+}
+
+.archive-modal-body {
+  display: grid;
+  gap: 16px;
+  padding: 20px 22px 22px;
+  overflow-y: auto;
+}
+
+.archive-list,
+.archive-detail {
+  display: grid;
+  gap: 12px;
+}
+
+.archive-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px;
+  border: 1px solid rgba(236, 182, 19, 0.1);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 247, 230, 0.02);
+  color: var(--text-1);
+  text-align: left;
+  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+}
+
+.archive-row:hover {
+  border-color: rgba(236, 182, 19, 0.24);
+  background: rgba(236, 182, 19, 0.08);
+  transform: translateY(-1px);
+}
+
+.archive-row-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.archive-row-copy strong {
+  font-size: 15px;
+}
+
+.archive-row-copy span {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.archive-empty {
+  margin: 0;
+  padding: 18px;
+  border: 1px dashed rgba(236, 182, 19, 0.16);
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  background: rgba(255, 247, 230, 0.02);
+}
+
+.archive-feedback {
+  display: grid;
+  gap: 12px;
+}
+
+.archive-detail-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid rgba(236, 182, 19, 0.1);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 247, 230, 0.02);
+}
+
+.archive-detail-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.archive-close:focus-visible,
+.archive-back:focus-visible,
+.archive-modal:focus-visible,
+.archive-row:focus-visible,
+.archive-backdrop:focus-visible {
+  outline: 2px solid rgba(236, 182, 19, 0.92);
+  outline-offset: 2px;
 }
 
 .source-ingest {

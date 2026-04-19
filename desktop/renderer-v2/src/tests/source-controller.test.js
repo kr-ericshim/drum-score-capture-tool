@@ -155,10 +155,34 @@ test("controller ignores stale completion after source intent changes", async ()
   assert.equal(store.getState().source.preparedFromYouTube, false);
 });
 
+test("controller keeps youtube archive display name from prepare snapshot instead of cached basename", async () => {
+  const { store, controller } = createController();
+
+  await controller.completeYoutubePrepare({
+    jobId: "source-1",
+    status: "done",
+    result: {
+      videoPath: "/tmp/cache/abc123.mp4",
+      videoTitle: "Take Five Drum Lesson",
+      sourceKey: "https://www.youtube.com/watch?v=abc123",
+      fromCache: true,
+    },
+  }, 0);
+
+  const state = store.getState();
+  assert.equal(state.source.archiveSourceKind, "youtube");
+  assert.equal(state.source.archiveSourceKey, "https://www.youtube.com/watch?v=abc123");
+  assert.equal(state.source.archiveDisplayName, "Take Five Drum Lesson");
+});
+
 test("editing the youtube url clears stale prepare errors and cached youtube state", () => {
   const { store, controller } = createController();
 
   store.setState((next) => {
+    next.source.displayName = "Take Five Drum Lesson";
+    next.source.archiveSourceKind = "youtube";
+    next.source.archiveSourceKey = "https://www.youtube.com/watch?v=abc123";
+    next.source.archiveDisplayName = "Take Five Drum Lesson";
     next.source.prepareStatus = "error";
     next.source.prepareJobId = "source-1";
     next.source.prepareStage = "failed";
@@ -178,6 +202,10 @@ test("editing the youtube url clears stale prepare errors and cached youtube sta
 
   const state = store.getState();
   assert.equal(state.source.youtubeUrl, "https://youtu.be/new");
+  assert.equal(state.source.displayName, "");
+  assert.equal(state.source.archiveSourceKind, "");
+  assert.equal(state.source.archiveSourceKey, "");
+  assert.equal(state.source.archiveDisplayName, "");
   assert.equal(state.source.prepareStatus, "idle");
   assert.equal(state.source.prepareJobId, "");
   assert.equal(state.source.prepareStage, "");

@@ -18,6 +18,7 @@ export function createSourceController({
     next.source.archiveSourceKind = "";
     next.source.archiveSourceKey = "";
     next.source.archiveDisplayName = "";
+    next.source.displayName = "";
   }
 
   function bumpSourceToken() {

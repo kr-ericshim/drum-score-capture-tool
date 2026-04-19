@@ -5,6 +5,7 @@ const apiToken = ipcRenderer.sendSync("get-session-token") || "";
 
 contextBridge.exposeInMainWorld("drumSheetAPI", {
   selectVideoFile: () => ipcRenderer.invoke("select-video-file"),
+  getPathForFile: (file) => ipcRenderer.invoke("get-path-for-file", file?.path || ""),
   openPath: (targetPath) => ipcRenderer.invoke("open-path", targetPath),
   copyText: (text) => ipcRenderer.invoke("copy-text", text),
   setAlwaysOnTop: (enabled) => ipcRenderer.invoke("set-always-on-top", enabled),

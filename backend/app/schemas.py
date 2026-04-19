@@ -136,10 +136,17 @@ class JobOptions(BaseModel):
     export: ExportOptions = Field(default_factory=ExportOptions)
 
 
+class SourceIdentity(BaseModel):
+    kind: Literal["file", "youtube"]
+    key: str
+    display_name: str
+
+
 class JobCreate(BaseModel):
     source_type: Literal["file", "youtube"]
     file_path: Optional[str] = None
     youtube_url: Optional[str] = None
+    source_identity: Optional[SourceIdentity] = None
     options: JobOptions = Field(default_factory=JobOptions)
 
 
@@ -296,6 +303,19 @@ class LocalMediaRegistryItem(BaseModel):
 
 class LocalMediaRegistryResponse(BaseModel):
     items: List[LocalMediaRegistryItem] = Field(default_factory=list)
+
+
+class ArchiveLibraryItem(BaseModel):
+    source_key: str
+    source_kind: Literal["file", "youtube"]
+    display_name: str
+    completed_at: float = 0.0
+    pdf_path: str
+    output_dir: Optional[str] = None
+
+
+class ArchiveLibraryResponse(BaseModel):
+    items: List[ArchiveLibraryItem] = Field(default_factory=list)
 
 
 class RuntimeStatusResponse(BaseModel):

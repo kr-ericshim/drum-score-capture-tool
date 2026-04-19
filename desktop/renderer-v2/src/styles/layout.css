@@ -1,7 +1,18 @@
 .app-shell {
+  position: relative;
   min-height: 100vh;
   display: grid;
   grid-template-rows: 48px minmax(0, 1fr) 30px;
+}
+
+.shell-modal-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+}
+
+.shell-modal-layer:empty {
+  display: none;
 }
 
 .workspace-shell {
@@ -28,6 +39,7 @@
 .stage-pane {
   display: flex;
   flex-direction: column;
+  position: relative;
   min-width: 0;
   overflow: hidden;
 }
@@ -229,6 +241,10 @@
   .export-metadata-row-split {
     grid-template-columns: 1fr;
   }
+
+  .archive-overlay {
+    padding: 18px;
+  }
 }
 
 @media (max-width: 960px) {
@@ -287,6 +303,19 @@
   .export-metadata-discard-actions {
     grid-template-columns: 1fr;
   }
+
+  .archive-modal {
+    width: 100%;
+    max-height: calc(100vh - 72px);
+  }
+
+  .archive-modal-head {
+    padding: 18px 18px 16px;
+  }
+
+  .archive-modal-body {
+    padding: 18px;
+  }
 }
 
 @media (max-width: 720px) {
@@ -324,5 +353,21 @@
 
   .export-metadata-overlay {
     padding: 14px;
+  }
+
+  .archive-overlay {
+    padding: 12px;
+  }
+
+  .archive-modal-head {
+    flex-direction: column;
+  }
+
+  .archive-close {
+    width: 100%;
+  }
+
+  .archive-detail-actions .button {
+    width: 100%;
   }
 }
