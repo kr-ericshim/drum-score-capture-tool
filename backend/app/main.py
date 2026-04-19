@@ -7,11 +7,8 @@ import platform
 import shutil
 import subprocess
 import tempfile
-import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
-from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit
@@ -21,154 +18,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
-try:
-    from app.job_store import Job, JobStatus, JobStore, ProgressMode, SourcePrepareJob, SourcePrepareStore
-except ImportError:
-    from app.job_store import Job, JobStatus, JobStore
-
-    class ProgressMode(str, Enum):
-        DETERMINATE = "determinate"
-        INDETERMINATE = "indeterminate"
-
-    @dataclass
-    class SourcePrepareJob:
-        id: str
-        youtube_url: str
-        artifact_dir: str
-        status: JobStatus = JobStatus.QUEUED
-        stage: str = "queued"
-        progress: float = 0.0
-        progress_mode: ProgressMode = ProgressMode.INDETERMINATE
-        message: str = ""
-        result: Dict[str, Any] = field(default_factory=dict)
-        error_code: Optional[str] = None
-        log: List[str] = field(default_factory=list)
-        created_at: float = field(default_factory=time.time)
-        updated_at: float = field(default_factory=time.time)
-
-        def to_record(self) -> Dict[str, Any]:
-            return {
-                "id": self.id,
-                "youtube_url": self.youtube_url,
-                "artifact_dir": self.artifact_dir,
-                "status": self.status.value,
-                "stage": self.stage,
-                "progress": self.progress,
-                "progress_mode": self.progress_mode.value,
-                "message": self.message,
-                "result": self.result,
-                "error_code": self.error_code,
-                "log": list(self.log),
-                "created_at": self.created_at,
-                "updated_at": self.updated_at,
-            }
-
-        @classmethod
-        def from_record(cls, payload: Dict[str, Any]) -> "SourcePrepareJob":
-            raw_progress_mode = str(payload.get("progress_mode") or ProgressMode.INDETERMINATE.value).strip().lower()
-            progress_mode = ProgressMode.DETERMINATE if raw_progress_mode == ProgressMode.DETERMINATE.value else ProgressMode.INDETERMINATE
-            return cls(
-                id=str(payload.get("id") or ""),
-                youtube_url=str(payload.get("youtube_url") or ""),
-                artifact_dir=str(payload.get("artifact_dir") or ""),
-                status=JobStatus(str(payload.get("status") or JobStatus.QUEUED.value)),
-                stage=str(payload.get("stage") or "queued"),
-                progress=float(payload.get("progress") or 0.0),
-                progress_mode=progress_mode,
-                message=str(payload.get("message") or ""),
-                result=dict(payload.get("result") or {}),
-                error_code=str(payload.get("error_code") or "") or None,
-                log=[str(line) for line in payload.get("log", [])],
-                created_at=float(payload.get("created_at") or time.time()),
-                updated_at=float(payload.get("updated_at") or time.time()),
-            )
-
-        def to_public_dict(self) -> Dict[str, Any]:
-            return {
-                "job_id": self.id,
-                "status": self.status.value,
-                "stage": self.stage,
-                "message": self.message,
-                "progress": self.progress,
-                "progress_mode": self.progress_mode.value,
-                "error_code": self.error_code,
-                "log_tail": self.log[-20:],
-                "result": self.result,
-            }
-
-    class SourcePrepareStore:
-        def __init__(self, root: Path):
-            self._root = root
-            self._root.mkdir(parents=True, exist_ok=True)
-            self._jobs: Dict[str, SourcePrepareJob] = {}
-            self._load_existing_jobs()
-
-        @property
-        def root(self) -> Path:
-            return self._root
-
-        def create(self, job: SourcePrepareJob) -> None:
-            self._jobs[job.id] = job
-            self._persist_job(job)
-
-        def get(self, job_id: str) -> Optional[SourcePrepareJob]:
-            return self._jobs.get(job_id)
-
-        def log(self, job_id: str, message: str) -> None:
-            job = self._jobs.get(job_id)
-            if not job:
-                return
-            job.log.append(message)
-            job.updated_at = time.time()
-            self._persist_job(job)
-
-        def set_state(
-            self,
-            job_id: str,
-            status: JobStatus,
-            *,
-            stage: Optional[str] = None,
-            progress: Optional[float] = None,
-            progress_mode: Optional[ProgressMode] = None,
-            message: Optional[str] = None,
-            result: Optional[Dict[str, Any]] = None,
-            error_code: Optional[str] = None,
-        ) -> None:
-            job = self._jobs.get(job_id)
-            if not job:
-                return
-            job.status = status
-            if stage is not None:
-                job.stage = stage
-            if progress is not None:
-                job.progress = max(0.0, min(1.0, float(progress)))
-            if progress_mode is not None:
-                job.progress_mode = progress_mode
-            if message is not None:
-                job.message = message
-            if result is not None:
-                job.result = result
-            if error_code is not None:
-                job.error_code = error_code
-            job.updated_at = time.time()
-            self._persist_job(job)
-
-        def _persist_job(self, job: SourcePrepareJob) -> None:
-            artifact_dir = Path(job.artifact_dir)
-            artifact_dir.mkdir(parents=True, exist_ok=True)
-            metadata_path = artifact_dir / "job.json"
-            payload = json.dumps(job.to_record(), ensure_ascii=True, indent=2)
-            tmp_path = metadata_path.with_name(f"{metadata_path.name}.tmp")
-            tmp_path.write_text(payload, encoding="utf-8")
-            tmp_path.replace(metadata_path)
-
-        def _load_existing_jobs(self) -> None:
-            for metadata_path in sorted(self._root.glob("*/job.json")):
-                try:
-                    job = SourcePrepareJob.from_record(json.loads(metadata_path.read_text(encoding="utf-8")))
-                except (OSError, ValueError, TypeError, json.JSONDecodeError):
-                    continue
-                self._jobs[job.id] = job
+from app.job_store import Job, JobStatus, JobStore, ProgressMode, SourcePrepareJob, SourcePrepareStore
 from app.schemas import (
     CaptureCropRequest,
     CaptureCropResponse,

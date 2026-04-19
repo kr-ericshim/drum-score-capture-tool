@@ -1010,6 +1010,9 @@ export function createApp(root, dependencies = {}) {
   }
 
   async function startExportRun(state = store.getState()) {
+    if (state.exportConfig.runStatus === "running") {
+      return;
+    }
     if (!canRunExport(state)) {
       if (state.source.filePath && isRectValid(state.roi.appliedRect) && state.exportConfig.formats.length === 0) {
         setState((next) => {
@@ -1019,6 +1022,11 @@ export function createApp(root, dependencies = {}) {
       }
       return;
     }
+    const exportRun = runtimeGuards.beginExportRun();
+    activeJobHandle = null;
+    setState((next) => {
+      return resetExportOutputs(next);
+    });
     try {
       const roiHealth = await runtimeApi.requestPreviewRoiHealth({
         sourceType: "file",
@@ -1026,19 +1034,20 @@ export function createApp(root, dependencies = {}) {
         startSec: state.roi.frameTime || 0,
         roi: state.roi.appliedRect,
       });
+      if (!runtimeGuards.isCurrentExport(exportRun)) {
+        return;
+      }
       if (roiHealth?.riskLevel === "critical") {
         setState((next) => {
           next.roi.diagnostics = Array.isArray(roiHealth.diagnostics) ? roiHealth.diagnostics : [];
+          next.exportConfig.runStatus = "idle";
+          next.exportConfig.currentStep = "";
+          next.exportConfig.message = "";
           next.exportConfig.error = String(roiHealth.summary || "ROI is unsafe for capture");
           return next;
         });
         return;
       }
-      const exportRun = runtimeGuards.beginExportRun();
-      activeJobHandle = null;
-      setState((next) => {
-        return resetExportOutputs(next);
-      });
       const jobId = await runtimeApi.createJob(buildJobPayload(state));
       const jobHandle = runtimeGuards.attachJob(exportRun, jobId);
       if (!jobHandle) {
