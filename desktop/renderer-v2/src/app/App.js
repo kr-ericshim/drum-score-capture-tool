@@ -51,6 +51,68 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+const SOURCE_DROP_ZONE_SELECTOR = '[data-drop-zone="source-ingest"]';
+const SUPPORTED_VIDEO_EXTENSIONS = new Set(["mp4", "mkv", "mov", "avi", "webm"]);
+
+function fileExtension(filePath = "") {
+  const normalized = String(filePath || "").replace(/\\/g, "/").trim();
+  const fileName = normalized.split("/").pop() || "";
+  const dotIndex = fileName.lastIndexOf(".");
+  if (dotIndex < 0) {
+    return "";
+  }
+  return fileName.slice(dotIndex + 1).toLowerCase();
+}
+
+function isSupportedVideoPath(filePath = "") {
+  const normalized = String(filePath || "").trim();
+  if (!normalized) {
+    return false;
+  }
+  return SUPPORTED_VIDEO_EXTENSIONS.has(fileExtension(normalized));
+}
+
+function dataTransferHasFiles(dataTransfer) {
+  if (!dataTransfer) {
+    return false;
+  }
+  const files = Array.from(dataTransfer.files || []);
+  if (files.length > 0) {
+    return true;
+  }
+  const types = Array.from(dataTransfer.types || []);
+  return types.includes("Files");
+}
+
+function getTransferFiles(dataTransfer) {
+  if (!dataTransfer) {
+    return [];
+  }
+  const files = Array.from(dataTransfer.files || []);
+  if (files.length > 0) {
+    return files;
+  }
+  const items = Array.from(dataTransfer.items || []);
+  return items
+    .map((item) => item?.getAsFile?.())
+    .filter(Boolean);
+}
+
+async function getDroppedVideoPath(dataTransfer, runtimeBridge) {
+  const files = getTransferFiles(dataTransfer);
+  for (const file of files) {
+    const filePath = String(runtimeBridge.getPathForFile(file) || file?.path || "").trim();
+    if (isSupportedVideoPath(filePath)) {
+      return filePath;
+    }
+  }
+  return "";
+}
+
+function findSourceDropZone(target) {
+  return target?.closest?.(SOURCE_DROP_ZONE_SELECTOR) || null;
+}
+
 function rectToBounds(points) {
   if (!isRectValid(points)) {
     return null;
@@ -152,16 +214,27 @@ export function createApp(root, dependencies = {}) {
   let lastStatusMarkup = "";
   let lastBackendReady = false;
   let registryRefreshToken = 0;
+  let activeSourceDropZone = null;
   const runtimeGuards = createRuntimeGuards();
 
   function setState(updater) {
     store.setState(updater);
   }
 
+  function getSelectedPreviewCandidate(state = store.getState()) {
+    const selectedId = String(state.roi.selectedPreviewCandidateId || "");
+    if (!selectedId) {
+      return null;
+    }
+    return (state.roi.previewCandidates || []).find((candidate) => candidate.id === selectedId) || null;
+  }
+
   function resetDownstream(next) {
     next.roi = {
       frameTime: 0,
       frameTimeLabel: "00:00.0",
+      previewCandidates: [],
+      selectedPreviewCandidateId: "",
       previewImage: "",
       previewSourcePath: "",
       diagnostics: [],
@@ -366,6 +439,18 @@ export function createApp(root, dependencies = {}) {
       return next;
     });
     await sourceController.selectLocalFile(targetPath);
+    await loadSelectedPreviewCandidate();
+  }
+
+  async function loadSelectedPreviewCandidate() {
+    const state = store.getState();
+    if (state.ui.activeStep !== "roi" || !state.source.filePath || state.roi.previewImage) {
+      return;
+    }
+    if (!getSelectedPreviewCandidate(state)) {
+      return;
+    }
+    await loadPreview();
   }
 
   function applyJobSnapshot(job) {
@@ -416,6 +501,19 @@ export function createApp(root, dependencies = {}) {
     });
   }
 
+  function setActiveSourceDropZone(nextZone) {
+    if (activeSourceDropZone === nextZone) {
+      return;
+    }
+    activeSourceDropZone?.classList?.remove("is-drop-active");
+    activeSourceDropZone = nextZone || null;
+    activeSourceDropZone?.classList?.add("is-drop-active");
+  }
+
+  function clearActiveSourceDropZone() {
+    setActiveSourceDropZone(null);
+  }
+
   async function pollJob(jobId, jobHandle) {
     stopPolling();
     try {
@@ -459,6 +557,7 @@ export function createApp(root, dependencies = {}) {
         activeSourcePrepareHandle = null;
         runtimeGuards.bumpSourceSession();
         await sourceController.completeYoutubePrepare(snapshot, requestToken);
+        await loadSelectedPreviewCandidate();
         void refreshLocalMediaRegistry();
         return;
       }
@@ -545,6 +644,72 @@ export function createApp(root, dependencies = {}) {
     }
   }
 
+  const handleDragEnter = (event) => {
+    const dropZone = findSourceDropZone(event.target);
+    if (!dropZone || store.getState().ui.activeStep !== "source" || !dataTransferHasFiles(event.dataTransfer)) {
+      return;
+    }
+    setActiveSourceDropZone(dropZone);
+  };
+
+  const handleDragOver = (event) => {
+    const dropZone = findSourceDropZone(event.target);
+    if (!dropZone || store.getState().ui.activeStep !== "source" || !dataTransferHasFiles(event.dataTransfer)) {
+      clearActiveSourceDropZone();
+      return;
+    }
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "copy";
+    }
+    setActiveSourceDropZone(dropZone);
+  };
+
+  const handleDragLeave = (event) => {
+    const dropZone = findSourceDropZone(event.target);
+    if (!dropZone) {
+      return;
+    }
+    const relatedZone = findSourceDropZone(event.relatedTarget);
+    if (relatedZone === dropZone) {
+      return;
+    }
+    clearActiveSourceDropZone();
+  };
+
+  const handleDrop = async (event) => {
+    const dropZone = findSourceDropZone(event.target);
+    clearActiveSourceDropZone();
+    if (!dropZone || store.getState().ui.activeStep !== "source") {
+      return;
+    }
+    if (!dataTransferHasFiles(event.dataTransfer)) {
+      return;
+    }
+
+    event.preventDefault();
+    const droppedPath = await getDroppedVideoPath(event.dataTransfer, runtimeBridge);
+    if (!droppedPath) {
+      setState((next) => {
+        next.source.status = "error";
+        next.source.error = t("source.dropInvalid", { locale: next.ui.locale || "en" });
+        return next;
+      });
+      return;
+    }
+
+    activeSourceSelection += 1;
+    try {
+      await loadSourceFromPath(droppedPath);
+    } catch (error) {
+      setState((next) => {
+        next.source.status = "error";
+        next.source.error = String(error?.message || error);
+        return next;
+      });
+    }
+  };
+
   async function loadPreview() {
     const state = store.getState();
     if (!state.source.filePath) {
@@ -584,6 +749,31 @@ export function createApp(root, dependencies = {}) {
         return next;
       });
     }
+  }
+
+  async function selectPreviewCandidate(candidateId) {
+    const state = store.getState();
+    const candidate = (state.roi.previewCandidates || []).find((item) => item.id === candidateId);
+    if (!candidate) {
+      return;
+    }
+    if (state.roi.selectedPreviewCandidateId === candidate.id && state.roi.previewImage) {
+      return;
+    }
+    runtimeGuards.invalidatePreview();
+    runtimeGuards.invalidateExport();
+    stopPolling();
+    activeJobHandle = null;
+    setState((next) => {
+      invalidatePreviewFlow(next, {
+        frameTime: candidate.sec,
+        frameTimeLabel: candidate.label,
+        preserveCandidates: true,
+        selectedPreviewCandidateId: candidate.id,
+      });
+      return next;
+    });
+    await loadPreview();
   }
 
   function applyRoi() {
@@ -940,6 +1130,10 @@ export function createApp(root, dependencies = {}) {
       await loadPreview();
       return;
     }
+    if (action === "select-preview-candidate") {
+      await selectPreviewCandidate(target.dataset.candidateId);
+      return;
+    }
     if (action === "apply-roi") {
       applyRoi();
       return;
@@ -1020,7 +1214,9 @@ export function createApp(root, dependencies = {}) {
         invalidatePreviewFlow(next, {
           frameTime: value,
           frameTimeLabel: formatSecondsLabel(value),
+          preserveCandidates: true,
         });
+        next.roi.selectedPreviewCandidateId = "";
         return next;
       });
       return;
@@ -1088,6 +1284,10 @@ export function createApp(root, dependencies = {}) {
 
   root.addEventListener("click", handleClick);
   root.addEventListener("input", handleInput);
+  root.addEventListener("dragenter", handleDragEnter);
+  root.addEventListener("dragover", handleDragOver);
+  root.addEventListener("dragleave", handleDragLeave);
+  root.addEventListener("drop", handleDrop);
 
   const unsubscribeStore = store.subscribe(render);
   const unsubscribeBackend = runtimeBridge.onBackendState((payload) => {
@@ -1125,6 +1325,10 @@ export function createApp(root, dependencies = {}) {
       if (typeof root.removeEventListener === "function") {
         root.removeEventListener("click", handleClick);
         root.removeEventListener("input", handleInput);
+        root.removeEventListener("dragenter", handleDragEnter);
+        root.removeEventListener("dragover", handleDragOver);
+        root.removeEventListener("dragleave", handleDragLeave);
+        root.removeEventListener("drop", handleDrop);
       }
     },
   };

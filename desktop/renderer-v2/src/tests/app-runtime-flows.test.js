@@ -14,11 +14,70 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-function createRoot() {
-  const listeners = {
-    click: [],
-    input: [],
+function createListenerStore() {
+  const listeners = Object.create(null);
+  return {
+    add(type, handler) {
+      (listeners[type] ||= []).push(handler);
+    },
+    remove(type, handler) {
+      const bucket = listeners[type];
+      if (!bucket) {
+        return;
+      }
+      const index = bucket.indexOf(handler);
+      if (index >= 0) {
+        bucket.splice(index, 1);
+      }
+    },
+    async dispatch(type, event) {
+      for (const handler of listeners[type] || []) {
+        await handler(event);
+      }
+    },
+    syncDispatch(type, event) {
+      for (const handler of listeners[type] || []) {
+        handler(event);
+      }
+    },
   };
+}
+
+function createDropZoneTarget() {
+  const classes = new Set();
+  return {
+    dataset: { dropZone: "source-ingest" },
+    classList: {
+      add(token) {
+        classes.add(token);
+      },
+      remove(token) {
+        classes.delete(token);
+      },
+      contains(token) {
+        return classes.has(token);
+      },
+    },
+  };
+}
+
+function createEventTarget({ action = "", dataset = {}, dropZone = null } = {}) {
+  return {
+    closest(selector) {
+      if (selector === "[data-action]") {
+        return action ? { dataset: { action, ...dataset } } : null;
+      }
+      if (selector === '[data-drop-zone="source-ingest"]') {
+        return dropZone;
+      }
+      return null;
+    },
+  };
+}
+
+function createRoot() {
+  const listeners = createListenerStore();
+  const sourceDropZone = createDropZoneTarget();
   const stageNodes = {
     "#roiImage": { complete: true, naturalWidth: 1920, naturalHeight: 1080 },
     "#roiCanvas": {
@@ -51,44 +110,40 @@ function createRoot() {
       return nodes[selector] || null;
     },
     addEventListener(type, handler) {
-      listeners[type]?.push(handler);
+      listeners.add(type, handler);
     },
     removeEventListener(type, handler) {
-      const bucket = listeners[type];
-      if (!bucket) {
-        return;
-      }
-      const index = bucket.indexOf(handler);
-      if (index >= 0) {
-        bucket.splice(index, 1);
-      }
+      listeners.remove(type, handler);
     },
     async dispatchAction(action, dataset = {}) {
-      const target = {
-        closest(selector) {
-          if (selector !== "[data-action]") {
-            return null;
-          }
-          return { dataset: { action, ...dataset } };
-        },
-      };
-      for (const handler of listeners.click) {
-        await handler({ target });
-      }
+      const target = createEventTarget({ action, dataset });
+      await listeners.dispatch("click", { target });
     },
     dispatchInput(target) {
-      for (const handler of listeners.input) {
-        handler({ target });
-      }
+      listeners.syncDispatch("input", { target });
+    },
+    async dispatchDrag(type, { files = [], insideDropZone = true, relatedInsideDropZone = false } = {}) {
+      const event = {
+        target: createEventTarget({ dropZone: insideDropZone ? sourceDropZone : null }),
+        relatedTarget: relatedInsideDropZone ? createEventTarget({ dropZone: sourceDropZone }) : null,
+        dataTransfer: {
+          files,
+          types: files.length ? ["Files"] : [],
+          dropEffect: "none",
+        },
+        defaultPrevented: false,
+        preventDefault() {
+          this.defaultPrevented = true;
+        },
+      };
+      await listeners.dispatch(type, event);
+      return event;
     },
   };
 }
 
 function createDynamicStageRoot() {
-  const listeners = {
-    click: [],
-    input: [],
-  };
+  const listeners = createListenerStore();
   let stageVersion = 0;
   const stageNodesByVersion = new Map();
 
@@ -149,35 +204,17 @@ function createDynamicStageRoot() {
       return nodes[selector] || null;
     },
     addEventListener(type, handler) {
-      listeners[type]?.push(handler);
+      listeners.add(type, handler);
     },
     removeEventListener(type, handler) {
-      const bucket = listeners[type];
-      if (!bucket) {
-        return;
-      }
-      const index = bucket.indexOf(handler);
-      if (index >= 0) {
-        bucket.splice(index, 1);
-      }
+      listeners.remove(type, handler);
     },
     async dispatchAction(action, dataset = {}) {
-      const target = {
-        closest(selector) {
-          if (selector !== "[data-action]") {
-            return null;
-          }
-          return { dataset: { action, ...dataset } };
-        },
-      };
-      for (const handler of listeners.click) {
-        await handler({ target });
-      }
+      const target = createEventTarget({ action, dataset });
+      await listeners.dispatch("click", { target });
     },
     dispatchInput(target) {
-      for (const handler of listeners.input) {
-        handler({ target });
-      }
+      listeners.syncDispatch("input", { target });
     },
   };
 }
@@ -185,6 +222,7 @@ function createDynamicStageRoot() {
 function installBrowserStubs(api = {}) {
   const drumSheetAPI = {
     selectVideoFile: async () => "",
+    getPathForFile: (file) => String(file?.path || ""),
     openPath: async () => "",
     copyText: async () => true,
     getBackendState: async () => ({ ready: true, starting: false, running: true, error: "" }),
@@ -208,6 +246,12 @@ const ROI_RECT = [
   [320, 0],
   [320, 180],
   [0, 180],
+];
+
+const PREVIEW_CANDIDATES = [
+  { id: "preview-candidate-1", sec: 24, label: "00:24.0", tone: "alternate" },
+  { id: "preview-candidate-2", sec: 39.5, label: "00:39.5", tone: "recommended" },
+  { id: "preview-candidate-3", sec: 60, label: "01:00.0", tone: "alternate" },
 ];
 
 test("late preview response is ignored after frameTime changes within the same source session", async () => {
@@ -586,6 +630,98 @@ test("stale source selection failures do not override a newer successful source"
   assert.equal(state.source.error, "");
 });
 
+test("source selection seeds three preview candidates and auto-loads the recommended preview", async () => {
+  const previewCalls = [];
+  installBrowserStubs({
+    selectVideoFile: async () => "/tmp/source-a.mp4",
+  });
+
+  const root = createRoot();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    readVideoMetadata: async () => ({ durationSec: 120, durationLabel: "02:00", resolutionLabel: "1920x1080" }),
+    api: {
+      requestPreviewFrame: async ({ startSec }) => {
+        previewCalls.push(startSec);
+        return {
+          imagePath: `/tmp/preview-${startSec}.png`,
+          sourcePath: `/tmp/preview-${startSec}.png`,
+          diagnostics: [],
+        };
+      },
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+      reviewExport: async () => ({}),
+    },
+  });
+
+  await root.dispatchAction("select-source-file");
+  await flush();
+
+  const state = app.debug.getState();
+  assert.equal(state.ui.activeStep, "roi");
+  assert.deepEqual(
+    state.roi.previewCandidates.map((candidate) => candidate.sec),
+    [24, 39.5, 60],
+  );
+  assert.equal(state.roi.selectedPreviewCandidateId, "preview-candidate-2");
+  assert.equal(state.roi.previewImage, "/tmp/preview-39.5.png");
+  assert.deepEqual(previewCalls, [39.5]);
+});
+
+test("selecting another preview candidate reloads the frame and relocks downstream steps", async () => {
+  installBrowserStubs();
+  const previewCalls = [];
+  const root = createRoot();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    api: {
+      requestPreviewFrame: async ({ startSec }) => {
+        previewCalls.push(startSec);
+        return {
+          imagePath: `/tmp/preview-${startSec}.png`,
+          sourcePath: `/tmp/preview-${startSec}.png`,
+          diagnostics: [],
+        };
+      },
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+      reviewExport: async () => ({}),
+    },
+  });
+
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/source-a.mp4";
+    next.source.metadata = { durationSec: 120, width: 1920, height: 1080 };
+    next.ui.activeStep = "roi";
+    next.roi.previewCandidates = PREVIEW_CANDIDATES;
+    next.roi.selectedPreviewCandidateId = "preview-candidate-2";
+    next.roi.frameTime = 39.5;
+    next.roi.frameTimeLabel = "00:39.5";
+    next.roi.previewImage = "/tmp/preview-39.5.png";
+    next.roi.previewSourcePath = "/tmp/preview-39.5.png";
+    next.roi.draftRect = ROI_RECT;
+    next.roi.appliedRect = ROI_RECT;
+    next.exportConfig.jobId = "job-1";
+    next.exportConfig.outputDir = "/tmp/export";
+    next.review.pages = [{ id: "1", title: "페이지 1" }];
+    next.review.selectedPageIds = ["1"];
+    return next;
+  });
+
+  await root.dispatchAction("select-preview-candidate", { candidateId: "preview-candidate-3" });
+  await flush();
+
+  const state = app.debug.getState();
+  assert.equal(state.roi.selectedPreviewCandidateId, "preview-candidate-3");
+  assert.equal(state.roi.frameTime, 60);
+  assert.equal(state.roi.previewImage, "/tmp/preview-60.png");
+  assert.equal(state.roi.appliedRect, null);
+  assert.equal(state.exportConfig.jobId, "");
+  assert.equal(state.review.pages.length, 0);
+  assert.deepEqual(previewCalls, [60]);
+});
+
 test("backend-ready app hydrates the persisted media registry and loads a stored source row", async () => {
   installBrowserStubs({
     getBackendState: async () => ({ ready: true, starting: false, running: true, error: "" }),
@@ -627,6 +763,104 @@ test("backend-ready app hydrates the persisted media registry and loads a stored
   assert.equal(state.ui.activeStep, "roi");
 });
 
+test("dropping a local video onto the ingest panel imports it through the existing source flow", async () => {
+  let pickerCalls = 0;
+  installBrowserStubs({
+    selectVideoFile: async () => {
+      pickerCalls += 1;
+      return "/tmp/dialog-source.mp4";
+    },
+  });
+
+  const root = createRoot();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    readVideoMetadata: async () => ({ durationSec: 30, durationLabel: "00:30", resolutionLabel: "1920x1080" }),
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+      reviewExport: async () => ({}),
+    },
+  });
+
+  const dragOver = await root.dispatchDrag("dragover", {
+    files: [{ path: "/tmp/drop-source.mkv" }],
+  });
+  const drop = await root.dispatchDrag("drop", {
+    files: [{ path: "/tmp/drop-source.mkv" }],
+  });
+  await flush();
+
+  const state = app.debug.getState();
+  assert.equal(dragOver.defaultPrevented, true);
+  assert.equal(drop.defaultPrevented, true);
+  assert.equal(state.source.filePath, "/tmp/drop-source.mkv");
+  assert.equal(state.source.displayName, "drop-source.mkv");
+  assert.equal(state.ui.activeStep, "roi");
+  assert.equal(pickerCalls, 0);
+});
+
+test("dropping a local video still imports when electron resolves the file path instead of File.path", async () => {
+  installBrowserStubs({
+    getPathForFile: (file) => (file?.name === "drop-source.webm" ? "/tmp/drop-source.webm" : ""),
+  });
+
+  const root = createRoot();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    readVideoMetadata: async () => ({ durationSec: 30, durationLabel: "00:30", resolutionLabel: "1920x1080" }),
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+      reviewExport: async () => ({}),
+    },
+  });
+
+  const drop = await root.dispatchDrag("drop", {
+    files: [{ name: "drop-source.webm" }],
+  });
+  await flush();
+
+  const state = app.debug.getState();
+  assert.equal(drop.defaultPrevented, true);
+  assert.equal(state.source.filePath, "/tmp/drop-source.webm");
+  assert.equal(state.source.displayName, "drop-source.webm");
+  assert.equal(state.ui.activeStep, "roi");
+});
+
+test("dropping an unsupported file onto the ingest panel shows a user-facing error", async () => {
+  installBrowserStubs();
+
+  const root = createRoot();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    readVideoMetadata: async () => ({ durationSec: 30, durationLabel: "00:30", resolutionLabel: "1920x1080" }),
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+      reviewExport: async () => ({}),
+    },
+  });
+  app.debug.setState((next) => {
+    next.ui.locale = "en";
+    return next;
+  });
+
+  const drop = await root.dispatchDrag("drop", {
+    files: [{ path: "/tmp/readme.txt" }],
+  });
+  await flush();
+
+  const state = app.debug.getState();
+  assert.equal(drop.defaultPrevented, true);
+  assert.equal(state.source.filePath, "");
+  assert.equal(state.source.status, "error");
+  assert.equal(state.source.error, "Only mp4, mkv, mov, avi, and webm video files can be dropped here.");
+});
+
 test("destroy removes root listeners and backend subscription", async () => {
   let selectCalls = 0;
   let unsubscribeCalls = 0;
@@ -653,6 +887,9 @@ test("destroy removes root listeners and backend subscription", async () => {
 
   app.destroy();
   await root.dispatchAction("select-source-file");
+  await root.dispatchDrag("drop", {
+    files: [{ path: "/tmp/source-b.mp4" }],
+  });
 
   assert.equal(selectCalls, 0);
   assert.equal(unsubscribeCalls, 1);
@@ -1037,8 +1274,10 @@ test("export after prepared youtube submits a file-backed payload", async () => 
     next.source.sourceType = "youtube";
     next.source.filePath = "/tmp/cache/youtube.mp4";
     next.source.preparedFromYouTube = true;
+    next.roi.previewCandidates = PREVIEW_CANDIDATES;
+    next.roi.selectedPreviewCandidateId = "preview-candidate-3";
     next.roi.appliedRect = ROI_RECT;
-    next.roi.frameTime = 4;
+    next.roi.frameTime = 60;
     next.exportConfig.formats = ["png"];
     next.ui.activeStep = "export";
     return next;

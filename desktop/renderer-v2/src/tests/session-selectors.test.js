@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildRepresentativeFrameCandidates,
   createInitialExportConfig,
   createInitialSessionState,
   createDocumentHeaderState,
@@ -49,6 +50,19 @@ test("initial session state starts in file mode with empty youtube preparation s
   assert.equal(state.source.preparedVideoPath, "");
   assert.equal(state.source.prepareErrorDetail, "");
   assert.deepEqual(state.source.registryItems, []);
+  assert.deepEqual(state.roi.previewCandidates, []);
+  assert.equal(state.roi.selectedPreviewCandidateId, "");
+});
+
+test("representative frame candidates follow the 20/33/50 percent rule and recommend the middle sample", () => {
+  const candidates = buildRepresentativeFrameCandidates(120);
+
+  assert.deepEqual(
+    candidates.map((candidate) => candidate.sec),
+    [24, 39.5, 60],
+  );
+  assert.equal(candidates[1].id, "preview-candidate-2");
+  assert.equal(candidates[1].tone, "recommended");
 });
 
 test("initial export config includes the document-header contract with today's date", () => {

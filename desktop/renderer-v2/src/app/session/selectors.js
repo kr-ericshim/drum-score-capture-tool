@@ -179,6 +179,43 @@ function preparePercentLabel(progress) {
   return `${Math.round(normalizedPrepareProgress(progress) * 100)}%`;
 }
 
+function roundToHalfSecond(value) {
+  return Math.round(Number(value || 0) * 2) / 2;
+}
+
+function clampFrameSecond(value, durationSec) {
+  if (!Number.isFinite(durationSec) || durationSec <= 0) {
+    return roundToHalfSecond(value);
+  }
+  return Math.max(0, Math.min(roundToHalfSecond(value), roundToHalfSecond(durationSec)));
+}
+
+export function buildRepresentativeFrameCandidates(durationSec) {
+  const duration = Number(durationSec || 0);
+  const defaultCandidates = [0, 5, 10];
+  const rawTimes = Number.isFinite(duration) && duration > 0
+    ? duration <= 12
+      ? [0, duration * 0.45, Math.max(duration * 0.85, duration - 0.5)]
+      : [duration * 0.2, duration * 0.33, duration * 0.5]
+    : defaultCandidates;
+  const maxDuration = Number.isFinite(duration) && duration > 0 ? duration : null;
+  const normalizedTimes = [];
+  rawTimes.forEach((value, index) => {
+    let nextValue = clampFrameSecond(value, maxDuration);
+    if (index > 0 && nextValue <= normalizedTimes[index - 1]) {
+      nextValue = clampFrameSecond(normalizedTimes[index - 1] + 0.5, maxDuration);
+    }
+    normalizedTimes.push(nextValue);
+  });
+
+  return normalizedTimes.map((sec, index) => ({
+    id: `preview-candidate-${index + 1}`,
+    sec,
+    label: formatSecondsLabel(sec),
+    tone: index === 1 ? "recommended" : "alternate",
+  }));
+}
+
 function isPrepareActive(source = {}) {
   return source.prepareStatus === "loading";
 }
@@ -237,6 +274,8 @@ export function createInitialSessionState() {
     roi: {
       frameTime: null,
       frameTimeLabel: "00:00.0",
+      previewCandidates: [],
+      selectedPreviewCandidateId: "",
       previewImage: "",
       previewSourcePath: "",
       diagnostics: [],
