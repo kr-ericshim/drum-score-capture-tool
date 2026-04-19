@@ -20,6 +20,8 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from app.job_store import Job, JobStatus, JobStore, ProgressMode, SourcePrepareJob, SourcePrepareStore
 from app.schemas import (
+    ArchiveLibraryItem,
+    ArchiveLibraryResponse,
     CaptureCropRequest,
     CaptureCropResponse,
     CacheClearResponse,
@@ -331,6 +333,56 @@ def local_media_registry() -> LocalMediaRegistryResponse:
         for payload in sorted(items_by_source.values(), key=lambda item: float(item.get("updated_at") or 0), reverse=True)[:50]
     ]
     return LocalMediaRegistryResponse(items=items)
+
+
+@app.get("/library/archive", response_model=ArchiveLibraryResponse)
+def archive_library() -> ArchiveLibraryResponse:
+    latest_by_source: Dict[str, ArchiveLibraryItem] = {}
+
+    for metadata_path in sorted(job_store.root.glob("*/job.json")):
+        try:
+            payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+            job = Job.from_record(payload)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            continue
+
+        if job.status != JobStatus.DONE:
+            continue
+
+        source_identity = dict(job.source_identity or {})
+        source_key = str(source_identity.get("key") or "").strip()
+        if not source_key:
+            continue
+
+        pdf_path = _existing_file_path(dict(job.result or {}).get("pdf"))
+        if pdf_path is None:
+            continue
+
+        output_dir = _existing_dir_path(dict(job.result or {}).get("output_dir"))
+        display_name = str(source_identity.get("display_name") or "").strip()
+        if not display_name:
+            file_path = str(job.file_path or "").strip()
+            display_name = Path(file_path).name if file_path else pdf_path.stem
+
+        source_kind = str(source_identity.get("kind") or job.source_type or "file").strip().lower()
+        if source_kind not in {"file", "youtube"}:
+            source_kind = "file"
+
+        completed_at = float(job.completed_at if job.completed_at is not None else job.updated_at or 0.0)
+        candidate = ArchiveLibraryItem(
+            source_key=source_key,
+            source_kind=source_kind,
+            display_name=display_name,
+            completed_at=completed_at,
+            pdf_path=str(pdf_path),
+            output_dir=str(output_dir) if output_dir else None,
+        )
+        existing = latest_by_source.get(source_key)
+        if existing is None or candidate.completed_at > existing.completed_at:
+            latest_by_source[source_key] = candidate
+
+    items = sorted(latest_by_source.values(), key=lambda item: item.completed_at, reverse=True)
+    return ArchiveLibraryResponse(items=items)
 
 
 @app.post("/preview/frame", response_model=PreviewFrameResponse)

@@ -305,6 +305,19 @@ class LocalMediaRegistryResponse(BaseModel):
     items: List[LocalMediaRegistryItem] = Field(default_factory=list)
 
 
+class ArchiveLibraryItem(BaseModel):
+    source_key: str
+    source_kind: Literal["file", "youtube"]
+    display_name: str
+    completed_at: float = 0.0
+    pdf_path: str
+    output_dir: Optional[str] = None
+
+
+class ArchiveLibraryResponse(BaseModel):
+    items: List[ArchiveLibraryItem] = Field(default_factory=list)
+
+
 class RuntimeStatusResponse(BaseModel):
     overall_mode: Literal["gpu", "cpu"]
     ffmpeg_mode: str

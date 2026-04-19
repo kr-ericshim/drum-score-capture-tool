@@ -236,6 +236,213 @@ class TestArchiveLibrary(unittest.TestCase):
             self.assertEqual(result["video_title"], "Take Five Drum Lesson")
             self.assertEqual(result["source_key"], "https://www.youtube.com/watch?v=abc123")
 
+    def _create_done_job(
+        self,
+        store: JobStore,
+        jobs_root: Path,
+        *,
+        job_id: str,
+        source_kind: str = "file",
+        source_key: str | None = None,
+        display_name: str = "",
+        completed_at: float | None = None,
+        updated_at: float | None = None,
+        pdf_relative_path: str | None = None,
+        create_pdf: bool = True,
+        output_dir_relative_path: str | None = None,
+    ) -> dict:
+        pdf_path = None
+        if pdf_relative_path is not None:
+            pdf_path = jobs_root / pdf_relative_path
+            if create_pdf:
+                pdf_path.parent.mkdir(parents=True, exist_ok=True)
+                pdf_path.write_bytes(b"%PDF-1.4\n% archive test pdf\n")
+
+        output_dir = None
+        if output_dir_relative_path is not None:
+            output_dir = jobs_root / output_dir_relative_path
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+        source_identity = {"kind": source_kind}
+        if source_key is not None:
+            source_identity["key"] = source_key
+        if display_name:
+            source_identity["display_name"] = display_name
+
+        artifact_dir = jobs_root / job_id
+        store.create(
+            Job(
+                id=job_id,
+                source_type="file",
+                file_path="/tmp/nonexistent-source.mp4",
+                youtube_url=None,
+                options={},
+                artifact_dir=str(artifact_dir),
+                source_identity=source_identity,
+                completed_at=completed_at,
+                updated_at=updated_at if updated_at is not None else float(completed_at or 0.0),
+                status=JobStatus.DONE,
+                result={
+                    "pdf": str(pdf_path) if pdf_path is not None else None,
+                    "output_dir": str(output_dir) if output_dir is not None else None,
+                },
+            )
+        )
+
+        return {
+            "pdf_path": str(pdf_path.resolve()) if pdf_path is not None and create_pdf else (str(pdf_path) if pdf_path is not None else None),
+            "output_dir": str(output_dir.resolve()) if output_dir is not None else None,
+        }
+
+    def test_archive_library_groups_by_source_key_and_keeps_latest_pdf(self):
+        main = self._import_main_with_stubbed_cv()
+        with tempfile.TemporaryDirectory() as td:
+            jobs_root = Path(td) / "jobs"
+            jobs_root.mkdir(parents=True, exist_ok=True)
+            store = JobStore(jobs_root)
+
+            older = self._create_done_job(
+                store,
+                jobs_root,
+                job_id="job-older",
+                source_key="file:/scores/blue.mp4",
+                display_name="Blue Session",
+                completed_at=100.0,
+                pdf_relative_path="exports/job-older/sheet_export.pdf",
+                output_dir_relative_path="exports/job-older",
+            )
+            newer = self._create_done_job(
+                store,
+                jobs_root,
+                job_id="job-newer",
+                source_key="file:/scores/blue.mp4",
+                display_name="Blue Session Latest",
+                completed_at=200.0,
+                pdf_relative_path="exports/job-newer/sheet_export.pdf",
+                output_dir_relative_path="exports/job-newer",
+            )
+            self._create_done_job(
+                store,
+                jobs_root,
+                job_id="job-other",
+                source_key="file:/scores/green.mp4",
+                display_name="Green Session",
+                completed_at=150.0,
+                pdf_relative_path="exports/job-other/sheet_export.pdf",
+                output_dir_relative_path="exports/job-other",
+            )
+            self._create_done_job(
+                store,
+                jobs_root,
+                job_id="job-no-key",
+                source_key=None,
+                display_name="Missing Source Key",
+                completed_at=300.0,
+                pdf_relative_path="exports/job-no-key/sheet_export.pdf",
+                output_dir_relative_path="exports/job-no-key",
+            )
+
+            with patch.object(main, "job_store", store):
+                response = main.archive_library()
+
+            self.assertEqual(len(response.items), 2)
+            self.assertEqual([item.source_key for item in response.items], ["file:/scores/blue.mp4", "file:/scores/green.mp4"])
+            self.assertEqual(response.items[0].pdf_path, newer["pdf_path"])
+            self.assertEqual(response.items[0].output_dir, newer["output_dir"])
+            self.assertEqual(response.items[0].display_name, "Blue Session Latest")
+            self.assertEqual(response.items[0].completed_at, 200.0)
+            self.assertNotEqual(response.items[0].pdf_path, older["pdf_path"])
+
+    def test_archive_library_skips_missing_or_nonexistent_pdf_rows(self):
+        main = self._import_main_with_stubbed_cv()
+        with tempfile.TemporaryDirectory() as td:
+            jobs_root = Path(td) / "jobs"
+            jobs_root.mkdir(parents=True, exist_ok=True)
+            store = JobStore(jobs_root)
+
+            older_valid = self._create_done_job(
+                store,
+                jobs_root,
+                job_id="job-valid",
+                source_key="file:/scores/blue.mp4",
+                display_name="Blue Session",
+                completed_at=100.0,
+                pdf_relative_path="exports/job-valid/sheet_export.pdf",
+                output_dir_relative_path="exports/job-valid",
+            )
+            self._create_done_job(
+                store,
+                jobs_root,
+                job_id="job-missing-pdf",
+                source_key="file:/scores/blue.mp4",
+                display_name="Blue Session Missing PDF",
+                completed_at=300.0,
+                pdf_relative_path="exports/job-missing-pdf/sheet_export.pdf",
+                create_pdf=False,
+                output_dir_relative_path="exports/job-missing-pdf",
+            )
+            self._create_done_job(
+                store,
+                jobs_root,
+                job_id="job-no-pdf",
+                source_key="file:/scores/red.mp4",
+                display_name="Red Session",
+                completed_at=250.0,
+                pdf_relative_path=None,
+                output_dir_relative_path="exports/job-no-pdf",
+            )
+
+            with patch.object(main, "job_store", store):
+                response = main.archive_library()
+
+            self.assertEqual(len(response.items), 1)
+            self.assertEqual(response.items[0].source_key, "file:/scores/blue.mp4")
+            self.assertEqual(response.items[0].pdf_path, older_valid["pdf_path"])
+            self.assertEqual(response.items[0].completed_at, 100.0)
+
+    def test_archive_library_returns_latest_review_export_pdf_when_present(self):
+        main = self._import_main_with_stubbed_cv()
+        with tempfile.TemporaryDirectory() as td:
+            jobs_root = Path(td) / "jobs"
+            jobs_root.mkdir(parents=True, exist_ok=True)
+            store = JobStore(jobs_root)
+
+            initial_final = self._create_done_job(
+                store,
+                jobs_root,
+                job_id="job-final",
+                source_kind="youtube",
+                source_key="https://www.youtube.com/watch?v=abc123",
+                display_name="Take Five Drum Lesson",
+                completed_at=180.0,
+                pdf_relative_path="exports/job-final/sheet_export.pdf",
+                output_dir_relative_path="exports/job-final",
+            )
+            review_export = self._create_done_job(
+                store,
+                jobs_root,
+                job_id="job-review-export",
+                source_kind="youtube",
+                source_key="https://www.youtube.com/watch?v=abc123",
+                display_name="Take Five Drum Lesson",
+                completed_at=240.0,
+                pdf_relative_path="exports/job-review-export/review_export.pdf",
+                output_dir_relative_path="exports/job-review-export",
+            )
+
+            with patch.object(main, "job_store", store):
+                response = main.archive_library()
+
+            self.assertEqual(len(response.items), 1)
+            item = response.items[0]
+            self.assertEqual(item.source_key, "https://www.youtube.com/watch?v=abc123")
+            self.assertEqual(item.source_kind, "youtube")
+            self.assertEqual(item.display_name, "Take Five Drum Lesson")
+            self.assertEqual(item.completed_at, 240.0)
+            self.assertEqual(item.pdf_path, review_export["pdf_path"])
+            self.assertEqual(item.output_dir, review_export["output_dir"])
+            self.assertNotEqual(item.pdf_path, initial_final["pdf_path"])
+
 
 if __name__ == "__main__":
     unittest.main()
