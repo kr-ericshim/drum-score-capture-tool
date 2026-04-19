@@ -8,10 +8,20 @@ from app.pipeline.sheet_finalize import (
     _resolve_overlapping_ranges,
     _slice_by_whitespace,
     _split_long_page,
+    finalize_sheet_pages,
 )
 
 
 class TestSheetFinalizePagination(unittest.TestCase):
+    def test_finalize_sheet_pages_can_preserve_color_channels_for_export_mode(self):
+        image = np.zeros((200, 200, 3), dtype=np.uint8)
+        image[:, :, 1] = 180
+
+        pages = finalize_sheet_pages(image, normalize_tone=False)
+
+        self.assertEqual(len(pages), 1)
+        self.assertFalse(np.array_equal(pages[0][:, :, 0], pages[0][:, :, 1]))
+
     def test_frame_pages_as_printed_set_normalizes_page_size(self):
         page_a = np.full((1500, 1800, 3), 255, dtype=np.uint8)
         page_b = np.full((2100, 1800, 3), 255, dtype=np.uint8)

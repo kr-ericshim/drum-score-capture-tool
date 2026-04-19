@@ -42,6 +42,15 @@ def _make_score_page(*, label: str, top_staff_y: int = 220) -> np.ndarray:
 
 
 class TestExportDocumentHeader(unittest.TestCase):
+    def test_finalize_export_pages_preserves_color_channels_for_output_pages(self):
+        page = np.zeros((220, 220, 3), dtype=np.uint8)
+        page[:, :, 2] = 200
+
+        finalized = _finalize_export_pages([page], page_fill_mode="performance")
+
+        self.assertEqual(len(finalized), 1)
+        self.assertFalse(np.array_equal(finalized[0][:, :, 0], finalized[0][:, :, 2]))
+
     def test_compose_pdf_pages_with_document_header_adds_band_to_first_page_only(self):
         page_one = _make_score_page(label="One")
         page_two = _make_score_page(label="Two", top_staff_y=260)

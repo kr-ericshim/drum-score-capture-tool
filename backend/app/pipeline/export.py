@@ -225,7 +225,7 @@ def _finalize_export_pages(
 ) -> List[np.ndarray]:
     finalized_pages: List[np.ndarray] = []
     for image in images:
-        pages = finalize_sheet_pages(image, page_fill_mode=page_fill_mode)
+        pages = finalize_sheet_pages(image, page_fill_mode=page_fill_mode, normalize_tone=False)
         if pages:
             finalized_pages.extend(pages)
             continue
