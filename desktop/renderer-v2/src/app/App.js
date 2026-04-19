@@ -1,14 +1,18 @@
 import { bridge, readVideoMetadata } from "./bridge.js";
 import { createStore } from "./session/store.js";
 import {
+  createDocumentHeaderState,
+  createInitialExportConfig,
   createInitialSessionState,
   deriveCapturePages,
   formatSecondsLabel,
   getAccessibleSteps,
   getProcessRailItems,
+  getSourcePrepareSummary,
   getTopBarSummary,
   inferLayoutHintFromRoi,
   isRectValid,
+  normalizeDocumentHeader,
 } from "./session/selectors.js";
 import { canRunExport, createRuntimeGuards, invalidatePreviewFlow } from "./session/runtimeSafety.js";
 import { canOpenStep } from "./routes.js";
@@ -22,7 +26,17 @@ import { renderRoiScreen } from "../features/roi/RoiScreen.js";
 import { renderExportScreen } from "../features/export/ExportScreen.js";
 import { renderReviewScreen } from "../features/review/ReviewScreen.js";
 import { mountRoiEditor } from "../features/roi/roiEditor.js";
-import { createJob, getJob, preparePreviewSource, requestPreviewFrame, reviewExport } from "../lib/api.js";
+import {
+  createJob,
+  createPreviewSourceJob,
+  getJob,
+  getLocalMediaRegistry,
+  getPreviewSourceJob,
+  preparePreviewSource,
+  requestPreviewFrame,
+  reviewExport,
+} from "../lib/api.js";
+import { escapeHtml } from "../lib/html.js";
 import { t } from "../lib/i18n.js";
 import { baseName } from "../lib/paths.js";
 import { persistLocale } from "../lib/i18n.js";
@@ -69,23 +83,44 @@ function rectMatches(a, b) {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+function syncDocumentChrome(locale) {
+  const doc = globalThis?.document;
+  if (!doc) {
+    return;
+  }
+  if (doc.documentElement) {
+    doc.documentElement.lang = locale === "ko" ? "ko" : "en";
+  }
+  const skipLink = typeof doc.querySelector === "function" ? doc.querySelector(".skip-link") : null;
+  if (skipLink) {
+    skipLink.textContent = t("app.skipLink", { locale });
+  }
+}
+
 export function createApp(root, dependencies = {}) {
   const runtimeBridge = dependencies.bridge || bridge;
   const readMetadata = dependencies.readVideoMetadata || readVideoMetadata;
-  const runtimeApi = dependencies.api || {
-    createJob,
-    getJob,
-    preparePreviewSource,
-    requestPreviewFrame,
-    reviewExport,
-  };
+  const runtimeApi = dependencies.api
+    ? {
+      getLocalMediaRegistry: async () => ({ items: [] }),
+      ...dependencies.api,
+    }
+    : {
+      createJob,
+      createPreviewSourceJob,
+      getJob,
+      getLocalMediaRegistry,
+      getPreviewSourceJob,
+      preparePreviewSource,
+      requestPreviewFrame,
+      reviewExport,
+    };
   const mountShellImpl = dependencies.mountShell || mountShell;
   const mountRoiEditorImpl = dependencies.mountRoiEditor || mountRoiEditor;
   const store = createStore(createInitialSessionState());
   const shell = mountShellImpl(root);
   const sourceController = createSourceController({
     store,
-    api: runtimeApi,
     readMetadata,
     formatSecondsLabel,
     resetDownstream,
@@ -101,6 +136,8 @@ export function createApp(root, dependencies = {}) {
   let roiEditorNodes = null;
   let activePoll = null;
   let activeJobHandle = null;
+  let activeSourcePreparePoll = null;
+  let activeSourcePrepareHandle = null;
   let activeSourceSelection = 0;
   let lastRenderedStep = "";
   let lastTopBarMarkup = "";
@@ -108,6 +145,8 @@ export function createApp(root, dependencies = {}) {
   let lastContextLaneMarkup = "";
   let lastStageMarkup = "";
   let lastStatusMarkup = "";
+  let lastBackendReady = false;
+  let registryRefreshToken = 0;
   const runtimeGuards = createRuntimeGuards();
 
   function setState(updater) {
@@ -128,19 +167,7 @@ export function createApp(root, dependencies = {}) {
       status: "idle",
       error: "",
     };
-    next.exportConfig = {
-      formats: ["png", "pdf"],
-      outputDir: "",
-      pageFillMode: "performance",
-      layoutHint: "auto",
-      jobId: "",
-      runStatus: "idle",
-      progress: 0,
-      currentStep: "",
-      message: "",
-      pdfPath: "",
-      error: "",
-    };
+    next.exportConfig = createInitialExportConfig(next.source.filePath);
     next.review = {
       pages: [],
       selectedPageIds: [],
@@ -213,26 +240,36 @@ export function createApp(root, dependencies = {}) {
   function render() {
     const state = store.getState();
     const locale = state.ui.locale || "en";
+    syncDocumentChrome(locale);
     const stepLabel = t(`topbar.step.${state.ui.activeStep}`, { locale });
+    const topBarSummary = getTopBarSummary(state);
+    const sourceStatusLabel = getSourcePrepareSummary(state, locale)
+      || state.source.displayName
+      || "";
     const laneMarkup = renderContextLane(state);
-    const topBarMarkup = renderTopBar(state, getTopBarSummary(state));
+    const topBarMarkup = renderTopBar(state, topBarSummary);
     const processRailMarkup = renderProcessRail(state, getProcessRailItems(state));
     const stageMarkupValue = stageMarkup(state);
+    const engineStatus = escapeHtml(state.ui.backend?.ready ? t("status.engineReady", { locale }) : t("status.engineWaiting", { locale }));
+    const sourceStatus = escapeHtml(sourceStatusLabel
+      ? t("status.sourceLabel", { locale, replacements: { label: sourceStatusLabel } })
+      : t("status.sourceIdle", { locale }));
+    const inlineNotice = escapeHtml(state.ui.inlineNotice || t("status.sessionStable", { locale }));
+    const pagesStatus = escapeHtml(state.review.pages.length
+      ? t("status.pagesCount", { locale, replacements: { count: state.review.pages.length } })
+      : t("status.pagesEmpty", { locale }));
+    const localToolStatus = escapeHtml(t("status.localTool", { locale }));
     const statusMarkup = `
       <div class="status-bar-group">
-        <span>${state.ui.backend?.ready ? t("status.engineReady", { locale }) : t("status.engineWaiting", { locale })}</span>
-        <span>${state.source.displayName
-          ? t("status.sourceLabel", { locale, replacements: { label: state.source.displayName } })
-          : t("status.sourceIdle", { locale })}</span>
+        <span>${engineStatus}</span>
+        <span>${sourceStatus}</span>
       </div>
       <div class="status-bar-group status-bar-group-notice">
-        <span>${state.ui.inlineNotice || t("status.sessionStable", { locale })}</span>
+        <span>${inlineNotice}</span>
       </div>
       <div class="status-bar-group">
-        <span>${state.review.pages.length
-          ? t("status.pagesCount", { locale, replacements: { count: state.review.pages.length } })
-          : t("status.pagesEmpty", { locale })}</span>
-        <span>${t("status.localTool", { locale })}</span>
+        <span>${pagesStatus}</span>
+        <span>${localToolStatus}</span>
       </div>
     `;
     if (shell.appShell) {
@@ -276,10 +313,54 @@ export function createApp(root, dependencies = {}) {
 
   async function refreshBackendState() {
     const payload = await runtimeBridge.getBackendState();
+    lastBackendReady = Boolean(payload?.ready);
     setState((next) => {
       next.ui.backend = payload;
       return next;
     });
+    if (lastBackendReady) {
+      void refreshLocalMediaRegistry();
+    }
+  }
+
+  async function refreshLocalMediaRegistry() {
+    if (typeof runtimeApi.getLocalMediaRegistry !== "function") {
+      return;
+    }
+    const requestToken = ++registryRefreshToken;
+    try {
+      const payload = await runtimeApi.getLocalMediaRegistry();
+      if (requestToken !== registryRefreshToken) {
+        return;
+      }
+      const items = Array.isArray(payload?.items) ? payload.items : [];
+      setState((next) => {
+        next.source.registryItems = items;
+        return next;
+      });
+    } catch (_) {
+      if (requestToken !== registryRefreshToken) {
+        return;
+      }
+    }
+  }
+
+  async function loadSourceFromPath(filePath) {
+    const targetPath = String(filePath || "").trim();
+    if (!targetPath) {
+      return;
+    }
+    stopPolling();
+    stopSourcePreparePolling();
+    activeJobHandle = null;
+    activeSourcePrepareHandle = null;
+    runtimeGuards.bumpSourceSession();
+    setState((next) => {
+      next.source.error = "";
+      next.source.status = "loading";
+      return next;
+    });
+    await sourceController.selectLocalFile(targetPath);
   }
 
   function applyJobSnapshot(job) {
@@ -316,6 +397,13 @@ export function createApp(root, dependencies = {}) {
     }
   }
 
+  function stopSourcePreparePolling() {
+    if (activeSourcePreparePoll) {
+      clearTimeout(activeSourcePreparePoll);
+      activeSourcePreparePoll = null;
+    }
+  }
+
   function setInlineNotice(message) {
     setState((next) => {
       next.ui.inlineNotice = String(message || "");
@@ -333,6 +421,9 @@ export function createApp(root, dependencies = {}) {
       applyJobSnapshot(job);
       if (job.status === "done" || job.status === "error") {
         stopPolling();
+        if (job.status === "done") {
+          void refreshLocalMediaRegistry();
+        }
         return;
       }
       activePoll = setTimeout(() => {
@@ -347,6 +438,69 @@ export function createApp(root, dependencies = {}) {
         next.exportConfig.error = String(error?.message || error);
         return next;
       });
+    }
+  }
+
+  async function pollSourcePrepareJob(jobId, prepareHandle, requestToken) {
+    stopSourcePreparePolling();
+    try {
+      const snapshot = await runtimeApi.getPreviewSourceJob(jobId);
+      if (!runtimeGuards.isCurrentSourcePrepareJob(prepareHandle, jobId)) {
+        return;
+      }
+      sourceController.applyPrepareJobSnapshot(snapshot, requestToken);
+      if (snapshot.status === "done") {
+        stopSourcePreparePolling();
+        activeSourcePrepareHandle = null;
+        runtimeGuards.bumpSourceSession();
+        await sourceController.completeYoutubePrepare(snapshot, requestToken);
+        void refreshLocalMediaRegistry();
+        return;
+      }
+      if (snapshot.status === "error") {
+        stopSourcePreparePolling();
+        activeSourcePrepareHandle = null;
+        runtimeGuards.invalidateSourcePrepare();
+        return;
+      }
+      activeSourcePreparePoll = setTimeout(() => {
+        pollSourcePrepareJob(jobId, prepareHandle, requestToken);
+      }, 1000);
+    } catch (error) {
+      if (!runtimeGuards.isCurrentSourcePrepareJob(prepareHandle, jobId)) {
+        return;
+      }
+      stopSourcePreparePolling();
+      activeSourcePrepareHandle = null;
+      runtimeGuards.invalidateSourcePrepare();
+      sourceController.failYoutubePrepare(error, requestToken);
+    }
+  }
+
+  async function prepareYoutubeSource() {
+    const youtubeUrl = store.getState().source.youtubeUrl;
+    const requestToken = sourceController.startYoutubePrepare(youtubeUrl);
+    stopSourcePreparePolling();
+    const prepareToken = runtimeGuards.beginSourcePrepare();
+
+    try {
+      const jobId = await runtimeApi.createPreviewSourceJob({ youtubeUrl });
+      if (!runtimeGuards.isCurrentSourcePrepare(prepareToken)) {
+        return;
+      }
+      activeSourcePrepareHandle = runtimeGuards.attachSourcePrepare(prepareToken, jobId);
+      if (!activeSourcePrepareHandle) {
+        return;
+      }
+      sourceController.applyPrepareJobStarted(jobId, requestToken);
+      await pollSourcePrepareJob(jobId, activeSourcePrepareHandle, requestToken);
+    } catch (error) {
+      if (!runtimeGuards.isCurrentSourcePrepare(prepareToken)) {
+        return;
+      }
+      activeSourcePrepareHandle = null;
+      runtimeGuards.invalidateSourcePrepare();
+      sourceController.failYoutubePrepare(error, requestToken);
     }
   }
 
@@ -373,10 +527,7 @@ export function createApp(root, dependencies = {}) {
       if (requestId !== activeSourceSelection) {
         return;
       }
-      stopPolling();
-      activeJobHandle = null;
-      runtimeGuards.bumpSourceSession();
-      await sourceController.selectLocalFile(filePath);
+      await loadSourceFromPath(filePath);
     } catch (error) {
       if (requestId !== activeSourceSelection) {
         return;
@@ -446,6 +597,8 @@ export function createApp(root, dependencies = {}) {
   function buildJobPayload(state) {
     const roi = state.roi.appliedRect;
     const layoutHint = inferLayoutHintFromRoi(roi);
+    const fallbackDocumentHeader = createDocumentHeaderState(state.source.filePath);
+    const documentHeader = normalizeDocumentHeader(state.exportConfig.documentHeader, fallbackDocumentHeader);
     return {
       source_type: "file",
       file_path: state.source.filePath,
@@ -477,7 +630,8 @@ export function createApp(root, dependencies = {}) {
         export: {
           formats: state.exportConfig.formats.slice(),
           include_raw_frames: false,
-          page_fill_mode: "performance",
+          page_fill_mode: state.exportConfig.pageFillMode || "performance",
+          document_header: documentHeader,
         },
       },
     };
@@ -560,10 +714,12 @@ export function createApp(root, dependencies = {}) {
     try {
       await runtimeApi.reviewExport(state.exportConfig.jobId, selected, state.exportConfig.formats);
       const refreshed = await runtimeApi.getJob(state.exportConfig.jobId);
-      if (!runtimeGuards.isCurrentJob(activeJobHandle, state.exportConfig.jobId)) {
+      if (activeJobHandle && !runtimeGuards.isCurrentJob(activeJobHandle, state.exportConfig.jobId)) {
         return;
       }
       applyJobSnapshot(refreshed);
+      void refreshLocalMediaRegistry();
+      setInlineNotice(notice("review.applied", { locale: store.getState().ui.locale || "en" }));
     } catch (error) {
       setState((next) => {
         next.review.status = "error";
@@ -624,7 +780,19 @@ export function createApp(root, dependencies = {}) {
       return;
     }
     if (action === "prepare-source-youtube") {
-      await sourceController.prepareYoutube(store.getState().source.youtubeUrl);
+      await prepareYoutubeSource();
+      return;
+    }
+    if (action === "load-registry-source") {
+      try {
+        await loadSourceFromPath(target.dataset.filePath);
+      } catch (error) {
+        setState((next) => {
+          next.source.status = "error";
+          next.source.error = String(error?.message || error);
+          return next;
+        });
+      }
       return;
     }
     if (action === "set-locale") {
@@ -691,6 +859,9 @@ export function createApp(root, dependencies = {}) {
   const handleInput = (event) => {
     const target = event.target;
     if (target.dataset.action === "youtube-url-input") {
+      stopSourcePreparePolling();
+      activeSourcePrepareHandle = null;
+      runtimeGuards.invalidateSourcePrepare();
       sourceController.setYoutubeUrl(String(target.value || ""));
       return;
     }
@@ -775,10 +946,15 @@ export function createApp(root, dependencies = {}) {
 
   const unsubscribeStore = store.subscribe(render);
   const unsubscribeBackend = runtimeBridge.onBackendState((payload) => {
+    const becameReady = Boolean(payload?.ready) && !lastBackendReady;
+    lastBackendReady = Boolean(payload?.ready);
     setState((next) => {
       next.ui.backend = payload;
       return next;
     });
+    if (becameReady) {
+      void refreshLocalMediaRegistry();
+    }
   });
 
   refreshBackendState();
@@ -797,6 +973,7 @@ export function createApp(root, dependencies = {}) {
       : undefined,
     destroy() {
       stopPolling();
+      stopSourcePreparePolling();
       destroyRoiEditor();
       unsubscribeStore?.();
       unsubscribeBackend?.();

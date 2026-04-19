@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 LayoutHint = Literal["auto", "bottom_bar", "full_scroll", "page_turn"]
@@ -78,10 +79,53 @@ class UpscaleOptions(BaseModel):
 
 
 class ExportOptions(BaseModel):
+    class DocumentHeaderOptions(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        title: str
+        performer: str = ""
+        bpm: Optional[int] = None
+        date: str = ""
+        memo: str = ""
+
+        @field_validator("title", mode="before")
+        @classmethod
+        def validate_title(cls, value: object) -> str:
+            title = str(value or "").strip()
+            if not title:
+                raise ValueError("document_header.title is required")
+            return title
+
+        @field_validator("performer", "date", "memo", mode="before")
+        @classmethod
+        def normalize_optional_text(cls, value: object) -> str:
+            return str(value or "").strip()
+
+        @field_validator("bpm", mode="before")
+        @classmethod
+        def validate_bpm(cls, value: object) -> Optional[int]:
+            if value in (None, ""):
+                return None
+            if isinstance(value, bool):
+                raise ValueError("document_header.bpm must be an integer")
+            if isinstance(value, int):
+                return value
+            if isinstance(value, float):
+                if not value.is_integer():
+                    raise ValueError("document_header.bpm must be an integer")
+                return int(value)
+            text = str(value).strip()
+            if not text:
+                return None
+            if not re.fullmatch(r"[+-]?\d+", text):
+                raise ValueError("document_header.bpm must be an integer")
+            return int(text)
+
     formats: List[Literal["png", "jpg", "jpeg", "pdf"]] = Field(default_factory=lambda: ["png", "pdf"])
     output_dir: Optional[str] = None
     include_raw_frames: bool = False
     page_fill_mode: PageFillMode = "performance"
+    document_header: Optional[DocumentHeaderOptions] = None
 
 class JobOptions(BaseModel):
     extract: ExtractOptions = Field(default_factory=ExtractOptions)
@@ -123,6 +167,14 @@ class JobReviewExportRequest(BaseModel):
     keep_captures: List[str] = Field(default_factory=list)
     keep_images: List[str] = Field(default_factory=list)
     formats: Optional[List[Literal["png", "jpg", "jpeg", "pdf"]]] = None
+
+    @model_validator(mode="after")
+    def validate_selection_mode(self):
+        if self.keep_captures and self.keep_images:
+            raise ValueError("keep_captures and keep_images cannot be used together")
+        if not self.keep_captures and not self.keep_images:
+            raise ValueError("keep_captures must include at least one capture")
+        return self
 
 
 class JobReviewExportResponse(BaseModel):
@@ -201,6 +253,48 @@ class PreviewSourceResponse(BaseModel):
     video_url: Optional[str] = None
     from_cache: bool = False
     log_lines: List[str] = Field(default_factory=list)
+
+
+class PreviewSourceJobCreateRequest(BaseModel):
+    youtube_url: str
+
+
+class PreviewSourceJobCreateResponse(BaseModel):
+    job_id: str
+
+
+class PreviewSourceJobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    stage: str
+    message: str
+    progress: float
+    progress_mode: Literal["determinate", "indeterminate"] = "indeterminate"
+    result: Dict[str, Any] = Field(default_factory=dict)
+    error_code: Optional[str] = None
+    log_tail: List[str] = Field(default_factory=list)
+
+
+class LocalMediaRegistryItem(BaseModel):
+    source_path: str
+    display_name: str
+    directory: str
+    resolution_label: str = ""
+    duration_label: str = ""
+    width: int = 0
+    height: int = 0
+    duration_sec: float = 0.0
+    pdf_path: Optional[str] = None
+    output_dir: Optional[str] = None
+    has_score: bool = False
+    source_origin: Literal["job", "prepared"] = "job"
+    youtube_url: Optional[str] = None
+    updated_at: float = 0.0
+
+
+class LocalMediaRegistryResponse(BaseModel):
+    items: List[LocalMediaRegistryItem] = Field(default_factory=list)
+
 
 class RuntimeStatusResponse(BaseModel):
     overall_mode: Literal["gpu", "cpu"]

@@ -10,6 +10,140 @@ function fileBaseName(filePath = "") {
   return normalized.split("/").pop() || normalized;
 }
 
+function fileTitleFromPath(filePath = "") {
+  const baseName = fileBaseName(filePath).trim();
+  if (!baseName) {
+    return "";
+  }
+  if (baseName.startsWith(".") && !baseName.slice(1).includes(".")) {
+    return baseName;
+  }
+  return baseName.replace(/\.[^.]+$/, "");
+}
+
+function padDatePart(value) {
+  return String(value).padStart(2, "0");
+}
+
+function formatDocumentDate(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return formatDocumentDate(new Date());
+  }
+  return `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())}`;
+}
+
+function hasOwnValue(target, key) {
+  return Boolean(target) && Object.prototype.hasOwnProperty.call(target, key);
+}
+
+function normalizeOptionalText(value) {
+  return String(value ?? "").trim();
+}
+
+function normalizeBpmValue(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const text = String(value).trim();
+  if (!text) {
+    return null;
+  }
+  const parsed = Number.parseInt(text, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function createDocumentHeaderState(sourceFilePath = "", today = new Date()) {
+  return {
+    title: fileTitleFromPath(sourceFilePath),
+    performer: "",
+    bpm: null,
+    date: formatDocumentDate(today),
+    memo: "",
+  };
+}
+
+export function normalizeDocumentHeader(documentHeader = {}, fallbackHeader = createDocumentHeaderState()) {
+  const fallback = {
+    title: normalizeOptionalText(fallbackHeader.title),
+    performer: normalizeOptionalText(fallbackHeader.performer),
+    bpm: normalizeBpmValue(fallbackHeader.bpm),
+    date: normalizeOptionalText(fallbackHeader.date),
+    memo: normalizeOptionalText(fallbackHeader.memo),
+  };
+  const normalizedTitle = hasOwnValue(documentHeader, "title")
+    ? normalizeOptionalText(documentHeader.title)
+    : fallback.title;
+
+  return {
+    title: normalizedTitle || fallback.title,
+    performer: hasOwnValue(documentHeader, "performer")
+      ? normalizeOptionalText(documentHeader.performer)
+      : fallback.performer,
+    bpm: hasOwnValue(documentHeader, "bpm")
+      ? normalizeBpmValue(documentHeader.bpm)
+      : fallback.bpm,
+    date: hasOwnValue(documentHeader, "date")
+      ? normalizeOptionalText(documentHeader.date)
+      : fallback.date,
+    memo: hasOwnValue(documentHeader, "memo")
+      ? normalizeOptionalText(documentHeader.memo)
+      : fallback.memo,
+  };
+}
+
+export function createInitialExportConfig(sourceFilePath = "", today = new Date()) {
+  return {
+    formats: DEFAULT_FORMATS.slice(),
+    outputDir: "",
+    pageFillMode: "performance",
+    layoutHint: "auto",
+    jobId: "",
+    runStatus: "idle",
+    progress: 0,
+    currentStep: "",
+    message: "",
+    pdfPath: "",
+    error: "",
+    documentHeader: createDocumentHeaderState(sourceFilePath, today),
+  };
+}
+
+function normalizedPrepareProgress(value) {
+  const progress = Number(value || 0);
+  if (!Number.isFinite(progress)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(1, progress));
+}
+
+function preparePercentLabel(progress) {
+  return `${Math.round(normalizedPrepareProgress(progress) * 100)}%`;
+}
+
+function isPrepareActive(source = {}) {
+  return source.prepareStatus === "loading";
+}
+
+export function getSourcePrepareSummary(state, locale = state?.ui?.locale || "en") {
+  const source = state?.source || {};
+  if (!isPrepareActive(source)) {
+    return "";
+  }
+  const stage = String(source.prepareStage || "queued");
+  const stageLabel = t(`source.prepareStage.${stage}`, { locale });
+  if (source.prepareProgressMode === "determinate") {
+    return t("source.prepareStageProgress", {
+      locale,
+      replacements: {
+        stage: stageLabel,
+        percent: preparePercentLabel(source.prepareProgress),
+      },
+    });
+  }
+  return stageLabel;
+}
+
 function rectBounds(points) {
   const xs = points.map((point) => Number(point[0]));
   const ys = points.map((point) => Number(point[1]));
@@ -31,9 +165,16 @@ export function createInitialSessionState() {
       youtubeUrl: "",
       preparedFromYouTube: false,
       prepareStatus: "idle",
+      prepareJobId: "",
+      prepareStage: "",
+      prepareProgress: 0,
+      prepareProgressMode: "indeterminate",
+      prepareMessage: "",
+      prepareFromCache: false,
       prepareLogs: [],
       preparedVideoPath: "",
       prepareErrorDetail: "",
+      registryItems: [],
     },
     roi: {
       frameTime: null,
@@ -48,19 +189,7 @@ export function createInitialSessionState() {
       status: "idle",
       error: "",
     },
-    exportConfig: {
-      formats: DEFAULT_FORMATS.slice(),
-      outputDir: "",
-      pageFillMode: "performance",
-      layoutHint: "auto",
-      jobId: "",
-      runStatus: "idle",
-      progress: 0,
-      currentStep: "",
-      message: "",
-      pdfPath: "",
-      error: "",
-    },
+    exportConfig: createInitialExportConfig(),
     review: {
       pages: [],
       selectedPageIds: [],
@@ -102,7 +231,14 @@ export function inferLayoutHintFromRoi(points) {
   if (width <= 0 || height <= 0) {
     return "full_scroll";
   }
-  return width / height >= 2.25 ? "bottom_bar" : "full_scroll";
+  const aspect = width / height;
+  if (aspect >= 2.25) {
+    return "bottom_bar";
+  }
+  if (aspect <= 1.05) {
+    return "page_turn";
+  }
+  return "full_scroll";
 }
 
 export function getStepState(state, step) {
@@ -258,7 +394,8 @@ export function deriveCapturePages(result = {}, locale = "en") {
 
 export function getTopBarSummary(state) {
   const locale = state.ui.locale || "en";
-  const sourceLabel = state.source.displayName || fileBaseName(state.source.filePath) || t("selector.sourceFallback", { locale });
+  const preparingLabel = getSourcePrepareSummary(state, locale);
+  const sourceLabel = preparingLabel || state.source.displayName || fileBaseName(state.source.filePath) || t("selector.sourceFallback", { locale });
   const stepState = getStepState(state, state.ui.activeStep);
   return {
     sourceLabel,
@@ -271,8 +408,11 @@ export function getProcessRailItems(state) {
   const locale = state.ui.locale || "en";
   return STEP_ORDER.map((step) => {
     const stepState = getStepState(state, step);
+    const preparingLabel = getSourcePrepareSummary(state, locale);
     let summary = t("selector.summary.idle", { locale });
-    if (step === "source" && state.source.displayName) {
+    if (step === "source" && preparingLabel) {
+      summary = preparingLabel;
+    } else if (step === "source" && state.source.displayName) {
       summary = state.source.displayName;
     } else if (step === "roi") {
       summary = stepState.complete
