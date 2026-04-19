@@ -100,7 +100,9 @@ let cacheUsageLoading = false;
 let lastCacheUsageFetchAt = 0;
 let alwaysOnTopEnabled = false;
 let supportSheetOpen = false;
+let supportSheetReturnFocus = null;
 let statusDrawerOpen = false;
+let captureCropReturnFocus = null;
 let backendBridgeState = {
   ready: false,
   starting: true,
@@ -135,6 +137,15 @@ const STEP_BAR_BUTTON_IDS = {
 };
 const REVIEW_STEP_BUTTON_ID = "stepperReview";
 const REVIEW_STEP_SUMMARY_ID = "stepBadgeReview";
+const FOCUSABLE_SELECTOR = [
+  "button:not([disabled]):not([tabindex='-1'])",
+  "[href]",
+  "input:not([disabled]):not([type='hidden']):not([tabindex='-1'])",
+  "select:not([disabled]):not([tabindex='-1'])",
+  "textarea:not([disabled]):not([tabindex='-1'])",
+  "summary",
+  "[tabindex]:not([tabindex='-1'])",
+].join(", ");
 
 function L(ko, en) {
   return getLocale() === "ko" ? ko : en;
@@ -158,6 +169,106 @@ function appendLocaleSetupLog(ko, en) {
 
 function appendLocaleSetupError(message) {
   appendSetupLogLine(`${L("오류", "Error")}: ${message}`);
+}
+
+function rememberActiveElement() {
+  return document.activeElement instanceof HTMLElement ? document.activeElement : null;
+}
+
+function isVisibleFocusable(node) {
+  return node instanceof HTMLElement
+    && !node.hidden
+    && node.getAttribute("aria-hidden") !== "true"
+    && node.getClientRects().length > 0;
+}
+
+function getFocusableElements(container) {
+  if (!(container instanceof HTMLElement)) {
+    return [];
+  }
+  return Array.from(container.querySelectorAll(FOCUSABLE_SELECTOR)).filter(isVisibleFocusable);
+}
+
+function focusWithin(container, preferred) {
+  if (!(container instanceof HTMLElement)) {
+    return;
+  }
+  if (preferred instanceof HTMLElement && container.contains(preferred) && isVisibleFocusable(preferred)) {
+    preferred.focus();
+    return;
+  }
+  const [first] = getFocusableElements(container);
+  (first || container).focus();
+}
+
+function trapFocusInside(event, container) {
+  if (event.key !== "Tab" || !(container instanceof HTMLElement)) {
+    return;
+  }
+  const focusable = getFocusableElements(container);
+  if (!focusable.length) {
+    event.preventDefault();
+    container.focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const active = document.activeElement;
+  if (event.shiftKey) {
+    if (active === first || !container.contains(active)) {
+      event.preventDefault();
+      last.focus();
+    }
+    return;
+  }
+  if (active === last || !container.contains(active)) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function restoreFocus(target, fallbackSelector = "") {
+  if (target instanceof HTMLElement && target.isConnected) {
+    target.focus();
+    return;
+  }
+  const fallback = fallbackSelector ? document.querySelector(fallbackSelector) : null;
+  if (fallback instanceof HTMLElement && fallback.isConnected) {
+    fallback.focus();
+  }
+}
+
+function syncLegacyModalIsolation() {
+  const shell = el("appShell");
+  if (!shell) {
+    return;
+  }
+  const modalOpen = supportSheetOpen || captureCropState.open;
+  if (modalOpen) {
+    shell.setAttribute("inert", "");
+    shell.setAttribute("aria-hidden", "true");
+    return;
+  }
+  shell.removeAttribute("inert");
+  shell.removeAttribute("aria-hidden");
+}
+
+function updateCaptureCropCanvasAccessibility() {
+  const { canvas } = getCaptureCropElements();
+  if (!canvas) {
+    return;
+  }
+  canvas.setAttribute(
+    "aria-label",
+    L(
+      "캡처 자르기 편집 영역. 방향키는 이동, Shift+방향키는 크기 조절, Alt는 10픽셀 단위입니다.",
+      "Recrop editor. Arrow keys move the selection, Shift plus arrows resize it, and Alt changes the step to 10 pixels.",
+    ),
+  );
+  canvas.title = L(
+    "방향키 이동 · Shift+방향키 크기 조절 · Alt로 10px 단위",
+    "Arrow keys move, Shift plus arrows resize, Alt switches to 10px steps",
+  );
 }
 
 function youtubePrepareStatusText(state = youtubePrepareState) {
@@ -1867,6 +1978,7 @@ function renderSupportSheetState() {
   }
   sheet.hidden = !supportSheetOpen;
   sheet.setAttribute("aria-hidden", supportSheetOpen ? "false" : "true");
+  syncLegacyModalIsolation();
 }
 
 function hasResultOutput() {
@@ -2529,6 +2641,7 @@ function clampNumber(value, min, max) {
 function getCaptureCropElements() {
   return {
     modal: el("captureCropModal"),
+    dialog: el("captureCropDialog"),
     image: el("captureCropImage"),
     canvas: el("captureCropCanvas"),
     close: el("captureCropClose"),
@@ -2650,9 +2763,16 @@ function setCaptureCropApplyBusy(running) {
   }
 }
 
+function focusCaptureCropDialog() {
+  const { dialog, canvas } = getCaptureCropElements();
+  const preferred = captureCropState.loaded ? canvas : null;
+  focusWithin(dialog, preferred);
+}
+
 function closeCaptureCropModal() {
   const { modal, image, canvas } = getCaptureCropElements();
   if (modal) {
+    modal.hidden = true;
     modal.style.display = "none";
     modal.setAttribute("aria-hidden", "true");
   }
@@ -2680,6 +2800,9 @@ function closeCaptureCropModal() {
     applyRunning: false,
   };
   setCaptureCropApplyBusy(false);
+  syncLegacyModalIsolation();
+  restoreFocus(captureCropReturnFocus, "#resultThumbGrid button, #resultApplyReview, #stepperReview");
+  captureCropReturnFocus = null;
 }
 
 function openCaptureCropModal(imagePath, index) {
@@ -2694,6 +2817,7 @@ function openCaptureCropModal(imagePath, index) {
     return;
   }
 
+  captureCropReturnFocus = rememberActiveElement();
   captureCropState = {
     open: true,
     imagePath: path,
@@ -2710,9 +2834,20 @@ function openCaptureCropModal(imagePath, index) {
   };
   setCaptureCropApplyBusy(false);
 
+  modal.hidden = false;
   modal.style.display = "flex";
   modal.setAttribute("aria-hidden", "false");
-  setStatus(statusText("캡처 다시 자르기: 영역을 드래그해 주세요", "Recrop capture: drag the area to keep"));
+  syncLegacyModalIsolation();
+  updateCaptureCropCanvasAccessibility();
+  window.requestAnimationFrame(() => {
+    focusCaptureCropDialog();
+  });
+  setStatus(
+    statusText(
+      "캡처 다시 자르기: 영역을 드래그하거나 방향키로 조정해 주세요",
+      "Recrop capture: drag the area or adjust it with the keyboard",
+    ),
+  );
 
   image.onload = () => {
     if (!captureCropState.open) {
@@ -2724,6 +2859,7 @@ function openCaptureCropModal(imagePath, index) {
     window.requestAnimationFrame(() => {
       resizeCaptureCropCanvas();
       setCaptureCropApplyBusy(false);
+      focusCaptureCropDialog();
     });
   };
   image.onerror = () => {
@@ -3521,15 +3657,21 @@ function bindPresetButtons() {
 }
 
 function openSupportPanel() {
+  supportSheetReturnFocus = rememberActiveElement();
   supportSheetOpen = true;
   renderSupportSheetState();
   renderWorkLayoutState();
+  window.requestAnimationFrame(() => {
+    focusWithin(el("supportSheet"), el("closeSupportPanel"));
+  });
 }
 
 function closeSupportPanel() {
   supportSheetOpen = false;
   renderSupportSheetState();
   renderWorkLayoutState();
+  restoreFocus(supportSheetReturnFocus, "#openSupportPanel");
+  supportSheetReturnFocus = null;
 }
 
 function toggleStatusDrawer() {
@@ -3581,6 +3723,13 @@ if (browseFileButton) {
 const openSupportPanelButton = el("openSupportPanel");
 if (openSupportPanelButton) {
   openSupportPanelButton.addEventListener("click", openSupportPanel);
+}
+
+const supportSheet = el("supportSheet");
+if (supportSheet) {
+  supportSheet.addEventListener("keydown", (event) => {
+    trapFocusInside(event, supportSheet);
+  });
 }
 
 ["closeSupportPanel", "supportSheetBackdrop"].forEach((id) => {
@@ -3806,6 +3955,13 @@ if (captureCropModal) {
   });
 }
 
+const captureCropDialog = el("captureCropDialog");
+if (captureCropDialog) {
+  captureCropDialog.addEventListener("keydown", (event) => {
+    trapFocusInside(event, captureCropDialog);
+  });
+}
+
 const captureCropCloseButton = el("captureCropClose");
 if (captureCropCloseButton) {
   captureCropCloseButton.addEventListener("click", () => {
@@ -3833,6 +3989,7 @@ if (captureCropApplyButton) {
 
 const captureCropCanvas = el("captureCropCanvas");
 if (captureCropCanvas) {
+  updateCaptureCropCanvasAccessibility();
   captureCropCanvas.addEventListener("pointerdown", (event) => {
     if (captureCropCanvas.setPointerCapture) {
       try {
@@ -3856,6 +4013,7 @@ if (captureCropCanvas) {
       onCaptureCropPointerUp();
     }
   });
+  captureCropCanvas.addEventListener("keydown", adjustCaptureCropRectWithKeyboard);
 }
 
 window.addEventListener("resize", () => {
@@ -3963,6 +4121,7 @@ if (window.drumSheetAPI && typeof window.drumSheetAPI.onBackendState === "functi
 
 function refreshLocalizedUi() {
   applyI18n(document);
+  updateCaptureCropCanvasAccessibility();
   const setupLog = el("setupLog");
   if (setupLog) {
     const current = String(setupLog.textContent || "").trim();

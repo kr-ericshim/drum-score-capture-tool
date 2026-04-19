@@ -4,7 +4,7 @@ export function mountShell(root) {
       <header id="topBar" class="topbar"></header>
       <section id="workspaceShell" class="workspace-shell">
         <aside id="processRail" class="process-rail" aria-label=""></aside>
-        <section id="stagePane" class="stage-pane" tabindex="-1"></section>
+        <section id="stagePane" class="stage-pane" tabindex="-1" role="region" aria-label=""></section>
         <aside id="contextLane" class="context-lane" aria-label=""></aside>
       </section>
       <footer id="statusBar" class="status-bar" role="status" aria-live="polite"></footer>

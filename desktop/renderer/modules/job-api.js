@@ -36,6 +36,7 @@ export function sourceType() {
 const DEFAULT_LAYOUT_HINT = "auto";
 const LAYOUT_BOTTOM_BAR = "bottom_bar";
 const LAYOUT_FULL_SCROLL = "full_scroll";
+const LAYOUT_PAGE_TURN = "page_turn";
 
 export function getFormats() {
   return Array.from(document.querySelectorAll(".format:checked")).map((node) => node.value);
@@ -112,6 +113,10 @@ function inferLayoutHintFromRoi(roi, { sourceType: type, stitchEnabled }) {
   const aspect = width / Math.max(1, height);
   if (aspect >= 2.25) {
     return LAYOUT_BOTTOM_BAR;
+  }
+
+  if (aspect <= 1.05) {
+    return LAYOUT_PAGE_TURN;
   }
 
   // Stitch on + non-strip ROI generally means full-score scroll/page style.

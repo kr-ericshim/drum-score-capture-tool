@@ -457,13 +457,23 @@
       </section>
     </main>
 
-    <div id="supportSheet" class="support-sheet" hidden aria-hidden="true">
-      <button id="supportSheetBackdrop" class="support-sheet-backdrop" type="button" aria-label="Close support panel"></button>
+    <div
+      id="supportSheet"
+      class="support-sheet"
+      hidden
+      aria-hidden="true"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="supportSheetTitle"
+      aria-describedby="supportSheetDescription"
+      tabindex="-1"
+    >
+      <div id="supportSheetBackdrop" class="support-sheet-backdrop" aria-hidden="true"></div>
       <section class="panel panel-runtime utility-support-panel support-sheet-panel capture-panel">
         <div class="support-sheet-head">
           <div class="panel-head utility-support-head">
-            <h2 data-i18n="support.title">문제 해결</h2>
-            <p data-i18n="support.helper">실행 오류가 있거나 고급 설정이 필요할 때만 확인합니다.</p>
+            <h2 id="supportSheetTitle" data-i18n="support.title">문제 해결</h2>
+            <p id="supportSheetDescription" data-i18n="support.helper">실행 오류가 있거나 고급 설정이 필요할 때만 확인합니다.</p>
           </div>
           <button id="closeSupportPanel" class="secondary" type="button" data-i18n="crop.close">닫기</button>
         </div>
@@ -509,16 +519,24 @@
       </section>
     </div>
 
-    <div id="captureCropModal" class="capture-crop-modal" style="display: none" aria-hidden="true">
-      <div class="capture-crop-dialog" role="dialog" aria-modal="true" aria-labelledby="captureCropTitle">
+    <div id="captureCropModal" class="capture-crop-modal" hidden aria-hidden="true">
+      <div
+        id="captureCropDialog"
+        class="capture-crop-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="captureCropTitle"
+        aria-describedby="captureCropHelp"
+        tabindex="-1"
+      >
         <div class="capture-crop-head">
           <h3 id="captureCropTitle" data-i18n="crop.title">캡처 다시 자르기</h3>
           <button id="captureCropClose" class="secondary" type="button" data-i18n="crop.close">닫기</button>
         </div>
-        <p class="helper-text" data-i18n="crop.helper">필요한 부분만 남기도록 영역을 드래그합니다. 적용 시 해당 캡처만 교체합니다.</p>
+        <p id="captureCropHelp" class="helper-text" data-i18n="crop.helper">필요한 부분만 남기도록 영역을 드래그합니다. 적용 시 해당 캡처만 교체합니다.</p>
         <div class="capture-crop-stage">
-          <img id="captureCropImage" alt="capture to crop" />
-          <canvas id="captureCropCanvas"></canvas>
+          <img id="captureCropImage" alt="capture to crop" decoding="async" />
+          <canvas id="captureCropCanvas" tabindex="0"></canvas>
         </div>
         <div class="result-actions capture-crop-actions">
           <button id="captureCropReset" class="secondary" type="button" data-i18n="crop.reset">영역 초기화</button>
