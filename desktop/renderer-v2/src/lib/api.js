@@ -50,6 +50,29 @@ export async function requestPreviewFrame({ filePath, startSec }) {
   };
 }
 
+export async function requestPreviewRoiHealth({ sourceType = "file", filePath, youtubeUrl = "", startSec, roi }) {
+  const response = await fetch(`${resolveApiBase()}/preview/roi-health`, {
+    method: "POST",
+    headers: headers({ "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      source_type: sourceType,
+      file_path: filePath || null,
+      youtube_url: youtubeUrl || null,
+      start_sec: Number.isFinite(startSec) ? startSec : null,
+      roi: Array.isArray(roi) ? roi : [],
+    }),
+  });
+  const data = await readJson(response, "ROI 상태를 점검하지 못했습니다.");
+  return {
+    riskLevel: String(data.risk_level || "info"),
+    summary: String(data.summary || ""),
+    diagnostics: Array.isArray(data.diagnostics) ? data.diagnostics : [],
+    sampledFrames: Number(data.sampled_frames || 0),
+    checkedSeconds: Array.isArray(data.checked_seconds) ? data.checked_seconds : [],
+    metrics: data.metrics && typeof data.metrics === "object" ? data.metrics : {},
+  };
+}
+
 export async function preparePreviewSource({ sourceType, filePath, youtubeUrl }) {
   const response = await fetch(`${resolveApiBase()}/preview/source`, {
     method: "POST",

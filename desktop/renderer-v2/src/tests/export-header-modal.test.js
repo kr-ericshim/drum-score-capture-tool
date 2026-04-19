@@ -145,9 +145,9 @@ function createRoot() {
         await handler({ target });
       }
     },
-    dispatchInput(target) {
+    dispatchInput(target, eventInit = {}) {
       for (const handler of listeners.input) {
-        handler({ target });
+        handler({ target, ...eventInit });
       }
     },
   };
@@ -325,6 +325,52 @@ test("metadata typing preserves focus on the same field after rerender", async (
   assert.equal(activeElement.value, "A");
   assert.equal(activeElement.selectionStart, 1);
   assert.equal(activeElement.selectionEnd, 1);
+});
+
+test("metadata composition input defers state updates until IME composition ends", async () => {
+  installBrowserStubs();
+  const root = createRoot();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+      reviewExport: async () => ({}),
+    },
+  });
+
+  seedExportState(app);
+  await root.dispatchAction("run-export");
+  await flush();
+
+  app.debug.setState((next) => {
+    next.exportConfig.documentHeader.title = "";
+    next.exportConfig.metadataModal.draft.title = "";
+    next.exportConfig.metadataModal.dirty = false;
+    return next;
+  });
+
+  const titleInput = root.querySelector("#stagePane")?.querySelector?.('[data-action="update-export-metadata"][data-field="title"]');
+  assert.ok(titleInput);
+  titleInput.focus();
+
+  titleInput.value = "ㄴ";
+  root.dispatchInput(titleInput, { isComposing: true });
+  await flush();
+
+  let state = app.debug.getState();
+  assert.equal(state.exportConfig.metadataModal.draft.title, "");
+  assert.equal(globalThis.document?.activeElement, titleInput);
+
+  titleInput.value = "노";
+  titleInput.setSelectionRange(1, 1);
+  root.dispatchInput(titleInput, { isComposing: false });
+  await flush();
+
+  state = app.debug.getState();
+  assert.equal(state.exportConfig.metadataModal.draft.title, "노");
+  assert.equal(globalThis.document?.activeElement?.dataset?.field, "title");
 });
 
 test("confirm-export-metadata blocks blank titles before job creation", async () => {

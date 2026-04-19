@@ -161,9 +161,35 @@ def analyze_roi_health_for_source(
         except Exception:
             continue
 
+    if not frames:
+        raise RuntimeError("preview extraction failed for all sampled frames")
+
     analysis = analyze_roi_health_frames(frames, roi)
     analysis["checked_seconds"] = checked_seconds
     return analysis
+
+
+def should_block_roi_capture(analysis: Dict[str, object]) -> bool:
+    return str(analysis.get("risk_level") or "info").strip().lower() == "critical"
+
+
+def pad_roi_rect(
+    roi: Sequence[Sequence[float]],
+    *,
+    image_width: int,
+    image_height: int,
+    pad_ratio_y: float = 0.03,
+    pad_ratio_x: float = 0.01,
+) -> List[List[float]]:
+    x1, y1, x2, y2 = _normalize_roi_rect(roi, image_width, image_height)
+    pad_y = max(8, int(round((y2 - y1) * pad_ratio_y)))
+    pad_x = max(4, int(round((x2 - x1) * pad_ratio_x)))
+    return [
+        [float(max(0, x1 - pad_x)), float(max(0, y1 - pad_y))],
+        [float(min(image_width, x2 + pad_x)), float(max(0, y1 - pad_y))],
+        [float(min(image_width, x2 + pad_x)), float(min(image_height, y2 + pad_y))],
+        [float(max(0, x1 - pad_x)), float(min(image_height, y2 + pad_y))],
+    ]
 
 
 def _normalize_roi_rect(

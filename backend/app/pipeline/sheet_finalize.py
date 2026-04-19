@@ -15,11 +15,12 @@ def finalize_sheet_pages(
     *,
     page_ratio: float = PORTRAIT_PAGE_RATIO,
     page_fill_mode: PageFillMode = "performance",
+    normalize_tone: bool = True,
 ) -> List[np.ndarray]:
     if image is None or image.size == 0:
         return []
 
-    prepared = _normalize_score_tone(image)
+    prepared = _normalize_score_tone(image) if normalize_tone else image.copy()
     pages = _split_long_page(prepared, page_ratio=page_ratio, page_fill_mode=page_fill_mode)
     if not pages:
         pages = [prepared]

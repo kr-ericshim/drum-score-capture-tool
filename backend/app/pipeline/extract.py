@@ -24,6 +24,7 @@ def prepare_preview_source(
     youtube_url: Optional[str],
     workspace: Path,
     logger,
+    progress_callback=None,
 ) -> Path:
     workspace.mkdir(parents=True, exist_ok=True)
     return _resolve_source_video(
@@ -32,6 +33,7 @@ def prepare_preview_source(
         youtube_url=youtube_url,
         workspace=workspace,
         logger=logger,
+        progress_callback=progress_callback,
     )
 
 
@@ -109,6 +111,7 @@ def _resolve_source_video(
     youtube_url: Optional[str],
     workspace: Path,
     logger,
+    progress_callback=None,
 ) -> Path:
     if source_type == "file":
         if not file_path:
@@ -121,12 +124,17 @@ def _resolve_source_video(
     if source_type == "youtube":
         if not youtube_url:
             raise ValueError("youtube_url required for youtube source")
-        return _download_youtube(youtube_url, workspace=workspace, logger=logger)
+        return _download_youtube(
+            youtube_url,
+            workspace=workspace,
+            logger=logger,
+            progress_callback=progress_callback,
+        )
 
     raise ValueError(f"unsupported source_type={source_type}")
 
 
-def _download_youtube(url: str, workspace: Path, logger) -> Path:
+def _download_youtube(url: str, workspace: Path, logger, progress_callback=None) -> Path:
     download_dir = workspace / "downloads"
     download_dir.mkdir(parents=True, exist_ok=True)
     output_template = str(download_dir / "%(id)s.%(ext)s")
@@ -148,6 +156,13 @@ def _download_youtube(url: str, workspace: Path, logger) -> Path:
         "retries": 2,
         "logger": _YtDlpLogBridge(logger),
     }
+    if progress_callback:
+        base_opts["progress_hooks"] = [
+            _build_youtube_progress_hook(progress_callback=progress_callback, logger=logger)
+        ]
+        base_opts["postprocessor_hooks"] = [
+            _build_youtube_postprocessor_hook(progress_callback=progress_callback, logger=logger)
+        ]
     if ffmpeg_location:
         base_opts["ffmpeg_location"] = ffmpeg_location
     node_runtime = _resolve_node_runtime_bin()
@@ -241,6 +256,111 @@ class _YtDlpLogBridge:
         if text.startswith("[debug]"):
             return
         self._logger(f"yt-dlp: {text}")
+
+
+def _build_youtube_progress_hook(*, progress_callback, logger):
+    def _hook(payload: Dict[str, object]) -> None:
+        status = str(payload.get("status") or "").strip().lower()
+        if status == "downloading":
+            downloaded = _coerce_progress_number(payload.get("downloaded_bytes"))
+            total = _coerce_progress_number(payload.get("total_bytes")) or _coerce_progress_number(
+                payload.get("total_bytes_estimate")
+            )
+            progress = None
+            progress_mode = "indeterminate"
+            if total and total > 0:
+                progress = max(0.0, min(downloaded / total, 1.0))
+                progress_mode = "determinate"
+
+            percent_text = _normalize_percent_text(payload.get("_percent_str"))
+            if not percent_text and progress is not None:
+                percent_text = f"{int(round(progress * 100.0))}%"
+            message = "downloading youtube source"
+            if percent_text:
+                message = f"{message} {percent_text}"
+
+            progress_callback(
+                {
+                    "stage": "download",
+                    "progress": progress,
+                    "progress_mode": progress_mode,
+                    "message": message,
+                }
+            )
+            logger(f"yt-dlp progress: {message}")
+            return
+
+        if status == "finished":
+            message = "youtube download finished"
+            progress_callback(
+                {
+                    "stage": "download",
+                    "progress": 1.0,
+                    "progress_mode": "determinate",
+                    "message": message,
+                }
+            )
+            logger(f"yt-dlp progress: {message}")
+
+    return _hook
+
+
+def _build_youtube_postprocessor_hook(*, progress_callback, logger):
+    def _hook(payload: Dict[str, object]) -> None:
+        status = str(payload.get("status") or "").strip().lower()
+        if status not in {"started", "processing", "finished"}:
+            return
+
+        name = str(payload.get("postprocessor") or payload.get("postprocessor_key") or "").strip()
+        detail = _describe_youtube_postprocessor(name)
+        message = f"{detail} in progress"
+        progress = None
+        progress_mode = "indeterminate"
+        if status == "finished":
+            message = f"{detail} finished"
+            progress = 1.0
+            progress_mode = "determinate"
+
+        progress_callback(
+            {
+                "stage": "postprocess",
+                "progress": progress,
+                "progress_mode": progress_mode,
+                "message": message,
+            }
+        )
+        logger(f"yt-dlp postprocess: {message}")
+
+    return _hook
+
+
+def _coerce_progress_number(value: object) -> float:
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _normalize_percent_text(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = " ".join(text.split())
+    if text.endswith(".0%"):
+        return f"{text[:-3]}%"
+    return text
+
+
+def _describe_youtube_postprocessor(name: str) -> str:
+    normalized = str(name or "").strip()
+    lowered = normalized.lower()
+    if "merge" in lowered:
+        return "ffmpeg merge"
+    if "extract" in lowered and "audio" in lowered:
+        return "audio extraction"
+    if normalized:
+        return normalized
+    return "youtube postprocess"
 
 
 def _clear_download_artifacts(download_dir: Path) -> None:

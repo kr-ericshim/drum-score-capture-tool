@@ -3,8 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import cv2
 import numpy as np
 
+from app.pipeline.roi_health import pad_roi_rect
 from app.schemas import DetectOptions
 
 
@@ -26,10 +28,19 @@ def detect_sheet_regions(
 
     detections: List[Dict[str, Any]] = []
     for idx, frame_path in enumerate(frame_paths):
+        safe_roi = roi.tolist()
+        image = cv2.imread(str(frame_path))
+        if image is not None:
+            safe_roi = pad_roi_rect(
+                roi.tolist(),
+                image_width=image.shape[1],
+                image_height=image.shape[0],
+            )
         detections.append(
             {
                 "frame_path": str(frame_path),
                 "roi": roi.tolist(),
+                "safe_roi": safe_roi,
                 "score": 1.0,
                 "frame_index": idx,
             }
