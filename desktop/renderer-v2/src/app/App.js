@@ -40,6 +40,7 @@ import {
   getPreviewSourceJob,
   preparePreviewSource,
   requestPreviewFrame,
+  requestPreviewRoiHealth,
   reviewExport,
 } from "../lib/api.js";
 import { escapeHtml } from "../lib/html.js";
@@ -202,6 +203,14 @@ export function createApp(root, dependencies = {}) {
     ? {
       getArchiveLibrary: async () => ({ items: [] }),
       getLocalMediaRegistry: async () => ({ items: [] }),
+      requestPreviewRoiHealth: async () => ({
+        riskLevel: "info",
+        summary: "",
+        diagnostics: [],
+        sampledFrames: 0,
+        checkedSeconds: [],
+        metrics: {},
+      }),
       ...dependencies.api,
     }
     : {
@@ -213,6 +222,7 @@ export function createApp(root, dependencies = {}) {
       getPreviewSourceJob,
       preparePreviewSource,
       requestPreviewFrame,
+      requestPreviewRoiHealth,
       reviewExport,
     };
   const mountShellImpl = dependencies.mountShell || mountShell;
@@ -1009,12 +1019,26 @@ export function createApp(root, dependencies = {}) {
       }
       return;
     }
-    const exportRun = runtimeGuards.beginExportRun();
-    activeJobHandle = null;
-    setState((next) => {
-      return resetExportOutputs(next);
-    });
     try {
+      const roiHealth = await runtimeApi.requestPreviewRoiHealth({
+        sourceType: "file",
+        filePath: state.source.filePath,
+        startSec: state.roi.frameTime || 0,
+        roi: state.roi.appliedRect,
+      });
+      if (roiHealth?.riskLevel === "critical") {
+        setState((next) => {
+          next.roi.diagnostics = Array.isArray(roiHealth.diagnostics) ? roiHealth.diagnostics : [];
+          next.exportConfig.error = String(roiHealth.summary || "ROI is unsafe for capture");
+          return next;
+        });
+        return;
+      }
+      const exportRun = runtimeGuards.beginExportRun();
+      activeJobHandle = null;
+      setState((next) => {
+        return resetExportOutputs(next);
+      });
       const jobId = await runtimeApi.createJob(buildJobPayload(state));
       const jobHandle = runtimeGuards.attachJob(exportRun, jobId);
       if (!jobHandle) {

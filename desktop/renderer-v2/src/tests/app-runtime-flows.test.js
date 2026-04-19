@@ -430,6 +430,53 @@ test("runExport does not create a job when zero formats are selected", async () 
   assert.match(app.debug.getState().exportConfig.error, /형식|format/i);
 });
 
+test("runExport blocks job creation when ROI health is critical", async () => {
+  installBrowserStubs();
+  let createJobCalls = 0;
+  let roiHealthCalls = 0;
+  const root = createRoot();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+      requestPreviewRoiHealth: async () => {
+        roiHealthCalls += 1;
+        return {
+          riskLevel: "critical",
+          summary: "ROI is unsafe for capture",
+          diagnostics: [{ code: "roi_margin_tight", level: "critical" }],
+        };
+      },
+      createJob: async () => {
+        createJobCalls += 1;
+        return "job-1";
+      },
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+      reviewExport: async () => ({}),
+    },
+  });
+
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/source-a.mp4";
+    next.source.displayName = "source-a.mp4";
+    next.roi.frameTime = 5;
+    next.roi.appliedRect = ROI_RECT;
+    next.exportConfig.formats = ["png"];
+    next.ui.activeStep = "export";
+    return next;
+  });
+
+  await root.dispatchAction("run-export");
+  await flush();
+
+  const state = app.debug.getState();
+  assert.equal(roiHealthCalls, 1);
+  assert.equal(createJobCalls, 0);
+  assert.equal(state.exportConfig.runStatus, "idle");
+  assert.match(state.exportConfig.error, /unsafe/i);
+  assert.deepEqual(state.roi.diagnostics, [{ code: "roi_margin_tight", level: "critical" }]);
+});
+
 test("runExport opens the metadata modal before polling when pdf is selected", async () => {
   installBrowserStubs();
   let createJobCalls = 0;
