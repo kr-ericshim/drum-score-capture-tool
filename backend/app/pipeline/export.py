@@ -12,9 +12,9 @@ from PIL import Image, ImageDraw, ImageFont
 from app.pipeline.sheet_finalize import finalize_sheet_pages
 from app.schemas import ExportOptions, PageFillMode
 
-PDF_IMAGE_MAX_EDGE = 2400
+PDF_IMAGE_MAX_EDGE = 3600
 PDF_JPEG_QUALITY = 86
-PDF_RESOLUTION = 150.0
+PDF_RESOLUTION = 300.0
 SCORE_HEADER_BACKGROUND = (255, 255, 255)
 SCORE_HEADER_TEXT = (26, 23, 18)
 SCORE_HEADER_MUTED = (88, 83, 72)
