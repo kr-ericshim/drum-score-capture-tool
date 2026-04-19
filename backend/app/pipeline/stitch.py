@@ -8,7 +8,31 @@ import cv2
 import numpy as np
 
 from app.pipeline.layout_profiles import LAYOUT_BOTTOM_BAR, LAYOUT_FULL_SCROLL, LAYOUT_PAGE_TURN, resolve_layout_hint
+from app.pipeline.sheet_finalize import finalize_sheet_sequence
 from app.schemas import StitchOptions
+
+
+def select_review_candidates(
+    *,
+    frame_paths: List[Path],
+    options: StitchOptions,
+    source_type: Optional[str] = None,
+    logger,
+) -> List[Path]:
+    if not frame_paths:
+        return []
+
+    layout_mode = resolve_layout_hint(options.layout_hint, source_type=source_type)
+    logger(f"review candidate dedupe mode: {options.dedupe_level}")
+    filtered_frames = _filter_redundant_frames(
+        frame_paths=frame_paths,
+        layout_mode=layout_mode,
+        dedupe_level=options.dedupe_level,
+        logger=logger,
+    )
+    if filtered_frames:
+        logger(f"review candidates prepared: {len(filtered_frames)}")
+    return filtered_frames
 
 
 def stitch_pages(
@@ -17,6 +41,7 @@ def stitch_pages(
     options: StitchOptions,
     workspace: Path,
     source_type: Optional[str] = None,
+    prepared_frames: Optional[List[Path]] = None,
     logger,
 ) -> List[Path]:
     workspace.mkdir(parents=True, exist_ok=True)
@@ -24,13 +49,17 @@ def stitch_pages(
         return []
 
     layout_mode = resolve_layout_hint(options.layout_hint, source_type=source_type)
-    logger(f"temporal dedupe mode: {options.dedupe_level}")
-    filtered_frames = _filter_redundant_frames(
-        frame_paths=frame_paths,
-        layout_mode=layout_mode,
-        dedupe_level=options.dedupe_level,
-        logger=logger,
-    )
+    if prepared_frames is not None:
+        filtered_frames = list(prepared_frames)
+        logger(f"stitch input candidates: {len(filtered_frames)}")
+    else:
+        logger(f"temporal dedupe mode: {options.dedupe_level}")
+        filtered_frames = _filter_redundant_frames(
+            frame_paths=frame_paths,
+            layout_mode=layout_mode,
+            dedupe_level=options.dedupe_level,
+            logger=logger,
+        )
     if not filtered_frames:
         return []
 
@@ -50,6 +79,8 @@ def stitch_pages(
     effective_threshold = _effective_overlap_threshold(options.overlap_threshold, layout_mode=layout_mode)
     logger(f"stitch overlap threshold: raw={options.overlap_threshold:.2f} effective={effective_threshold:.2f}")
 
+    grouped_frames: List[List[Path]] = []
+    current_group: List[Path] = [filtered_frames[0]]
     merged_paths: List[Path] = []
     buffer = cv2.imread(str(filtered_frames[0]))
     if buffer is None:
@@ -63,18 +94,48 @@ def stitch_pages(
         score, overlap_px, shift_px = _overlap_score(buffer, next_image)
         if score >= effective_threshold:
             logger(f"overlap detected ({score:.2f}, overlap={overlap_px}px, shift={shift_px:+.1f}px) -> stitching candidate")
+            current_group.append(path)
             buffer = _stitch_pair(buffer, next_image, overlap_px=overlap_px)
         else:
-            out_path = workspace / f"page_{len(merged_paths):04d}.png"
-            cv2.imwrite(str(out_path), buffer)
-            merged_paths.append(out_path)
+            grouped_frames.append(current_group)
+            current_group = [path]
             buffer = next_image
 
-    out_path = workspace / f"page_{len(merged_paths):04d}.png"
-    cv2.imwrite(str(out_path), buffer)
-    merged_paths.append(out_path)
+    grouped_frames.append(current_group)
+    for frame_group in grouped_frames:
+        merged_image = _merge_scroll_group_frames(frame_group)
+        if merged_image is None:
+            continue
+        out_path = workspace / f"page_{len(merged_paths):04d}.png"
+        cv2.imwrite(str(out_path), merged_image)
+        merged_paths.append(out_path)
     logger(f"stitched pages generated: {len(merged_paths)}")
     return merged_paths
+
+
+def _merge_scroll_group_frames(frame_group: List[Path]) -> Optional[np.ndarray]:
+    if not frame_group:
+        return None
+
+    images: List[np.ndarray] = []
+    for path in frame_group:
+        image = cv2.imread(str(path))
+        if image is not None and image.size > 0:
+            images.append(image)
+
+    if not images:
+        return None
+    if len(images) == 1:
+        return images[0]
+
+    _pages, merged, _used_count = finalize_sheet_sequence(
+        images,
+        normalize_inputs=False,
+        dedupe_near_same=False,
+    )
+    if merged is None or merged.size == 0:
+        return images[0]
+    return merged
 
 
 def _filter_redundant_frames(
