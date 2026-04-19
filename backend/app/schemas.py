@@ -164,6 +164,8 @@ class JobFileResponse(BaseModel):
 
 
 class JobReviewExportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     keep_captures: List[str] = Field(default_factory=list)
     keep_images: List[str] = Field(default_factory=list)
     formats: Optional[List[Literal["png", "jpg", "jpeg", "pdf"]]] = None

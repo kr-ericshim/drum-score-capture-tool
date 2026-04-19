@@ -101,6 +101,7 @@ class TestJobApiContract(unittest.TestCase):
             self.assertEqual(export_options.formats, ["pdf"])
             self.assertEqual(export_options.page_fill_mode, "balanced")
             self.assertEqual(export_options.document_header.model_dump(), stored_document_header)
+            self.assertEqual(export_frames.call_args.kwargs["document_header"], stored_document_header)
 
     def test_review_export_rejects_capture_outside_current_review_candidates(self):
         with tempfile.TemporaryDirectory() as td:

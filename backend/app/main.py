@@ -6,10 +6,11 @@ import os
 import platform
 import shutil
 import subprocess
+import tempfile
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit
 
 import cv2
@@ -17,24 +18,30 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
-from app.job_store import Job, JobStatus, JobStore
+from app.job_store import Job, JobStatus, JobStore, ProgressMode, SourcePrepareJob, SourcePrepareStore
 from app.schemas import (
     CaptureCropRequest,
     CaptureCropResponse,
     CacheClearResponse,
     CacheUsageResponse,
+    ExportOptions,
     JobCreate,
     JobCreateResponse,
     JobFileResponse,
     JobReviewExportRequest,
     JobReviewExportResponse,
     JobStatusResponse,
+    LocalMediaRegistryItem,
+    LocalMediaRegistryResponse,
     PreviewFrameRequest,
     PreviewFrameResponse,
     PreviewRoiHealthRequest,
     PreviewRoiHealthResponse,
     PreviewSourceRequest,
     PreviewSourceResponse,
+    PreviewSourceJobCreateRequest,
+    PreviewSourceJobCreateResponse,
+    PreviewSourceJobStatusResponse,
     RuntimeStatusResponse,
 )
 from app.pipeline.acceleration import get_runtime_acceleration, runtime_public_info
@@ -45,10 +52,11 @@ from app.pipeline.extract import (
     extract_preview_frame,
     prepare_preview_source,
 )
+from app.pipeline.layout_profiles import infer_layout_hint_from_roi
 from app.pipeline.roi_health import analyze_roi_health_for_source
 from app.pipeline.detect import detect_sheet_regions
 from app.pipeline.rectify import rectify_frames
-from app.pipeline.stitch import stitch_pages
+from app.pipeline.stitch import select_review_candidates, stitch_pages
 from app.pipeline.upscale import upscale_frames
 from app.pipeline.export import export_frames, export_selected_pages
 
@@ -80,6 +88,8 @@ jobs_root = Path(os.getenv("DRUMSHEET_JOBS_DIR", Path(__file__).resolve().parent
 jobs_root.mkdir(parents=True, exist_ok=True)
 job_store = JobStore(jobs_root)
 executor = ThreadPoolExecutor(max_workers=1)
+source_prepare_store = SourcePrepareStore(jobs_root / "_preview_source_jobs")
+source_prepare_executor = ThreadPoolExecutor(max_workers=1)
 
 
 def _runtime_metadata() -> Dict[str, str]:
@@ -221,6 +231,101 @@ def cache_usage() -> CacheUsageResponse:
     )
 
 
+@app.get("/library/local-media", response_model=LocalMediaRegistryResponse)
+def local_media_registry() -> LocalMediaRegistryResponse:
+    items_by_source: Dict[str, Dict[str, Any]] = {}
+
+    def register_entry(entry: Dict[str, Any]) -> None:
+        source_path = str(entry.get("source_path") or "").strip()
+        if not source_path:
+            return
+        if source_path in items_by_source:
+            existing = items_by_source[source_path]
+            existing["updated_at"] = max(float(existing.get("updated_at") or 0), float(entry.get("updated_at") or 0))
+            if not existing.get("pdf_path") and entry.get("pdf_path"):
+                existing["pdf_path"] = entry.get("pdf_path")
+                existing["output_dir"] = entry.get("output_dir")
+                existing["has_score"] = True
+            return
+        source = Path(source_path)
+        width, height, duration_sec = _probe_video_metadata(source)
+        items_by_source[source_path] = {
+            **entry,
+            "directory": str(source.parent),
+            "width": int(width),
+            "height": int(height),
+            "duration_sec": float(duration_sec),
+            "resolution_label": f"{width}x{height}" if width > 0 and height > 0 else "",
+            "duration_label": _format_duration_label(duration_sec) if duration_sec > 0 else "",
+            "has_score": bool(entry.get("pdf_path")),
+        }
+
+    completed_jobs: List[Dict[str, Any]] = []
+    for metadata_path in sorted(job_store.root.glob("*/job.json")):
+        try:
+            payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+            job = Job.from_record(payload)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            continue
+        if job.status != JobStatus.DONE:
+            continue
+        source_path = _existing_file_path(job.file_path)
+        if source_path is None:
+            continue
+        result = dict(job.result or {})
+        pdf_path = _existing_file_path(result.get("pdf"))
+        output_dir = _existing_dir_path(result.get("output_dir"))
+        completed_jobs.append(
+            {
+                "source_path": str(source_path),
+                "display_name": source_path.name,
+                "pdf_path": str(pdf_path) if pdf_path else None,
+                "output_dir": str(output_dir) if output_dir else None,
+                "source_origin": "job",
+                "youtube_url": job.youtube_url,
+                "updated_at": float(job.updated_at),
+            }
+        )
+
+    completed_jobs.sort(key=lambda item: float(item.get("updated_at") or 0), reverse=True)
+    for entry in completed_jobs:
+        register_entry(entry)
+
+    prepared_sources: List[Dict[str, Any]] = []
+    for metadata_path in sorted(source_prepare_store.root.glob("*/job.json")):
+        try:
+            payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+            job = SourcePrepareJob.from_record(payload)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            continue
+        if job.status != JobStatus.DONE:
+            continue
+        source_path = _existing_file_path(dict(job.result or {}).get("video_path"))
+        if source_path is None:
+            continue
+        prepared_sources.append(
+            {
+                "source_path": str(source_path),
+                "display_name": source_path.name,
+                "pdf_path": None,
+                "output_dir": None,
+                "source_origin": "prepared",
+                "youtube_url": job.youtube_url,
+                "updated_at": float(job.updated_at),
+            }
+        )
+
+    prepared_sources.sort(key=lambda item: float(item.get("updated_at") or 0), reverse=True)
+    for entry in prepared_sources:
+        register_entry(entry)
+
+    items = [
+        LocalMediaRegistryItem(**payload)
+        for payload in sorted(items_by_source.values(), key=lambda item: float(item.get("updated_at") or 0), reverse=True)[:50]
+    ]
+    return LocalMediaRegistryResponse(items=items)
+
+
 @app.post("/preview/frame", response_model=PreviewFrameResponse)
 def preview_frame(payload: PreviewFrameRequest) -> PreviewFrameResponse:
     try:
@@ -344,6 +449,35 @@ def preview_source(payload: PreviewSourceRequest) -> PreviewSourceResponse:
         raise HTTPException(status_code=500, detail=f"preview source preparation failed: {exc}")
 
 
+@app.post("/preview/source-jobs", response_model=PreviewSourceJobCreateResponse)
+def create_preview_source_job(payload: PreviewSourceJobCreateRequest) -> PreviewSourceJobCreateResponse:
+    try:
+        normalized_youtube_url = _normalize_supported_youtube_url(payload.youtube_url or "")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    job_id = f"source-{uuid.uuid4().hex[:12]}"
+    artifact_dir = source_prepare_store.root / job_id
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    source_prepare_store.create(
+        SourcePrepareJob(
+            id=job_id,
+            youtube_url=normalized_youtube_url,
+            artifact_dir=str(artifact_dir),
+        )
+    )
+    source_prepare_executor.submit(_run_source_prepare_job, job_id)
+    return PreviewSourceJobCreateResponse(job_id=job_id)
+
+
+@app.get("/preview/source-jobs/{job_id}", response_model=PreviewSourceJobStatusResponse)
+def get_preview_source_job(job_id: str) -> PreviewSourceJobStatusResponse:
+    job = source_prepare_store.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"preview source job not found: {job_id}")
+    return PreviewSourceJobStatusResponse(**job.to_public_dict())
+
+
 @app.post("/jobs", response_model=JobCreateResponse)
 def create_job(payload: JobCreate) -> JobCreateResponse:
     try:
@@ -354,6 +488,8 @@ def create_job(payload: JobCreate) -> JobCreateResponse:
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+    _apply_auto_layout_hints(payload)
 
     job_id = str(uuid.uuid4())
     artifact_dir = jobs_root / job_id
@@ -393,62 +529,104 @@ def get_job_files(job_id: str) -> JobFileResponse:
     )
 
 
+def _resolve_job_export_options(job: Job, fallback: Optional[ExportOptions] = None) -> ExportOptions:
+    if isinstance(job.options, dict):
+        export_opts = job.options.get("export")
+        if isinstance(export_opts, dict):
+            try:
+                return ExportOptions.model_validate(export_opts)
+            except Exception:
+                pass
+    if fallback is not None:
+        return fallback
+    return ExportOptions()
+
+
 @app.post("/jobs/{job_id}/review-export", response_model=JobReviewExportResponse)
 def review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExportResponse:
     job = job_store.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="job not found")
-    if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
-        raise HTTPException(status_code=409, detail="job is still running")
+    if job.status != JobStatus.DONE:
+        if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
+            raise HTTPException(status_code=409, detail="job is still running")
+        raise HTTPException(status_code=409, detail="job must be completed successfully before review export")
     if isinstance(job.result, dict) and job.result.get("review_export"):
         raise HTTPException(status_code=409, detail="review export is already applied")
 
-    raw_inputs = payload.keep_captures if payload.keep_captures else payload.keep_images
+    has_capture_selection = bool(payload.keep_captures)
+    has_page_selection = bool(payload.keep_images)
+    if has_capture_selection and has_page_selection:
+        raise HTTPException(status_code=400, detail="keep_captures and keep_images cannot be used together")
+    if not has_capture_selection and not has_page_selection:
+        raise HTTPException(status_code=400, detail="keep_captures must include at least one capture")
+
+    selection_mode = "captures" if has_capture_selection else "pages"
+    raw_inputs = payload.keep_captures if has_capture_selection else payload.keep_images
     keep_raw = [str(path or "").strip() for path in raw_inputs]
     keep_raw = [path for path in keep_raw if path]
     if not keep_raw:
         raise HTTPException(status_code=400, detail="keep_captures must include at least one capture")
 
-    selectable_paths = _resolve_selectable_capture_paths_for_job(job=job, preferred_keys=("review_candidates", "images"))
-    resolved_paths: List[Path] = []
-    seen: set[str] = set()
-    for raw_path in keep_raw:
-        resolved = _resolve_capture_path_for_job(job=job, raw_path=raw_path, must_exist=True)
-        if selectable_paths and resolved not in selectable_paths:
-            raise HTTPException(status_code=400, detail=f"capture is not selectable for this job: {raw_path}")
-        key = str(resolved)
-        if key in seen:
-            continue
-        seen.add(key)
-        resolved_paths.append(resolved)
-
+    selectable_paths = _resolve_selectable_capture_paths_for_job_ordered(
+        job=job,
+        preferred_keys=("review_candidates",) if selection_mode == "captures" else ("images",),
+    )
+    resolved_paths = _resolve_selected_capture_paths_for_job(
+        job=job,
+        raw_paths=keep_raw,
+        selectable_paths=selectable_paths,
+    )
     if not resolved_paths:
         raise HTTPException(status_code=400, detail="no valid captures selected")
 
-    configured_formats = ["png", "pdf"]
-    configured_page_fill_mode = "performance"
+    export_config = _resolve_job_export_options(job)
+    configured_formats = list(export_config.formats)
+    configured_page_fill_mode = export_config.page_fill_mode
+    configured_document_header = export_config.document_header.model_dump() if export_config.document_header else None
+    stitch_options_payload: Optional[dict[str, object]] = None
     if isinstance(job.options, dict):
-        export_opts = job.options.get("export")
-        if isinstance(export_opts, dict):
-            candidate_formats = export_opts.get("formats")
-            if isinstance(candidate_formats, list):
-                configured_formats = [str(value) for value in candidate_formats if str(value).strip()]
-            candidate_page_fill_mode = str(export_opts.get("page_fill_mode") or "").strip().lower()
-            if candidate_page_fill_mode in {"balanced", "performance"}:
-                configured_page_fill_mode = candidate_page_fill_mode
+        stitch_opts = job.options.get("stitch")
+        if isinstance(stitch_opts, dict):
+            stitch_options_payload = stitch_opts
 
     requested_formats = payload.formats if payload.formats is not None else configured_formats
     export_workspace = Path(job.artifact_dir) / "export"
+    staged_export_workspace = _create_staged_export_workspace(target_workspace=export_workspace)
 
     try:
+        page_paths = resolved_paths
+        if selection_mode == "captures":
+            stitch_opts = _build_stitch_options(stitch_options_payload)
+            page_paths = stitch_pages(
+                frame_paths=resolved_paths,
+                options=stitch_opts,
+                workspace=staged_export_workspace / "stitched",
+                source_type=job.source_type,
+                prepared_frames=resolved_paths,
+                logger=lambda msg: _append(job_id, msg),
+            )
+            if not page_paths:
+                raise RuntimeError("no pages available after stitching selected captures")
         export_result = export_selected_pages(
-            page_paths=resolved_paths,
+            page_paths=page_paths,
             formats=[str(value) for value in requested_formats],
             page_fill_mode=configured_page_fill_mode,
-            workspace=export_workspace,
+            document_header=configured_document_header,
+            workspace=staged_export_workspace,
             logger=lambda msg: _append(job_id, msg),
         )
+        _commit_staged_export_workspace(
+            staged_workspace=staged_export_workspace,
+            target_workspace=export_workspace,
+        )
+        export_result = _rewrite_export_result_paths(
+            export_result=export_result,
+            staged_workspace=staged_export_workspace,
+            target_workspace=export_workspace,
+        )
     except Exception as exc:
+        shutil.rmtree(staged_export_workspace, ignore_errors=True)
         raise HTTPException(status_code=500, detail=f"review export failed: {exc}")
 
     result = dict(job.result or {})
@@ -457,12 +635,15 @@ def review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExpo
     result["raw_frames"] = export_result.get("raw_frames", [])
     result["page_diagnostics"] = export_result.get("page_diagnostics", [])
     result["output_dir"] = str(export_workspace)
-    preview_candidates = export_result.get("preview_images") or export_result.get("images", [])
     result["preview_images"] = [str(path) for path in export_result.get("preview_images", [])]
-    result["review_candidates"] = [str(path) for path in preview_candidates]
+    if selection_mode == "captures":
+        result["review_candidates"] = [str(path) for path in resolved_paths]
     result["review_export"] = {
         "kept_count": len(resolved_paths),
         "requested_count": len(keep_raw),
+        "selection_mode": selection_mode,
+        "selected_captures": [str(path) for path in resolved_paths] if selection_mode == "captures" else [],
+        "selected_pages": [str(path) for path in resolved_paths] if selection_mode == "pages" else [],
     }
     job_store.set_state(
         job_id,
@@ -471,6 +652,7 @@ def review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExpo
         "done",
         "review export finished",
         result=result,
+        error_code=None,
     )
 
     return JobReviewExportResponse(
@@ -486,8 +668,10 @@ def crop_capture(job_id: str, payload: CaptureCropRequest) -> CaptureCropRespons
     job = job_store.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="job not found")
-    if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
-        raise HTTPException(status_code=409, detail="job is still running")
+    if job.status != JobStatus.DONE:
+        if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
+            raise HTTPException(status_code=409, detail="job is still running")
+        raise HTTPException(status_code=409, detail="job must be completed successfully before capture crop")
 
     capture_path = _resolve_capture_path_for_job(job=job, raw_path=payload.capture_path, must_exist=True)
     result = dict(job.result or {})
@@ -498,23 +682,7 @@ def crop_capture(job_id: str, payload: CaptureCropRequest) -> CaptureCropRespons
     if selectable_paths and capture_path not in selectable_paths:
         raise HTTPException(status_code=400, detail=f"capture is not selectable for this job: {payload.capture_path}")
 
-    def _matches_result_path(key: str) -> bool:
-        values = result.get(key)
-        if not isinstance(values, list):
-            return False
-        for raw_entry in values:
-            candidate_raw = str(raw_entry or "").strip()
-            if not candidate_raw:
-                continue
-            try:
-                candidate_resolved = _resolve_capture_path_for_job(job=job, raw_path=candidate_raw, must_exist=False)
-            except HTTPException:
-                continue
-            if candidate_resolved == capture_path:
-                return True
-        return False
-
-    if result.get("review_export") and (_matches_result_path("preview_images") or _matches_result_path("images")):
+    if result.get("review_export"):
         raise HTTPException(status_code=409, detail="capture crop is unavailable after review export")
 
     if len(payload.roi) != 4:
@@ -578,6 +746,7 @@ def crop_capture(job_id: str, payload: CaptureCropRequest) -> CaptureCropRespons
         job.current_step,
         "capture crop saved",
         result=result,
+        error_code=None,
     )
     job_store.log(job_id, f"capture crop saved: {capture_path.name} ({x2 - x1}x{y2 - y1})")
 
@@ -599,13 +768,14 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
     job_store.set_state(job_id, JobStatus.RUNNING, 0.01, "initializing", "initializing pipeline")
 
     try:
+        _apply_auto_layout_hints(payload)
         options = payload.options
         extract_opts = options.extract
         detect_opts = options.detect
         rectify_opts = options.rectify
         stitch_opts = options.stitch
         upscale_opts = options.upscale
-        export_opts = options.export
+        export_opts = _resolve_job_export_options(job, fallback=options.export)
         runtime_capture: Dict[str, str] = {}
         resolved_source_type = payload.source_type
         normalized_file_path, normalized_youtube_url = _normalize_source_inputs(
@@ -627,9 +797,6 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
             logger=lambda msg: _append(job_id, msg),
             ffmpeg_bin=resolve_ffmpeg_bin(strict=platform.system().lower() == "windows"),
         )
-
-        if stitch_opts.layout_hint == "auto" and detect_opts.layout_hint != "auto":
-            stitch_opts.layout_hint = detect_opts.layout_hint
 
         frames = extract_frames(
             source_type=resolved_source_type,
@@ -673,11 +840,19 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
         result["rectified_frames"] = [str(path) for path in rectified_paths]
         job_store.set_state(job_id, JobStatus.RUNNING, 0.68, "stitching", "rectification completed")
 
+        review_candidate_paths = select_review_candidates(
+            frame_paths=rectified_paths,
+            options=stitch_opts,
+            source_type=payload.source_type,
+            logger=lambda msg: _append(job_id, msg),
+        )
+
         stitched_paths = stitch_pages(
             frame_paths=rectified_paths,
             options=stitch_opts,
             workspace=artifact_dir / "stitched",
             source_type=payload.source_type,
+            prepared_frames=review_candidate_paths,
             logger=lambda msg: _append(job_id, msg),
         )
         result["stitched_frames"] = [str(path) for path in stitched_paths]
@@ -691,13 +866,16 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
             logger=lambda msg: _append(job_id, msg),
         )
         result["upscaled_frames"] = [str(path) for path in upscaled_paths] if upscale_opts.enable else []
-        result["review_candidates"] = [str(path) for path in upscaled_paths]
+        review_candidate_paths = review_candidate_paths or upscaled_paths or stitched_paths
+        result["review_candidates"] = [str(path) for path in review_candidate_paths]
         upscale_message = "upscaling completed" if upscale_opts.enable else "upscaling skipped"
         job_store.set_state(job_id, JobStatus.RUNNING, 0.92, "exporting", upscale_message)
 
+        configured_document_header = export_opts.document_header.model_dump() if export_opts.document_header else None
         export_result = export_frames(
             frame_paths=upscaled_paths,
             options=export_opts,
+            document_header=configured_document_header,
             workspace=artifact_dir / "export",
             logger=lambda msg: _append(job_id, msg),
             source_frames=frames,
@@ -714,6 +892,7 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
             "done",
             "export finished",
             result=result,
+            error_code=None,
         )
         job_store.log(job_id, "job finished")
     except Exception as exc:
@@ -729,8 +908,107 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
         )
 
 
+def _run_source_prepare_job(job_id: str) -> None:
+    job = source_prepare_store.get(job_id)
+    if not job:
+        return
+
+    source_prepare_store.log(job_id, "source prepare job started")
+    source_prepare_store.set_state(
+        job_id,
+        JobStatus.RUNNING,
+        stage="cache_lookup",
+        progress=0.0,
+        progress_mode=ProgressMode.INDETERMINATE,
+        message="checking youtube cache",
+        error_code=None,
+    )
+
+    try:
+        video_path, from_cache = _get_or_prepare_cached_youtube_video(
+            job.youtube_url,
+            logger=lambda msg: _append_source_prepare(job_id, msg),
+            progress_callback=lambda update: _apply_source_prepare_progress(job_id, update),
+        )
+        source_prepare_store.set_state(
+            job_id,
+            JobStatus.RUNNING,
+            stage="validate",
+            progress=0.98,
+            progress_mode=ProgressMode.INDETERMINATE,
+            message="validating final source",
+        )
+        result = {
+            "video_path": str(video_path),
+            "video_url": _to_jobs_files_url(video_path),
+            "from_cache": bool(from_cache),
+        }
+        source_prepare_store.set_state(
+            job_id,
+            JobStatus.DONE,
+            stage="done",
+            progress=1.0,
+            progress_mode=ProgressMode.DETERMINATE,
+            message="youtube source ready",
+            result=result,
+            error_code=None,
+        )
+        source_prepare_store.log(job_id, "source prepare job finished")
+    except Exception as exc:
+        detail = str(exc)
+        source_prepare_store.log(job_id, f"source prepare failed: {detail}")
+        source_prepare_store.set_state(
+            job_id,
+            JobStatus.ERROR,
+            stage="failed",
+            progress=1.0,
+            progress_mode=ProgressMode.INDETERMINATE,
+            message=detail,
+            error_code=_source_prepare_error_code(detail),
+        )
+
+
 def _append(job_id: str, message: str) -> None:
     job_store.log(job_id, message)
+
+
+def _append_source_prepare(job_id: str, message: str) -> None:
+    source_prepare_store.log(job_id, message)
+
+
+def _apply_source_prepare_progress(job_id: str, update: Dict[str, Any]) -> None:
+    if not update:
+        return
+    progress_mode = _coerce_prepare_progress_mode(update.get("progress_mode"))
+    progress_value = update.get("progress")
+    try:
+        progress = float(progress_value) if progress_value is not None else None
+    except (TypeError, ValueError):
+        progress = None
+    source_prepare_store.set_state(
+        job_id,
+        JobStatus.RUNNING,
+        stage=str(update.get("stage") or "download"),
+        progress=progress,
+        progress_mode=progress_mode,
+        message=str(update.get("message") or ""),
+    )
+
+
+def _coerce_prepare_progress_mode(value: object) -> ProgressMode:
+    raw = str(value or ProgressMode.INDETERMINATE.value).strip().lower()
+    if raw == ProgressMode.DETERMINATE.value:
+        return ProgressMode.DETERMINATE
+    return ProgressMode.INDETERMINATE
+
+
+def _source_prepare_error_code(detail: str) -> str:
+    text = str(detail or "").lower()
+    if "low resolution" in text or "resolved to" in text:
+        return "LOW_RESOLUTION"
+    if "youtube_url" in text:
+        return "INVALID_YOUTUBE_URL"
+    return "SOURCE_PREPARE_ERROR"
 
 
 def _find_cached_video(workspace: Path) -> Path | None:
@@ -748,16 +1026,32 @@ def _preview_source_cache_workspace(youtube_url: str) -> Path:
     return cache_dir
 
 
-def _get_or_prepare_cached_youtube_video(youtube_url: str, *, logger) -> tuple[Path, bool]:
+def _get_or_prepare_cached_youtube_video(youtube_url: str, *, logger, progress_callback=None) -> tuple[Path, bool]:
     url = str(youtube_url or "").strip()
     if not url:
         raise ValueError("youtube_url is required when source_type is youtube")
+
+    if progress_callback:
+        progress_callback(
+            {
+                "stage": "cache_lookup",
+                "progress": 0.0,
+                "progress_mode": "indeterminate",
+                "message": "checking youtube cache",
+            }
+        )
 
     cache_dir = _preview_source_cache_workspace(url)
     cached = _find_cached_video(cache_dir)
     if cached is not None:
         width, height = _probe_video_resolution(cached)
-        if _is_low_quality_cached_video(width=width, height=height):
+        if _is_invalid_cached_video(width=width, height=height):
+            logger(f"youtube cache rejected: {cached.name} resolved to {width}x{height}; invalid cache, redownloading")
+            try:
+                cached.unlink()
+            except OSError:
+                pass
+        elif _is_low_quality_cached_video(width=width, height=height):
             logger(f"youtube cache rejected: {cached.name} resolved to {width}x{height}; redownloading")
             try:
                 cached.unlink()
@@ -765,6 +1059,14 @@ def _get_or_prepare_cached_youtube_video(youtube_url: str, *, logger) -> tuple[P
                 pass
         else:
             logger(f"youtube cache hit: {cached.name} {width}x{height}")
+            if progress_callback:
+                progress_callback(
+                    {
+                        "stage": "validate",
+                        "progress_mode": "indeterminate",
+                        "message": "using cached youtube video",
+                    }
+                )
             return cached, True
 
     logger("youtube cache miss: downloading source")
@@ -774,6 +1076,7 @@ def _get_or_prepare_cached_youtube_video(youtube_url: str, *, logger) -> tuple[P
         youtube_url=url,
         workspace=cache_dir,
         logger=logger,
+        progress_callback=progress_callback,
     )
     return video_path, False
 
@@ -814,26 +1117,58 @@ def _resolve_capture_path_for_job(*, job: Job, raw_path: str, must_exist: bool) 
     return resolved
 
 
-def _resolve_selectable_capture_paths_for_job(*, job: Job, preferred_keys: tuple[str, ...]) -> set[Path]:
+def _resolve_selectable_capture_paths_for_job_ordered(*, job: Job, preferred_keys: tuple[str, ...]) -> List[Path]:
     result = job.result if isinstance(job.result, dict) else {}
     for key in preferred_keys:
         raw_values = result.get(key)
         if not isinstance(raw_values, list):
             continue
-        resolved_values: set[Path] = set()
+        resolved_values: List[Path] = []
+        seen: set[Path] = set()
         for raw_value in raw_values:
             candidate_raw = str(raw_value or "").strip()
             if not candidate_raw:
                 continue
             try:
-                resolved_values.add(
-                    _resolve_capture_path_for_job(job=job, raw_path=candidate_raw, must_exist=False)
-                )
+                resolved = _resolve_capture_path_for_job(job=job, raw_path=candidate_raw, must_exist=False)
             except HTTPException:
                 continue
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            resolved_values.append(resolved)
         if resolved_values:
             return resolved_values
-    return set()
+    return []
+
+
+def _resolve_selectable_capture_paths_for_job(*, job: Job, preferred_keys: tuple[str, ...]) -> set[Path]:
+    return set(_resolve_selectable_capture_paths_for_job_ordered(job=job, preferred_keys=preferred_keys))
+
+
+def _resolve_selected_capture_paths_for_job(
+    *,
+    job: Job,
+    raw_paths: List[str],
+    selectable_paths: List[Path],
+) -> List[Path]:
+    selectable_set = set(selectable_paths)
+    requested_order: List[Path] = []
+    selected_set: set[Path] = set()
+    for raw_path in raw_paths:
+        resolved = _resolve_capture_path_for_job(job=job, raw_path=raw_path, must_exist=True)
+        if selectable_set and resolved not in selectable_set:
+            raise HTTPException(status_code=400, detail=f"capture is not selectable for this job: {raw_path}")
+        if resolved in selected_set:
+            continue
+        selected_set.add(resolved)
+        requested_order.append(resolved)
+
+    if selectable_paths:
+        ordered = [path for path in selectable_paths if path in selected_set]
+        if ordered:
+            return ordered
+    return requested_order
 
 
 def _build_export_options(*, formats: List[str]):
@@ -849,6 +1184,24 @@ def _build_export_options(*, formats: List[str]):
     if not normalized:
         normalized = ["png", "pdf"]
     return ExportOptions(formats=normalized, include_raw_frames=False)
+
+
+def _apply_auto_layout_hints(payload: JobCreate) -> None:
+    detect_opts = payload.options.detect
+    stitch_opts = payload.options.stitch
+    inferred_hint = infer_layout_hint_from_roi(detect_opts.roi, source_type=payload.source_type)
+
+    if detect_opts.layout_hint == "auto":
+        detect_opts.layout_hint = inferred_hint
+    if stitch_opts.layout_hint == "auto":
+        stitch_opts.layout_hint = detect_opts.layout_hint if detect_opts.layout_hint != "auto" else inferred_hint
+
+
+def _build_stitch_options(raw_options: Optional[dict[str, object]]):
+    from app.schemas import StitchOptions
+
+    payload = raw_options if isinstance(raw_options, dict) else {}
+    return StitchOptions(**payload)
 
 
 def _clear_export_workspace(workspace: Path) -> None:
@@ -869,6 +1222,61 @@ def _clear_export_workspace(workspace: Path) -> None:
             pdf_path.unlink()
         except OSError:
             pass
+
+
+def _create_staged_export_workspace(*, target_workspace: Path) -> Path:
+    parent = target_workspace.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    staged_root = Path(tempfile.mkdtemp(prefix=f"{target_workspace.name}_staged_", dir=str(parent)))
+    shutil.rmtree(staged_root, ignore_errors=True)
+    staged_root.mkdir(parents=True, exist_ok=True)
+    return staged_root
+
+
+def _commit_staged_export_workspace(*, staged_workspace: Path, target_workspace: Path) -> None:
+    backup_workspace = target_workspace.with_name(f"{target_workspace.name}_backup_{uuid.uuid4().hex[:8]}")
+    try:
+        if target_workspace.exists():
+            target_workspace.replace(backup_workspace)
+        staged_workspace.replace(target_workspace)
+    except Exception:
+        if backup_workspace.exists() and not target_workspace.exists():
+            backup_workspace.replace(target_workspace)
+        raise
+    finally:
+        shutil.rmtree(backup_workspace, ignore_errors=True)
+
+
+def _rewrite_export_result_paths(
+    *,
+    export_result: Dict[str, object],
+    staged_workspace: Path,
+    target_workspace: Path,
+) -> Dict[str, object]:
+    rewritten = dict(export_result or {})
+    for key in ("images", "preview_images", "raw_frames"):
+        raw_values = rewritten.get(key)
+        if not isinstance(raw_values, list):
+            continue
+        rewritten[key] = [
+            str(_rewrite_export_result_path(value, staged_workspace=staged_workspace, target_workspace=target_workspace))
+            for value in raw_values
+        ]
+    pdf_value = rewritten.get("pdf")
+    if pdf_value:
+        rewritten["pdf"] = str(
+            _rewrite_export_result_path(pdf_value, staged_workspace=staged_workspace, target_workspace=target_workspace)
+        )
+    return rewritten
+
+
+def _rewrite_export_result_path(raw_value: object, *, staged_workspace: Path, target_workspace: Path) -> Path:
+    candidate = Path(str(raw_value))
+    try:
+        rel = candidate.relative_to(staged_workspace)
+    except ValueError:
+        return candidate
+    return target_workspace / rel
 
 
 def _detect_source_resolution(*, source_video_path: str | None, extracted_frames: List[Path]) -> tuple[int, int]:
@@ -896,6 +1304,12 @@ def _probe_video_resolution(path: Path) -> tuple[int, int]:
     return _probe_video_resolution_with_opencv(path)
 
 
+def _probe_video_metadata(path: Path) -> tuple[int, int, float]:
+    width, height = _probe_video_resolution(path)
+    duration_sec = _probe_video_duration(path)
+    return width, height, duration_sec
+
+
 def _cached_video_rank(path: Path) -> tuple[int, int, int]:
     width, height = _probe_video_resolution(path)
     try:
@@ -912,6 +1326,10 @@ def _is_low_quality_cached_video(*, width: int, height: int) -> bool:
     if width > 0:
         return width <= 640
     return False
+
+
+def _is_invalid_cached_video(*, width: int, height: int) -> bool:
+    return width <= 0 or height <= 0
 
 
 def _probe_video_resolution_with_ffprobe(path: Path) -> tuple[int, int]:
@@ -967,7 +1385,71 @@ def _probe_video_resolution_with_opencv(path: Path) -> tuple[int, int]:
         height = int(round(float(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)))
         if width > 0 and height > 0:
             return width, height
-        return 0, 0
+            return 0, 0
+    finally:
+        cap.release()
+
+
+def _probe_video_duration(path: Path) -> float:
+    if not path.exists():
+        return 0.0
+    duration = _probe_video_duration_with_ffprobe(path)
+    if duration > 0:
+        return duration
+    return _probe_video_duration_with_opencv(path)
+
+
+def _probe_video_duration_with_ffprobe(path: Path) -> float:
+    try:
+        ffprobe = resolve_ffprobe_bin(strict=False)
+        completed = subprocess.run(
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "json",
+                str(path),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+    except (OSError, RuntimeError, ValueError):
+        return 0.0
+
+    if completed.returncode != 0 or not completed.stdout:
+        return 0.0
+
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return 0.0
+
+    info = payload.get("format")
+    if not isinstance(info, dict):
+        return 0.0
+
+    try:
+        duration = float(info.get("duration") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return duration if duration > 0 else 0.0
+
+
+def _probe_video_duration_with_opencv(path: Path) -> float:
+    cap = cv2.VideoCapture(str(path))
+    if not cap.isOpened():
+        return 0.0
+    try:
+        fps = float(cap.get(cv2.CAP_PROP_FPS) or 0)
+        frame_count = float(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        if fps > 0 and frame_count > 0:
+            return frame_count / fps
+        return 0.0
     finally:
         cap.release()
 
@@ -1020,3 +1502,32 @@ def _human_bytes(size: int) -> str:
     if idx == 0:
         return f"{int(value)} {units[idx]}"
     return f"{value:.1f} {units[idx]}"
+
+
+def _existing_file_path(raw_path: object) -> Path | None:
+    value = str(raw_path or "").strip()
+    if not value:
+        return None
+    path = Path(value).expanduser()
+    if not path.exists() or not path.is_file():
+        return None
+    return path.resolve()
+
+
+def _existing_dir_path(raw_path: object) -> Path | None:
+    value = str(raw_path or "").strip()
+    if not value:
+        return None
+    path = Path(value).expanduser()
+    if not path.exists() or not path.is_dir():
+        return None
+    return path.resolve()
+
+
+def _format_duration_label(seconds: float) -> str:
+    safe = int(max(0, round(float(seconds or 0))))
+    minutes, remain = divmod(safe, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours > 0:
+        return f"{hours:02}:{minutes:02}:{remain:02}"
+    return f"{minutes:02}:{remain:02}"

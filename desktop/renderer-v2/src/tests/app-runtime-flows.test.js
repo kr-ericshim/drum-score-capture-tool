@@ -386,6 +386,58 @@ test("runExport does not create a job when zero formats are selected", async () 
   assert.match(app.debug.getState().exportConfig.error, /형식|format/i);
 });
 
+test("runExport submits normalized document header values before polling starts", async () => {
+  installBrowserStubs();
+  let seenPayload = null;
+  const job = deferred();
+  const root = createRoot();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+      createJob: async (payload) => {
+        seenPayload = payload;
+        return "job-1";
+      },
+      getJob: async () => job.promise,
+      reviewExport: async () => ({}),
+    },
+  });
+
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/source-a.mp4";
+    next.source.displayName = "source-a.mp4";
+    next.roi.frameTime = 5;
+    next.roi.appliedRect = ROI_RECT;
+    next.exportConfig.formats = ["pdf"];
+    next.exportConfig.pageFillMode = "balanced";
+    next.exportConfig.documentHeader = {
+      title: "  Custom Title  ",
+      performer: "  Bill Evans  ",
+      bpm: "128.8",
+      date: "",
+      memo: "   ",
+    };
+    next.ui.activeStep = "export";
+    return next;
+  });
+
+  const pending = root.dispatchAction("run-export");
+  await flush();
+
+  assert.deepEqual(seenPayload.options.export.document_header, {
+    title: "Custom Title",
+    performer: "Bill Evans",
+    bpm: 128,
+    date: "",
+    memo: "",
+  });
+  assert.equal(seenPayload.options.export.page_fill_mode, "balanced");
+
+  job.resolve({ job_id: "job-1", status: "done", progress: 1, current_step: "done", message: "", result: {} });
+  await pending;
+});
+
 test("applied review selection stays locked when a checkbox input fires later", () => {
   installBrowserStubs();
   const root = createRoot();
@@ -549,6 +601,47 @@ test("stale source selection failures do not override a newer successful source"
   assert.equal(state.source.error, "");
 });
 
+test("backend-ready app hydrates the persisted media registry and loads a stored source row", async () => {
+  installBrowserStubs({
+    getBackendState: async () => ({ ready: true, starting: false, running: true, error: "" }),
+    onBackendState: () => () => {},
+  });
+
+  const root = createRoot();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    readVideoMetadata: async () => ({ durationSec: 30, durationLabel: "00:30", resolutionLabel: "1920x1080" }),
+    api: {
+      getLocalMediaRegistry: async () => ({
+        items: [
+          {
+            filePath: "/tmp/library-source.mkv",
+            displayName: "library-source.mkv",
+            directory: "/tmp",
+            resolutionLabel: "1920x1080",
+            durationLabel: "00:30",
+            hasScore: true,
+          },
+        ],
+      }),
+    },
+  });
+
+  await flush();
+
+  let state = app.debug.getState();
+  assert.equal(state.source.registryItems.length, 1);
+  assert.equal(state.source.registryItems[0].filePath, "/tmp/library-source.mkv");
+
+  await root.dispatchAction("load-registry-source", { filePath: "/tmp/library-source.mkv" });
+  await flush();
+
+  state = app.debug.getState();
+  assert.equal(state.source.filePath, "/tmp/library-source.mkv");
+  assert.equal(state.source.displayName, "library-source.mkv");
+  assert.equal(state.ui.activeStep, "roi");
+});
+
 test("destroy removes root listeners and backend subscription", async () => {
   let selectCalls = 0;
   let unsubscribeCalls = 0;
@@ -681,7 +774,7 @@ test("locale toggle updates the top bar labels and inline notices", async () => 
   });
 
   await root.dispatchAction("set-locale", { locale: "en" });
-  assert.match(root.querySelector("#topBar").innerHTML, /PRECISION MEDIA WORKBENCH|VIDEO SOURCE|ROI DEFINE/);
+  assert.match(root.querySelector("#topBar").innerHTML, /Drum Sheet Capture|Choose video|Language switcher/);
 
   app.debug.setState((next) => {
     next.review.outputDir = "/tmp/export";
@@ -801,10 +894,20 @@ test("youtube prepare success promotes the resolved path and enters roi", async 
   const app = createApp(root, {
     exposeTestApi: true,
     api: {
-      preparePreviewSource: async () => ({
-        videoPath: "/tmp/cache/youtube.mp4",
-        fromCache: false,
+      createPreviewSourceJob: async () => "source-1",
+      getPreviewSourceJob: async () => ({
+        jobId: "source-1",
+        status: "done",
+        stage: "done",
+        progress: 1,
+        progressMode: "determinate",
+        message: "youtube source ready",
         logLines: ["youtube download saved: /tmp/cache/youtube.mp4"],
+        result: {
+          videoPath: "/tmp/cache/youtube.mp4",
+          fromCache: false,
+          videoUrl: "/jobs-files/_preview/youtube.mp4",
+        },
       }),
       requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
       createJob: async () => "job-1",
@@ -830,6 +933,97 @@ test("youtube prepare success promotes the resolved path and enters roi", async 
   assert.equal(state.ui.activeStep, "roi");
   assert.equal(state.source.filePath, "/tmp/cache/youtube.mp4");
   assert.equal(state.source.preparedFromYouTube, true);
+});
+
+test("youtube prepare polls live progress into the source screen, top bar, and process rail before completion", async () => {
+  installBrowserStubs();
+  const root = createRoot();
+  const scheduled = [];
+  const previousSetTimeout = globalThis.setTimeout;
+  const previousClearTimeout = globalThis.clearTimeout;
+  globalThis.setTimeout = (fn) => {
+    scheduled.push(fn);
+    return fn;
+  };
+  globalThis.clearTimeout = () => {};
+
+  const snapshots = [
+    {
+      jobId: "source-1",
+      status: "running",
+      stage: "download",
+      progress: 0.42,
+      progressMode: "determinate",
+      message: "downloading video 42%",
+      logLines: ["yt-dlp: download 42%"],
+      result: {},
+    },
+    {
+      jobId: "source-1",
+      status: "done",
+      stage: "done",
+      progress: 1,
+      progressMode: "determinate",
+      message: "youtube source ready",
+      logLines: ["youtube download saved: /tmp/cache/youtube.mp4"],
+      result: {
+        videoPath: "/tmp/cache/youtube.mp4",
+        fromCache: false,
+        videoUrl: "/jobs-files/_preview/youtube.mp4",
+      },
+    },
+  ];
+
+  try {
+    const app = createApp(root, {
+      exposeTestApi: true,
+      api: {
+        createPreviewSourceJob: async () => "source-1",
+        getPreviewSourceJob: async () => snapshots.shift(),
+        requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+        createJob: async () => "job-1",
+        getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+        reviewExport: async () => ({}),
+      },
+      readVideoMetadata: async () => ({
+        durationSec: 60,
+        durationLabel: "01:00",
+        resolutionLabel: "1920x1080",
+      }),
+    });
+
+    app.debug.setState((next) => {
+      next.ui.locale = "en";
+      next.source.sourceType = "youtube";
+      next.source.youtubeUrl = "https://youtu.be/demo";
+      return next;
+    });
+
+    const pending = root.dispatchAction("prepare-source-youtube");
+    await flush();
+
+    let state = app.debug.getState();
+    assert.equal(state.source.prepareStage, "download");
+    assert.equal(state.source.prepareProgress, 0.42);
+    assert.equal(state.source.filePath, "");
+    assert.match(root.querySelector("#topBar").innerHTML, /42%/);
+    assert.match(root.querySelector("#processRail").innerHTML, /42%/);
+    assert.match(root.querySelector("#stagePane").innerHTML, /42%/);
+
+    const nextPoll = scheduled.shift();
+    assert.equal(typeof nextPoll, "function");
+    nextPoll();
+    await flush();
+    await pending;
+    await flush();
+
+    state = app.debug.getState();
+    assert.equal(state.source.filePath, "/tmp/cache/youtube.mp4");
+    assert.equal(state.ui.activeStep, "roi");
+  } finally {
+    globalThis.setTimeout = previousSetTimeout;
+    globalThis.clearTimeout = previousClearTimeout;
+  }
 });
 
 test("export after prepared youtube submits a file-backed payload", async () => {

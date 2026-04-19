@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from app.pipeline.sheet_finalize import finalize_sheet_pages, finalize_sheet_sequence
+from app.pipeline.sheet_finalize import finalize_sheet_pages
 from app.schemas import ExportOptions, PageFillMode
 
 PDF_IMAGE_MAX_EDGE = 2400
@@ -21,6 +21,7 @@ def export_frames(
     *,
     frame_paths: List[Path],
     options: ExportOptions,
+    document_header: Optional[Dict[str, object]] = None,
     workspace: Path,
     logger,
     source_frames: Optional[List[Path]] = None,
@@ -30,6 +31,7 @@ def export_frames(
 
     image_dir = workspace / "images"
     image_dir.mkdir(parents=True, exist_ok=True)
+    _ = document_header
 
     if options.include_raw_frames and source_frames:
         raw_dir = workspace / "raw_frames"
@@ -52,31 +54,13 @@ def export_frames(
             continue
         source_images.append(image)
 
-    finalized_pages = []
-    merged_sheet = None
-    used_frame_count = 0
-    if source_images:
-        finalized_pages, merged_sheet, used_frame_count = finalize_sheet_sequence(
-            source_images,
-            page_fill_mode=page_fill_mode,
-        )
-
-    if not finalized_pages:
-        for image in source_images:
-            fallback_pages = finalize_sheet_pages(image, page_fill_mode=page_fill_mode)
-            if fallback_pages:
-                finalized_pages.extend(fallback_pages)
-            else:
-                finalized_pages.append(image)
+    finalized_pages = _finalize_export_pages(
+        source_images,
+        page_fill_mode=page_fill_mode,
+    )
 
     if not finalized_pages:
         raise RuntimeError("no pages available for export")
-
-    if merged_sheet is not None and used_frame_count >= 2 and wants_png:
-        complete_out = image_dir / "sheet_complete.png"
-        if cv2.imwrite(str(complete_out), merged_sheet):
-            output["full_sheet"] = str(complete_out)
-            logger(f"exported complete stitched sheet: {complete_out.name} (frames={used_frame_count})")
 
     if len(finalized_pages) > len(source_images) and source_images:
         logger(f"export page split: input#{len(source_images)} -> {len(finalized_pages)} pages")
@@ -136,6 +120,7 @@ def export_selected_pages(
     page_paths: List[Path],
     formats: List[str],
     page_fill_mode: PageFillMode = "performance",
+    document_header: Optional[Dict[str, object]] = None,
     workspace: Path,
     logger,
 ) -> Dict[str, object]:
@@ -147,6 +132,7 @@ def export_selected_pages(
     preview_dir.mkdir(parents=True, exist_ok=True)
 
     _clear_previous_review_outputs(workspace=workspace, image_dir=image_dir, preview_dir=preview_dir)
+    _ = document_header
 
     normalized_formats = _normalize_formats(formats)
     wants_png = "png" in normalized_formats
@@ -163,30 +149,18 @@ def export_selected_pages(
     if not source_images:
         raise RuntimeError("no valid pages available for review export")
 
-    finalized_pages = []
-    merged_sheet = None
-    used_frame_count = 0
-    if source_images:
-        finalized_pages, merged_sheet, used_frame_count = finalize_sheet_sequence(
-            source_images,
-            page_fill_mode=page_fill_mode,
-        )
+    finalized_pages = _finalize_export_pages(
+        source_images,
+        page_fill_mode=page_fill_mode,
+    )
 
     if not finalized_pages:
-        for image in source_images:
-            fallback_pages = finalize_sheet_pages(image, page_fill_mode=page_fill_mode)
-            if fallback_pages:
-                finalized_pages.extend(fallback_pages)
-            else:
-                finalized_pages.append(image)
-
-    if not finalized_pages:
-        raise RuntimeError("no pages available after refinalizing selected captures")
+        raise RuntimeError("no pages available after preparing selected captures")
 
     if len(finalized_pages) > len(source_images) and source_images:
         logger(f"review export page split: input#{len(source_images)} -> {len(finalized_pages)} pages")
-    elif used_frame_count >= 2 and merged_sheet is not None:
-        logger(f"review export refinalized captures: {used_frame_count} inputs -> {len(finalized_pages)} pages")
+    elif len(source_images) >= 2:
+        logger(f"review export preserved captures: {len(source_images)} inputs -> {len(finalized_pages)} pages")
 
     image_paths: List[Path] = []
     preview_paths: List[Path] = []
@@ -244,6 +218,22 @@ def export_selected_pages(
 
     logger(f"review export saved: {len(finalized_pages)} pages from {len(source_images)} selected captures")
     return output
+
+
+def _finalize_export_pages(
+    images: List[np.ndarray],
+    *,
+    page_fill_mode: PageFillMode,
+) -> List[np.ndarray]:
+    finalized_pages: List[np.ndarray] = []
+    for image in images:
+        pages = finalize_sheet_pages(image, page_fill_mode=page_fill_mode)
+        if pages:
+            finalized_pages.extend(pages)
+            continue
+        if image is not None and image.size > 0:
+            finalized_pages.append(image)
+    return finalized_pages
 
 
 def _normalize_formats(formats: List[str]) -> List[str]:
