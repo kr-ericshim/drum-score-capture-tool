@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createApp } from "../app/App.js";
+import { createInitialSessionState } from "../app/session/selectors.js";
+import { renderExportScreen } from "../features/export/ExportScreen.js";
 
 const ROI_RECT = [
   [0, 0],
@@ -315,4 +317,36 @@ test("confirm-export-metadata normalizes the draft into payload-safe document he
     date: "",
     memo: "half-time feel",
   });
+});
+
+test("rendered metadata modal uses paper-surface classes and responsive row hooks", () => {
+  const state = createInitialSessionState();
+  state.ui.locale = "ko";
+  state.source.filePath = "/tmp/source-a.mp4";
+  state.source.displayName = "source-a.mp4";
+  state.roi.previewImage = "/tmp/frame.png";
+  state.roi.appliedRect = ROI_RECT;
+  state.exportConfig.formats = ["pdf"];
+  state.exportConfig.metadataModal = {
+    isOpen: true,
+    draft: {
+      title: "Blue in Green",
+      performer: "Bill Evans Trio",
+      bpm: "128",
+      date: "2026-04-19",
+      memo: "half-time feel",
+    },
+    dirty: true,
+    validation: { title: "", bpm: "" },
+    showDiscardConfirm: true,
+  };
+
+  const markup = renderExportScreen(state);
+
+  assert.match(markup, /class="export-metadata-overlay"/);
+  assert.match(markup, /class="export-metadata-modal export-metadata-sheet"/);
+  assert.match(markup, /class="export-metadata-grid"/);
+  assert.match(markup, /class="export-metadata-row export-metadata-row-split"/);
+  assert.match(markup, /class="export-metadata-actions"/);
+  assert.match(markup, /class="export-metadata-discard"/);
 });

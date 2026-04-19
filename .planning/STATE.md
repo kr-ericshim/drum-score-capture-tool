@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 01-01-PLAN.md
-last_updated: "2026-04-19T03:24:55.097Z"
+stopped_at: Completed 01-02-PLAN.md
+last_updated: "2026-04-19T03:38:13.821Z"
 last_activity: 2026-04-19
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 3
-  completed_plans: 1
-  percent: 33
+  completed_plans: 2
+  percent: 67
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-19)
 ## Current Position
 
 Phase: 01 (score-style-export-header-and-layout) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-04-19
 
@@ -52,6 +52,7 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: Not enough data
 
 | Phase 01 P01 | 9m | 2 tasks | 9 files |
+| Phase 01-score-style-export-header-and-layout P02 | 6m | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -67,6 +68,9 @@ Recent decisions affecting current work:
 - [Phase 01]: Locked export metadata under exportConfig.documentHeader and options.export.document_header as the single contract path.
 - [Phase 01]: Initial export and review export both resolve document_header from stored job.options.export instead of review-time overrides.
 - [Phase 01]: JobReviewExportRequest now forbids extra fields so review export cannot accept a second metadata contract.
+- [Phase 01-score-style-export-header-and-layout]: Only the PDF path composes the score-style header; PNG/JPG exports and review previews stay raw finalized page images.
+- [Phase 01-score-style-export-header-and-layout]: Page diagnostics remain based on finalized score pages before header composition so the title band cannot create false suspicious-page warnings.
+- [Phase 01-score-style-export-header-and-layout]: Composed PDF pages carry score_header_band_height metadata so _prepare_pdf_image() preserves first-page music scale when the header makes the page taller.
 
 ### Pending Todos
 
@@ -88,6 +92,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-19T03:24:55.094Z
-Stopped at: Completed 01-01-PLAN.md
+Last session: 2026-04-19T03:38:13.818Z
+Stopped at: Completed 01-02-PLAN.md
 Resume file: None

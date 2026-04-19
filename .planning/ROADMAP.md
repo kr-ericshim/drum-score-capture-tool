@@ -34,7 +34,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 Plans:
 - [x] 01-01: Define export metadata contract across renderer state, API schema, and job artifacts
-- [ ] 01-02: Compose score-style PDF header and page layout inside the export/finalize pipeline
+- [x] 01-02: Compose score-style PDF header and page layout inside the export/finalize pipeline
 - [ ] 01-03: Add export-form UX and regression coverage for header rendering and layout output
 
 ### Phase 2: Capture Truth Alignment And Diagnostics
