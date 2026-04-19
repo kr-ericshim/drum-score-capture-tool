@@ -8,6 +8,8 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, List, Optional
 
+_ERROR_CODE_UNSET = object()
+
 
 class JobStatus(str, Enum):
     QUEUED = "queued"
@@ -139,7 +141,7 @@ class JobStore:
         current_step: Optional[str] = None,
         message: Optional[str] = None,
         result: Optional[Dict] = None,
-        error_code: Optional[str] = None,
+        error_code: object = _ERROR_CODE_UNSET,
     ) -> None:
         with self._lock:
             job = self._jobs.get(job_id)
@@ -154,7 +156,7 @@ class JobStore:
                 job.message = message
             if result is not None:
                 job.result = result
-            if error_code is not None:
+            if error_code is not _ERROR_CODE_UNSET:
                 job.error_code = error_code
             job.updated_at = time.time()
             self._persist_job_locked(job)
@@ -328,7 +330,7 @@ class SourcePrepareStore:
         progress_mode: Optional[ProgressMode] = None,
         message: Optional[str] = None,
         result: Optional[Dict[str, Any]] = None,
-        error_code: Optional[str] = None,
+        error_code: object = _ERROR_CODE_UNSET,
     ) -> None:
         with self._lock:
             job = self._jobs.get(job_id)
@@ -345,7 +347,7 @@ class SourcePrepareStore:
                 job.message = message
             if result is not None:
                 job.result = result
-            if error_code is not None:
+            if error_code is not _ERROR_CODE_UNSET:
                 job.error_code = error_code
             job.updated_at = time.time()
             self._persist_job_locked(job)
