@@ -1097,7 +1097,7 @@ def _get_or_prepare_cached_youtube_video(youtube_url: str, *, logger, progress_c
                 "video_path": cached,
                 "from_cache": True,
                 "video_title": cached_meta.get("video_title", ""),
-                "source_key": url,
+                "source_key": cached_meta.get("source_key", "") or url,
             }
 
     logger("youtube cache miss: downloading source")
@@ -1114,7 +1114,7 @@ def _get_or_prepare_cached_youtube_video(youtube_url: str, *, logger, progress_c
         "video_path": video_path,
         "from_cache": False,
         "video_title": metadata.get("video_title", ""),
-        "source_key": url,
+        "source_key": metadata.get("source_key", "") or url,
     }
 
 

@@ -42,10 +42,10 @@ class TestPreviewSourceCache(unittest.TestCase):
                 "prepare_preview_source",
                 side_effect=fake_prepare_preview_source,
             ) as prepare_source:
-                resolved, from_cache = main._get_or_prepare_cached_youtube_video(url, logger=lambda *_: None)
+                prepared = main._get_or_prepare_cached_youtube_video(url, logger=lambda *_: None)
 
-            self.assertFalse(from_cache)
-            self.assertEqual(resolved, fresh_video)
+            self.assertFalse(prepared["from_cache"])
+            self.assertEqual(prepared["video_path"], fresh_video)
             prepare_source.assert_called_once()
 
     def test_cache_hit_uses_current_namespaced_directory(self):
@@ -59,11 +59,14 @@ class TestPreviewSourceCache(unittest.TestCase):
                 cached_video = cache_dir / "cached.mp4"
                 cached_video.write_bytes(b"cached-video")
 
-                with patch.object(main, "prepare_preview_source") as prepare_source:
-                    resolved, from_cache = main._get_or_prepare_cached_youtube_video(url, logger=lambda *_: None)
+                with patch.object(main, "_probe_video_resolution", return_value=(1920, 1080)), patch.object(
+                    main,
+                    "prepare_preview_source",
+                ) as prepare_source:
+                    prepared = main._get_or_prepare_cached_youtube_video(url, logger=lambda *_: None)
 
-            self.assertTrue(from_cache)
-            self.assertEqual(resolved, cached_video)
+            self.assertTrue(prepared["from_cache"])
+            self.assertEqual(prepared["video_path"], cached_video)
             prepare_source.assert_not_called()
 
     def test_cache_hit_prefers_highest_resolution_video(self):
@@ -88,10 +91,37 @@ class TestPreviewSourceCache(unittest.TestCase):
                     main,
                     "prepare_preview_source",
                 ) as prepare_source:
-                    resolved, from_cache = main._get_or_prepare_cached_youtube_video(url, logger=lambda *_: None)
+                    prepared = main._get_or_prepare_cached_youtube_video(url, logger=lambda *_: None)
 
-            self.assertTrue(from_cache)
-            self.assertEqual(resolved, high)
+            self.assertTrue(prepared["from_cache"])
+            self.assertEqual(prepared["video_path"], high)
+            prepare_source.assert_not_called()
+
+    def test_cache_hit_reads_source_metadata_for_title_and_key(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            jobs_root = Path(tmp_dir) / "jobs"
+            jobs_root.mkdir(parents=True, exist_ok=True)
+            url = "https://example.com/watch?v=abc"
+
+            with patch.object(main, "jobs_root", jobs_root):
+                cache_dir = main._preview_source_cache_workspace(url)
+                cached_video = cache_dir / "cached.mp4"
+                cached_video.write_bytes(b"cached-video")
+                (cache_dir / "source.json").write_text(
+                    '{"source_key":"https://www.youtube.com/watch?v=abc123","video_title":"Take Five Drum Lesson"}',
+                    encoding="utf-8",
+                )
+
+                with patch.object(main, "_probe_video_resolution", return_value=(1920, 1080)), patch.object(
+                    main,
+                    "prepare_preview_source",
+                ) as prepare_source:
+                    prepared = main._get_or_prepare_cached_youtube_video(url, logger=lambda *_: None)
+
+            self.assertTrue(prepared["from_cache"])
+            self.assertEqual(prepared["video_path"], cached_video)
+            self.assertEqual(prepared["video_title"], "Take Five Drum Lesson")
+            self.assertEqual(prepared["source_key"], "https://www.youtube.com/watch?v=abc123")
             prepare_source.assert_not_called()
 
     def test_cache_hit_redownloads_low_resolution_video(self):
@@ -115,10 +145,38 @@ class TestPreviewSourceCache(unittest.TestCase):
                     "prepare_preview_source",
                     side_effect=fake_prepare_preview_source,
                 ) as prepare_source:
-                    resolved, from_cache = main._get_or_prepare_cached_youtube_video(url, logger=lambda *_: None)
+                    prepared = main._get_or_prepare_cached_youtube_video(url, logger=lambda *_: None)
 
-            self.assertFalse(from_cache)
-            self.assertEqual(resolved, refreshed_video)
+            self.assertFalse(prepared["from_cache"])
+            self.assertEqual(prepared["video_path"], refreshed_video)
+            self.assertFalse(cached_video.exists())
+            prepare_source.assert_called_once()
+
+    def test_cache_hit_redownloads_invalid_zero_dimension_video(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            jobs_root = Path(tmp_dir) / "jobs"
+            jobs_root.mkdir(parents=True, exist_ok=True)
+            url = "https://example.com/watch?v=abc"
+
+            with patch.object(main, "jobs_root", jobs_root):
+                cache_dir = main._preview_source_cache_workspace(url)
+                cached_video = cache_dir / "cached.mp4"
+                refreshed_video = cache_dir / "fresh.mp4"
+                cached_video.write_bytes(b"cached")
+
+                def fake_prepare_preview_source(**kwargs):
+                    refreshed_video.write_bytes(b"fresh")
+                    return refreshed_video
+
+                with patch.object(main, "_probe_video_resolution", return_value=(0, 0)), patch.object(
+                    main,
+                    "prepare_preview_source",
+                    side_effect=fake_prepare_preview_source,
+                ) as prepare_source:
+                    prepared = main._get_or_prepare_cached_youtube_video(url, logger=lambda *_: None)
+
+            self.assertFalse(prepared["from_cache"])
+            self.assertEqual(prepared["video_path"], refreshed_video)
             self.assertFalse(cached_video.exists())
             prepare_source.assert_called_once()
 
