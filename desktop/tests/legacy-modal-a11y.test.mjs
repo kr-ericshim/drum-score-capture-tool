@@ -5,6 +5,7 @@ import path from "node:path";
 
 const indexHtml = fs.readFileSync(path.resolve(process.cwd(), "renderer/index.html"), "utf8");
 const css = fs.readFileSync(path.resolve(process.cwd(), "renderer/style.css"), "utf8");
+const appJs = fs.readFileSync(path.resolve(process.cwd(), "renderer/app.js"), "utf8");
 
 test("legacy support sheet is expressed as a proper dialog surface", () => {
   assert.match(indexHtml, /id="supportSheet"[\s\S]*role="dialog"/);
@@ -18,4 +19,6 @@ test("legacy capture crop dialog exposes keyboard focus affordances", () => {
   assert.match(indexHtml, /id="captureCropCanvas" tabindex="0"/);
   assert.match(css, /\.capture-crop-stage canvas:focus-visible/);
   assert.match(css, /\.support-sheet-panel:focus-visible,\s*\.capture-crop-dialog:focus-visible/);
+  assert.match(appJs, /function adjustCaptureCropRectWithKeyboard\(/);
+  assert.match(appJs, /captureCropCanvas\.addEventListener\("keydown", adjustCaptureCropRectWithKeyboard\)/);
 });

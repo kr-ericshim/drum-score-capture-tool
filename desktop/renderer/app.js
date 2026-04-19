@@ -2910,6 +2910,63 @@ function onCaptureCropPointerUp() {
   }
 }
 
+function adjustCaptureCropRectWithKeyboard(event) {
+  if (!captureCropState.open || !captureCropState.loaded || captureCropState.applyRunning) {
+    return;
+  }
+  const rect = captureCropState.rect;
+  if (!rect) {
+    return;
+  }
+
+  const step = event.altKey ? 10 : 1;
+  const resize = event.shiftKey;
+  const minSize = 12;
+  let nextRect = { ...rect };
+  let handled = true;
+
+  switch (event.key) {
+    case "ArrowLeft":
+      if (resize) {
+        nextRect.w = Math.max(minSize, rect.w - step);
+      } else {
+        nextRect.x = clampNumber(rect.x - step, 0, Math.max(0, captureCropState.canvasWidth - rect.w));
+      }
+      break;
+    case "ArrowRight":
+      if (resize) {
+        nextRect.w = clampNumber(rect.w + step, minSize, Math.max(minSize, captureCropState.canvasWidth - rect.x));
+      } else {
+        nextRect.x = clampNumber(rect.x + step, 0, Math.max(0, captureCropState.canvasWidth - rect.w));
+      }
+      break;
+    case "ArrowUp":
+      if (resize) {
+        nextRect.h = Math.max(minSize, rect.h - step);
+      } else {
+        nextRect.y = clampNumber(rect.y - step, 0, Math.max(0, captureCropState.canvasHeight - rect.h));
+      }
+      break;
+    case "ArrowDown":
+      if (resize) {
+        nextRect.h = clampNumber(rect.h + step, minSize, Math.max(minSize, captureCropState.canvasHeight - rect.y));
+      } else {
+        nextRect.y = clampNumber(rect.y + step, 0, Math.max(0, captureCropState.canvasHeight - rect.h));
+      }
+      break;
+    default:
+      handled = false;
+  }
+
+  if (!handled) {
+    return;
+  }
+
+  event.preventDefault();
+  captureCropState.rect = nextRect;
+  drawCaptureCropOverlay();
+}
+
 function buildCropRoiFromState() {
   const rect = captureCropState.rect;
   if (!rect || rect.w <= 0 || rect.h <= 0) {
