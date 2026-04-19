@@ -9,6 +9,7 @@ from app.pipeline.sheet_finalize import (
     _slice_by_whitespace,
     _split_long_page,
     finalize_sheet_pages,
+    finalize_sheet_sequence,
 )
 
 
@@ -153,6 +154,30 @@ class TestSheetFinalizePagination(unittest.TestCase):
 
         self.assertGreaterEqual(len(pages), 2)
         self.assertGreaterEqual(int(pages[0].shape[0]), 2045)
+
+    def test_finalize_sheet_sequence_can_skip_near_same_dedupe(self):
+        h, w = 900, 1800
+        page_a = np.full((h, w, 3), 255, dtype=np.uint8)
+        page_b = page_a.copy()
+
+        for offset in [0, 12, 24, 36, 48]:
+            y = 220 + offset
+            cv2.line(page_a, (80, y), (1720, y), (0, 0, 0), 2)
+            cv2.line(page_b, (80, y), (1720, y), (0, 0, 0), 2)
+
+        # A tiny notation change is enough to be musically unique while still
+        # looking nearly identical to mean-pixel dedupe.
+        cv2.circle(page_b, (1510, 250), 8, (0, 0, 0), -1)
+
+        _pages_default, _merged_default, used_default = finalize_sheet_sequence([page_a, page_b])
+        _pages_no_dedupe, _merged_no_dedupe, used_no_dedupe = finalize_sheet_sequence(
+            [page_a, page_b],
+            normalize_inputs=False,
+            dedupe_near_same=False,
+        )
+
+        self.assertEqual(used_default, 1)
+        self.assertEqual(used_no_dedupe, 2)
 
 
 if __name__ == "__main__":
