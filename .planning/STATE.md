@@ -1,17 +1,17 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-milestone_name: release-foundation
+milestone_name: milestone
 status: executing
-stopped_at: Phase 1 planning complete
-last_updated: "2026-04-19T02:53:43.846Z"
-last_activity: 2026-04-19 -- Phase 1 planning complete
+stopped_at: Completed 01-01-PLAN.md
+last_updated: "2026-04-19T03:24:55.097Z"
+last_activity: 2026-04-19
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 3
-  completed_plans: 0
-  percent: 0
+  completed_plans: 1
+  percent: 33
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-19)
 
 **Core value:** 개인 연주자가 영상으로부터 빠르고 정확하게 usable한 악보를 뽑고, 별도 편집 없이 바로 보관하거나 인쇄할 수 있는 문서 품질의 PDF를 얻어야 한다.
-**Current focus:** Phase 1 — Score-Style Export Header And Layout
+**Current focus:** Phase 01 — score-style-export-header-and-layout
 
 ## Current Position
 
-Phase: 1 of 5 (Score-Style Export Header And Layout)
-Plan: 0 of 3 in current phase
+Phase: 01 (score-style-export-header-and-layout) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
-Last activity: 2026-04-19 -- Phase 1 planning complete
+Last activity: 2026-04-19
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -51,6 +51,8 @@ Progress: [░░░░░░░░░░] 0%
 - Last 5 plans: -
 - Trend: Not enough data
 
+| Phase 01 P01 | 9m | 2 tasks | 9 files |
+
 ## Accumulated Context
 
 ### Decisions
@@ -62,6 +64,9 @@ Recent decisions affecting current work:
 - Target user is an individual musician, not a collaborative team workspace
 - Export metadata entry belongs immediately before export
 - Release quality is judged as a bundle: capture accuracy, review confidence, export finish, and packaged reliability
+- [Phase 01]: Locked export metadata under exportConfig.documentHeader and options.export.document_header as the single contract path.
+- [Phase 01]: Initial export and review export both resolve document_header from stored job.options.export instead of review-time overrides.
+- [Phase 01]: JobReviewExportRequest now forbids extra fields so review export cannot accept a second metadata contract.
 
 ### Pending Todos
 
@@ -83,6 +88,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-19T02:53:43.846Z
-Stopped at: Phase 1 planning complete
-Resume file: .planning/phases/01-score-style-export-header-and-layout/01-01-PLAN.md
+Last session: 2026-04-19T03:24:55.094Z
+Stopped at: Completed 01-01-PLAN.md
+Resume file: None

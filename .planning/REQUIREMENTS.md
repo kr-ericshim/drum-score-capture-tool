@@ -26,8 +26,8 @@
 
 ### Export Document
 
-- [ ] **EXP-01**: User can export the selected score as PDF and page images from the desktop app
-- [ ] **EXP-02**: User can enter title, performer, date, BPM, and optional notes immediately before export
+- [x] **EXP-01**: User can export the selected score as PDF and page images from the desktop app
+- [x] **EXP-02**: User can enter title, performer, date, BPM, and optional notes immediately before export
 - [ ] **EXP-03**: Exported PDF renders the entered metadata in a clean score-style header at the top of the document
 - [ ] **EXP-04**: Exported pages keep readable margins, consistent page sizing, and print-ready visual quality
 
@@ -64,8 +64,8 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| EXP-01 | Phase 1 | Pending |
-| EXP-02 | Phase 1 | Pending |
+| EXP-01 | Phase 1 | Complete |
+| EXP-02 | Phase 1 | Complete |
 | EXP-03 | Phase 1 | Pending |
 | EXP-04 | Phase 1 | Pending |
 | CAP-01 | Phase 2 | Pending |
