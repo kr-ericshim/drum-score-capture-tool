@@ -485,6 +485,11 @@ export function deriveCapturePages(result = {}, locale = "en") {
 
   return capturePaths.map((capturePath, index) => {
     const diagnostic = alignedDiagnostics[index] || {};
+    const warningReasons = Array.isArray(diagnostic?.warning_reasons)
+      ? diagnostic.warning_reasons.map((value) => String(value || "").trim()).filter(Boolean)
+      : [];
+    const warningReason = warningReasons[0]
+      || String(diagnostic?.warning_reason || diagnostic?.warningReason || "").trim();
     const outputPreviewPath = previewImages[index] || finalImages[index] || capturePath;
     return {
       id: `${index + 1}`,
@@ -496,6 +501,7 @@ export function deriveCapturePages(result = {}, locale = "en") {
       previewKind,
       exportLocked: hasReviewExport,
       suspicious: alignedDiagnostics.length > 0 ? Boolean(diagnostic?.suspicious) : false,
+      warningReason,
       diagnostics: diagnostic,
     };
   });

@@ -152,7 +152,7 @@ test("deriveCapturePages prefers review candidates and keeps diagnostics aligned
     images: ["/tmp/page1.png"],
     page_diagnostics: [
       { page_index: 1, suspicious: false },
-      { page_index: 2, suspicious: true },
+      { page_index: 2, suspicious: true, warning_reasons: ["페이지 하단이 잘릴 수 있습니다."] },
     ],
   });
 
@@ -161,6 +161,7 @@ test("deriveCapturePages prefers review candidates and keeps diagnostics aligned
     ["/tmp/c1.png", "/tmp/c2.png"],
   );
   assert.equal(pages[1].suspicious, true);
+  assert.equal(pages[1].warningReason, "페이지 하단이 잘릴 수 있습니다.");
 });
 
 test("deriveCapturePages falls back to preview images for pdf-only review output", () => {
