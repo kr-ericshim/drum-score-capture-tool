@@ -4,6 +4,12 @@ export const bridge = {
   selectVideoFile() {
     return window?.drumSheetAPI?.selectVideoFile?.() || Promise.resolve("");
   },
+  getPathForFile(file) {
+    if (typeof window?.drumSheetAPI?.getPathForFile === "function") {
+      return window.drumSheetAPI.getPathForFile(file);
+    }
+    return String(file?.path || "");
+  },
   openPath(targetPath) {
     return window?.drumSheetAPI?.openPath?.(targetPath);
   },
