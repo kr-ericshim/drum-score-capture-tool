@@ -1,4 +1,4 @@
-import { isRectValid } from "../../app/session/selectors.js";
+import { isPdfSelected, isRectValid } from "../../app/session/selectors.js";
 import { t } from "../../lib/i18n.js";
 import { normalizeAssetPath } from "../../lib/paths.js";
 
@@ -36,12 +36,19 @@ export function buildExportScreenModel(state) {
   const fileName = state.source.displayName || t("export.fileNameEmpty", { locale });
   const roiSummary = state.roi.appliedRect ? t("export.roiReady", { locale }) : t("export.roiPending", { locale });
   const hasFormats = Array.isArray(state.exportConfig.formats) && state.exportConfig.formats.length > 0;
+  const pdfSelected = isPdfSelected(state.exportConfig.formats);
   const formatsLabel = hasFormats ? state.exportConfig.formats.join(", ").toUpperCase() : t("export.formatsRequired", { locale });
   const canRun = Boolean(state.source.filePath) && Boolean(state.roi.appliedRect) && hasFormats && !running;
   const previewSource = state.roi.previewImage ? normalizeAssetPath(state.roi.previewImage) : "";
   const cropBounds = rectToBounds(state.roi.appliedRect);
   const sourceWidth = Number(state.source.metadata?.width || state.roi.imageWidth || 0);
   const sourceHeight = Number(state.source.metadata?.height || state.roi.imageHeight || 0);
+  const metadataModal = state.exportConfig.metadataModal || {
+    isOpen: false,
+    draft: state.exportConfig.documentHeader || {},
+    validation: { title: "", bpm: "" },
+    showDiscardConfirm: false,
+  };
   const hasCropPreview = Boolean(
     previewSource
     && cropBounds
@@ -62,7 +69,11 @@ export function buildExportScreenModel(state) {
     formatsLabel,
     destinationLabel: t("export.destinationLabel", { locale }),
     destinationValue: state.exportConfig.outputDir || t("export.destinationValue", { locale }),
-    primaryActionLabel: running ? t("export.runBusy", { locale }) : t("export.run", { locale }),
+    primaryActionLabel: running
+      ? t("export.runBusy", { locale })
+      : pdfSelected
+        ? t("export.runPdf", { locale })
+        : t("export.runDirect", { locale }),
     statusMessage: state.exportConfig.message || t("export.ready", { locale }),
     previewSource,
     cropBounds,
@@ -73,6 +84,42 @@ export function buildExportScreenModel(state) {
       ? t("export.previewCaptionReady", { locale })
       : t("export.previewCaptionEmpty", { locale }),
     profileRows: buildProfileRows(state),
+    metadata: {
+      isOpen: Boolean(metadataModal.isOpen),
+      showDiscardConfirm: Boolean(metadataModal.showDiscardConfirm),
+      helperText: pdfSelected ? t("export.metadata.helper", { locale }) : "",
+      titleLabel: t("export.metadata.label.title", { locale }),
+      performerLabel: t("export.metadata.label.performer", { locale }),
+      bpmLabel: t("export.metadata.label.bpm", { locale }),
+      dateLabel: t("export.metadata.label.date", { locale }),
+      memoLabel: t("export.metadata.label.memo", { locale }),
+      titlePlaceholder: t("export.metadata.placeholder.title", { locale }),
+      performerPlaceholder: t("export.metadata.placeholder.performer", { locale }),
+      memoPlaceholder: t("export.metadata.placeholder.memo", { locale }),
+      modalTitle: t("export.metadata.title", { locale }),
+      confirmLabel: t("export.metadata.confirm", { locale }),
+      closeLabel: t("export.metadata.close", { locale }),
+      discardPrompt: t("export.metadata.discardPrompt", { locale }),
+      discardConfirm: t("export.metadata.discardConfirm", { locale }),
+      discardCancel: t("export.metadata.discardCancel", { locale }),
+      validationSummary:
+        metadataModal.validation?.title || metadataModal.validation?.bpm
+          ? t("export.metadata.validation.summary", { locale })
+          : "",
+      validation: {
+        title: metadataModal.validation?.title || "",
+        bpm: metadataModal.validation?.bpm || "",
+      },
+      draft: {
+        title: String(metadataModal.draft?.title ?? ""),
+        performer: String(metadataModal.draft?.performer ?? ""),
+        bpm: metadataModal.draft?.bpm === null || metadataModal.draft?.bpm === undefined
+          ? ""
+          : String(metadataModal.draft.bpm),
+        date: String(metadataModal.draft?.date ?? ""),
+        memo: String(metadataModal.draft?.memo ?? ""),
+      },
+    },
   };
 }
 
@@ -107,6 +154,7 @@ export function renderExportScreen(state) {
                 <span>${t("export.pngMatrix", { locale: model.locale })}</span>
               </label>
             </div>
+            ${model.metadata.helperText ? `<p class="panel-note export-metadata-hint">${model.metadata.helperText}</p>` : ""}
           </section>
           <section class="panel export-module">
             <div class="panel-heading">
@@ -157,6 +205,97 @@ export function renderExportScreen(state) {
           </div>
           <p class="export-preview-note">${model.statusMessage}</p>
         </section>
+        ${model.metadata.isOpen ? `
+          <div class="export-metadata-overlay">
+            <section class="export-metadata-modal export-metadata-sheet" role="dialog" aria-modal="true" aria-labelledby="exportMetadataModalTitle">
+              <div class="export-metadata-head">
+                <p class="export-metadata-kicker">${t("export.title", { locale: model.locale })}</p>
+                <h2 id="exportMetadataModalTitle">${model.metadata.modalTitle}</h2>
+                <p class="export-metadata-helper">${model.metadata.helperText}</p>
+              </div>
+              <div class="export-metadata-rule" aria-hidden="true"></div>
+              ${model.metadata.validationSummary ? `<p class="inline-error export-metadata-error" role="alert">${model.metadata.validationSummary}</p>` : ""}
+              <div class="export-metadata-grid">
+                <div class="export-metadata-row">
+                  <label class="export-metadata-field export-metadata-field-full">
+                    <span>${model.metadata.titleLabel}</span>
+                    <input
+                      data-action="update-export-metadata"
+                      data-field="title"
+                      type="text"
+                      value="${model.metadata.draft.title}"
+                      placeholder="${model.metadata.titlePlaceholder}"
+                      autocomplete="off"
+                      ${model.metadata.validation.title ? 'aria-invalid="true"' : ""}
+                    />
+                    ${model.metadata.validation.title ? `<small class="export-metadata-field-error">${model.metadata.validation.title}</small>` : ""}
+                  </label>
+                </div>
+                <div class="export-metadata-row export-metadata-row-split">
+                  <label class="export-metadata-field">
+                    <span>${model.metadata.performerLabel}</span>
+                    <input
+                      data-action="update-export-metadata"
+                      data-field="performer"
+                      type="text"
+                      value="${model.metadata.draft.performer}"
+                      placeholder="${model.metadata.performerPlaceholder}"
+                      autocomplete="off"
+                    />
+                  </label>
+                  <label class="export-metadata-field">
+                    <span>${model.metadata.bpmLabel}</span>
+                    <input
+                      data-action="update-export-metadata"
+                      data-field="bpm"
+                      type="text"
+                      value="${model.metadata.draft.bpm}"
+                      inputmode="numeric"
+                      autocomplete="off"
+                      ${model.metadata.validation.bpm ? 'aria-invalid="true"' : ""}
+                    />
+                    ${model.metadata.validation.bpm ? `<small class="export-metadata-field-error">${model.metadata.validation.bpm}</small>` : ""}
+                  </label>
+                </div>
+                <div class="export-metadata-row export-metadata-row-split">
+                  <label class="export-metadata-field">
+                    <span>${model.metadata.dateLabel}</span>
+                    <input
+                      data-action="update-export-metadata"
+                      data-field="date"
+                      type="date"
+                      value="${model.metadata.draft.date}"
+                    />
+                  </label>
+                </div>
+                <div class="export-metadata-row">
+                  <label class="export-metadata-field export-metadata-field-full">
+                    <span>${model.metadata.memoLabel}</span>
+                    <textarea
+                      data-action="update-export-metadata"
+                      data-field="memo"
+                      rows="2"
+                      placeholder="${model.metadata.memoPlaceholder}"
+                    >${model.metadata.draft.memo}</textarea>
+                  </label>
+                </div>
+              </div>
+              ${model.metadata.showDiscardConfirm ? `
+                <div class="export-metadata-discard" role="alert">
+                  <p>${model.metadata.discardPrompt}</p>
+                  <div class="export-metadata-discard-actions">
+                    <button class="button button-secondary" data-action="discard-export-metadata">${model.metadata.discardConfirm}</button>
+                    <button class="button button-secondary" data-action="continue-export-metadata">${model.metadata.discardCancel}</button>
+                  </div>
+                </div>
+              ` : ""}
+              <div class="export-metadata-actions">
+                <button class="button button-primary" data-action="confirm-export-metadata">${model.metadata.confirmLabel}</button>
+                <button class="button button-secondary" data-action="close-export-metadata">${model.metadata.closeLabel}</button>
+              </div>
+            </section>
+          </div>
+        ` : ""}
       </div>
     </section>
   `;

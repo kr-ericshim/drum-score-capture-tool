@@ -173,8 +173,13 @@ test("export screen keeps metadata inputs off the left stack until the modal ope
   const closedMarkup = renderExportScreen(state);
 
   assert.doesNotMatch(closedMarkup, /data-action="update-export-metadata"/);
-  assert.doesNotMatch(closedMarkup, /PDF 첫 페이지 상단에만 반영됩니다\.|Applies only to the first PDF page\./);
+  assert.match(closedMarkup, /PDF 첫 페이지 상단에만 반영됩니다\.|Applies only to the first PDF page\./);
 
+  state.exportConfig.formats = ["png"];
+  const pngOnlyMarkup = renderExportScreen(state);
+  assert.doesNotMatch(pngOnlyMarkup, /PDF 첫 페이지 상단에만 반영됩니다\.|Applies only to the first PDF page\./);
+
+  state.exportConfig.formats = ["pdf"];
   state.exportConfig.metadataModal.isOpen = true;
   state.exportConfig.metadataModal.draft = {
     title: "Take Five",

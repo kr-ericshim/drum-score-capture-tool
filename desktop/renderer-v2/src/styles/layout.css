@@ -97,6 +97,7 @@
 }
 
 .export-workbench {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
   gap: 24px;
@@ -207,5 +208,36 @@
 
   .export-workbench {
     grid-template-columns: 1fr;
+  }
+
+  .export-metadata-overlay {
+    padding: 24px 18px;
+  }
+
+  .export-metadata-row-split {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 960px) {
+  .export-metadata-overlay {
+    align-items: start;
+    padding: 18px;
+  }
+
+  .export-metadata-actions,
+  .export-metadata-discard-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .export-workbench {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .export-metadata-overlay {
+    padding: 14px;
   }
 }
