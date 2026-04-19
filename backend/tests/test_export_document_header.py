@@ -11,6 +11,7 @@ from app.pipeline.export import (
     _diagnose_page_image,
     _finalize_export_pages,
     _prepare_pdf_image,
+    _render_document_header_band,
     export_selected_pages,
 )
 
@@ -94,6 +95,31 @@ class TestExportDocumentHeader(unittest.TestCase):
         self.assertEqual(minimal[0].size, blank_optionals[0].size)
         self.assertGreater(verbose[0].size[1], minimal[0].size[1])
         self.assertLess(verbose[0].size[1] - page.shape[0], int(page.shape[0] * 0.4))
+
+    def test_render_document_header_band_uses_side_credits_instead_of_centered_metadata_stack(self):
+        band = _render_document_header_band(
+            page_size=(1100, 1500),
+            document_header={
+                "title": "노래는 불빛처럼 달린다",
+                "performer": "유다빈밴드",
+                "bpm": 124,
+                "date": "2026-04-19",
+                "memo": "유다빈밴드의 'Twenty Plenty' 수록곡",
+            },
+        )
+        self.addCleanup(band.close)
+
+        band_pixels = np.asarray(band)
+        ink_mask = np.any(band_pixels < 235, axis=2)
+        height, width = ink_mask.shape
+        lower_band = ink_mask[int(height * 0.56):int(height * 0.9)]
+        left_ink = int(lower_band[:, :int(width * 0.32)].sum())
+        center_ink = int(lower_band[:, int(width * 0.34):int(width * 0.66)].sum())
+        right_ink = int(lower_band[:, int(width * 0.68):].sum())
+
+        self.assertGreater(left_ink, 120)
+        self.assertGreater(right_ink, 120)
+        self.assertLess(center_ink, min(left_ink, right_ink))
 
     def test_export_selected_pages_applies_document_header_only_to_pdf_and_keeps_diagnostics_on_score(self):
         with tempfile.TemporaryDirectory() as td:

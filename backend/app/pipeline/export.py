@@ -304,16 +304,19 @@ def _render_document_header_band(
     document_header: Dict[str, object],
 ) -> Image.Image:
     page_width, page_height = page_size
-    horizontal_padding = max(48, int(round(page_width * 0.08)))
-    max_text_width = max(160, page_width - (horizontal_padding * 2))
-    top_padding = max(34, int(round(page_height * 0.028)))
-    bottom_padding = max(26, int(round(page_height * 0.024)))
-    title_gap = max(8, int(round(page_height * 0.006)))
-    body_gap = max(6, int(round(page_height * 0.0045)))
-    section_gap = max(12, int(round(page_height * 0.009)))
-    title_font = _resolve_score_header_font(max(34, int(round(page_width * 0.041))))
-    meta_font = _resolve_score_header_font(max(18, int(round(page_width * 0.022))))
-    memo_font = _resolve_score_header_font(max(17, int(round(page_width * 0.019))))
+    horizontal_padding = max(46, int(round(page_width * 0.07)))
+    column_gap = max(30, int(round(page_width * 0.03)))
+    right_column_width = max(210, int(round(page_width * 0.24)))
+    note_column_width = max(180, page_width - (horizontal_padding * 2) - right_column_width - column_gap)
+    title_max_width = max(240, page_width - max(horizontal_padding * 4, int(round(page_width * 0.30))))
+    top_padding = max(38, int(round(page_height * 0.032)))
+    bottom_padding = max(26, int(round(page_height * 0.025)))
+    title_gap = max(10, int(round(page_height * 0.007)))
+    block_gap = max(5, int(round(page_height * 0.004)))
+    section_gap = max(18, int(round(page_height * 0.014)))
+    title_font = _resolve_score_header_title_font(max(36, int(round(page_width * 0.044))))
+    credit_font = _resolve_score_header_font(max(17, int(round(page_width * 0.0185))))
+    note_font = _resolve_score_header_font(max(16, int(round(page_width * 0.0175))))
     measuring_image = Image.new("RGB", (page_width, 32), SCORE_HEADER_BACKGROUND)
     draw = ImageDraw.Draw(measuring_image)
 
@@ -321,7 +324,7 @@ def _render_document_header_band(
         draw,
         str(document_header.get("title") or "").strip(),
         font=title_font,
-        max_width=max_text_width,
+        max_width=title_max_width,
         max_lines=3,
     )
     performer_text = str(document_header.get("performer") or "").strip()
@@ -329,41 +332,48 @@ def _render_document_header_band(
     date_text = str(document_header.get("date") or "").strip()
     memo_text = str(document_header.get("memo") or "").strip()
 
-    metadata_lines: List[tuple[str, ImageFont.ImageFont]] = []
+    note_lines = _wrap_header_text(
+        draw,
+        memo_text,
+        font=note_font,
+        max_width=note_column_width,
+        max_lines=2,
+    ) if memo_text else []
+
+    right_column_lines: List[tuple[str, ImageFont.ImageFont]] = []
     if performer_text:
-        metadata_lines.append((f"PERFORMER  {performer_text}", meta_font))
-
-    tempo_parts: List[str] = []
+        right_column_lines.append((
+            _truncate_text_to_width(draw, performer_text, font=credit_font, max_width=right_column_width),
+            credit_font,
+        ))
     if bpm_value is not None:
-        tempo_parts.append(f"BPM {bpm_value}")
+        right_column_lines.append((
+            _truncate_text_to_width(draw, f"BPM {bpm_value}", font=note_font, max_width=right_column_width),
+            note_font,
+        ))
     if date_text:
-        tempo_parts.append(f"DATE {date_text}")
-    if tempo_parts:
-        metadata_lines.append(("   ·   ".join(tempo_parts), meta_font))
-
-    if memo_text:
-        for memo_line in _wrap_header_text(
-            draw,
-            f"MEMO  {memo_text}",
-            font=memo_font,
-            max_width=max_text_width,
-            max_lines=2,
-        ):
-            metadata_lines.append((memo_line, memo_font))
+        right_column_lines.append((
+            _truncate_text_to_width(draw, date_text, font=note_font, max_width=right_column_width),
+            note_font,
+        ))
 
     title_heights = [_measure_text_height(draw, line, title_font) for line in title_lines]
-    metadata_heights = [_measure_text_height(draw, line, font) for line, font in metadata_lines]
-    needed_height = top_padding + bottom_padding + sum(title_heights) + sum(metadata_heights)
+    note_heights = [_measure_text_height(draw, line, note_font) for line in note_lines]
+    right_column_heights = [_measure_text_height(draw, line, font) for line, font in right_column_lines]
+    footer_block_height = max(
+        sum(note_heights) + (block_gap * max(0, len(note_heights) - 1)),
+        sum(right_column_heights) + (block_gap * max(0, len(right_column_heights) - 1)),
+    )
+    needed_height = top_padding + bottom_padding + sum(title_heights)
     if len(title_heights) > 1:
         needed_height += title_gap * (len(title_heights) - 1)
-    if title_heights and metadata_heights:
+    if title_heights and footer_block_height:
         needed_height += section_gap
-    if len(metadata_heights) > 1:
-        needed_height += body_gap * (len(metadata_heights) - 1)
-    needed_height += max(16, int(round(page_height * 0.012)))
+    needed_height += footer_block_height
+    needed_height += max(22, int(round(page_height * 0.015)))
 
-    min_band_height = max(150, int(round(page_height * 0.12)))
-    max_band_height = max(min_band_height, int(round(page_height * 0.32)))
+    min_band_height = max(168, int(round(page_height * 0.135)))
+    max_band_height = max(min_band_height, int(round(page_height * 0.30)))
     band_height = max(min_band_height, min(max_band_height, needed_height))
     band = Image.new("RGB", (page_width, band_height), SCORE_HEADER_BACKGROUND)
     draw = ImageDraw.Draw(band)
@@ -379,26 +389,33 @@ def _render_document_header_band(
         )
         y += title_heights[idx] + title_gap
 
-    if title_heights and metadata_heights:
+    if title_heights and footer_block_height:
         y += section_gap - title_gap
 
-    for idx, (line, font) in enumerate(metadata_lines):
+    footer_y = max(y, band_height - bottom_padding - footer_block_height)
+
+    note_y = footer_y
+    for idx, line in enumerate(note_lines):
         draw.text(
-            (page_width / 2.0, y),
+            (horizontal_padding, note_y),
+            line,
+            fill=SCORE_HEADER_MUTED,
+            font=note_font,
+            anchor="la",
+        )
+        note_y += note_heights[idx] + block_gap
+
+    right_y = footer_y
+    for idx, (line, font) in enumerate(right_column_lines):
+        draw.text(
+            (page_width - horizontal_padding, right_y),
             line,
             fill=SCORE_HEADER_MUTED,
             font=font,
-            anchor="mt",
+            anchor="ra",
         )
-        y += metadata_heights[idx] + body_gap
+        right_y += right_column_heights[idx] + block_gap
 
-    divider_y = max(y, band_height - bottom_padding)
-    divider_y = min(divider_y, band_height - max(10, bottom_padding // 2))
-    draw.line(
-        ((horizontal_padding, divider_y), (page_width - horizontal_padding, divider_y)),
-        fill=SCORE_HEADER_RULE,
-        width=1,
-    )
     measuring_image.close()
     return band
 
@@ -415,6 +432,18 @@ def _resolve_score_header_font(size: int) -> ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
+def _resolve_score_header_title_font(size: int) -> ImageFont.ImageFont:
+    requested_size = max(12, int(size))
+    for font_path in _iter_score_header_title_font_paths():
+        if not font_path.exists():
+            continue
+        try:
+            return ImageFont.truetype(str(font_path), requested_size)
+        except OSError:
+            continue
+    return _resolve_score_header_font(requested_size)
+
+
 def _iter_score_header_font_paths() -> List[Path]:
     windows_root = Path(os.environ.get("WINDIR", "C:/Windows"))
     return [
@@ -426,6 +455,21 @@ def _iter_score_header_font_paths() -> List[Path]:
         Path("/usr/share/fonts/opentype/noto/NotoSansCJKkr-Regular.otf"),
         Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
         Path("/usr/share/fonts/truetype/nanum/NanumGothic.ttf"),
+    ]
+
+
+def _iter_score_header_title_font_paths() -> List[Path]:
+    windows_root = Path(os.environ.get("WINDIR", "C:/Windows"))
+    return [
+        Path("/System/Library/Fonts/Supplemental/AppleMyungjo.ttf"),
+        Path("/System/Library/Fonts/Supplemental/AppleMyungjo.ttc"),
+        windows_root / "Fonts" / "batang.ttc",
+        windows_root / "Fonts" / "batang.ttf",
+        Path("/Library/Fonts/NotoSerifCJK-Regular.ttc"),
+        Path("/Library/Fonts/Noto Serif CJK KR.ttc"),
+        Path("/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc"),
+        Path("/usr/share/fonts/opentype/noto/NotoSerifCJKkr-Regular.otf"),
+        Path("/usr/share/fonts/truetype/nanum/NanumMyeongjo.ttf"),
     ]
 
 

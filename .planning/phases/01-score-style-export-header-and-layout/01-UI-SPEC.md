@@ -63,7 +63,7 @@ Visual rules:
 Document-style header preview rules:
 
 - The modal may include a small static specimen or layout hint for the score-style header, but it must stay subordinate to the form.
-- The final PDF header style is centered-title-first, with secondary metadata aligned beneath or around it in a restrained score-like composition.
+- The final PDF header style is title-first with a printed-score feel: the title stays centered while memo or source notes sit toward the left and performer or tempo or date credits sit toward the right instead of forming a centered metadata stack.
 - The score-like styling is typographic, not ornamental. No fake manuscript textures, flourish icons, or theatrical frames.
 
 ---
