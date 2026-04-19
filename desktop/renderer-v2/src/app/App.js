@@ -102,7 +102,7 @@ function getTransferFiles(dataTransfer) {
 async function getDroppedVideoPath(dataTransfer, runtimeBridge) {
   const files = getTransferFiles(dataTransfer);
   for (const file of files) {
-    const filePath = String(runtimeBridge.getPathForFile(file) || file?.path || "").trim();
+    const filePath = String(runtimeBridge.getPathForFile?.(file) || file?.path || "").trim();
     if (isSupportedVideoPath(filePath)) {
       return filePath;
     }

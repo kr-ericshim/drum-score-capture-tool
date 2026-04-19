@@ -4,6 +4,9 @@ export const bridge = {
   selectVideoFile() {
     return window?.drumSheetAPI?.selectVideoFile?.() || Promise.resolve("");
   },
+  getPathForFile(file) {
+    return window?.drumSheetAPI?.getPathForFile?.(file) || "";
+  },
   openPath(targetPath) {
     return window?.drumSheetAPI?.openPath?.(targetPath);
   },
