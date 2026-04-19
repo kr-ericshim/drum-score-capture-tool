@@ -17,6 +17,17 @@ function createRoot() {
     click: [],
     input: [],
   };
+  const documentStub = {
+    activeElement: null,
+    documentElement: { lang: "en" },
+    querySelector() {
+      return null;
+    },
+  };
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: documentStub,
+  });
   const stageNodes = {
     "#roiImage": { complete: true, naturalWidth: 1920, naturalHeight: 1080 },
     "#roiCanvas": {
@@ -30,15 +41,75 @@ function createRoot() {
     },
     "#roiInput": { value: "" },
   };
+  let dynamicStageNodes = {};
+
+  function createFocusableStageNode(dataset = {}, value = "") {
+    return {
+      dataset,
+      value,
+      selectionStart: value.length,
+      selectionEnd: value.length,
+      focus() {
+        documentStub.activeElement = this;
+      },
+      setSelectionRange(start, end) {
+        this.selectionStart = start;
+        this.selectionEnd = end;
+      },
+    };
+  }
+
+  function rebuildStageNodes(markup) {
+    const previousDynamicNodes = new Set(Object.values(dynamicStageNodes));
+    if (previousDynamicNodes.has(documentStub.activeElement)) {
+      documentStub.activeElement = null;
+    }
+    dynamicStageNodes = {};
+    if (markup.includes("data-screen-heading")) {
+      dynamicStageNodes["[data-screen-heading]"] = createFocusableStageNode();
+    }
+    const inputRegex = /<input\b[\s\S]*?data-action="update-export-metadata"[\s\S]*?data-field="([^"]+)"[\s\S]*?value="([^"]*)"[\s\S]*?\/>/g;
+    for (const match of markup.matchAll(inputRegex)) {
+      const [, field, value] = match;
+      const selector = `[data-action="update-export-metadata"][data-field="${field}"]`;
+      dynamicStageNodes[selector] = createFocusableStageNode(
+        { action: "update-export-metadata", field },
+        value,
+      );
+    }
+    const textareaRegex = /<textarea\b[\s\S]*?data-action="update-export-metadata"[\s\S]*?data-field="([^"]+)"[\s\S]*?>([\s\S]*?)<\/textarea>/g;
+    for (const match of markup.matchAll(textareaRegex)) {
+      const [, field, value] = match;
+      const selector = `[data-action="update-export-metadata"][data-field="${field}"]`;
+      dynamicStageNodes[selector] = createFocusableStageNode(
+        { action: "update-export-metadata", field },
+        value,
+      );
+    }
+  }
+
+  const stagePane = {
+    _innerHTML: "",
+    set innerHTML(value) {
+      this._innerHTML = value;
+      rebuildStageNodes(value);
+    },
+    get innerHTML() {
+      return this._innerHTML;
+    },
+    querySelector(selector) {
+      return stageNodes[selector] || dynamicStageNodes[selector] || null;
+    },
+    setAttribute() {},
+    focus() {
+      documentStub.activeElement = this;
+    },
+  };
+
   const nodes = {
     "#topBar": { innerHTML: "" },
     "#processRail": { innerHTML: "" },
-    "#stagePane": {
-      innerHTML: "",
-      querySelector(selector) {
-        return stageNodes[selector] || null;
-      },
-    },
+    "#stagePane": stagePane,
     "#contextLane": { innerHTML: "" },
     "#statusBar": { innerHTML: "" },
   };
@@ -220,6 +291,40 @@ test("metadata input strips non-digit bpm values at the interaction layer", () =
   const state = app.debug.getState();
   assert.equal(state.exportConfig.metadataModal.draft.bpm, "128");
   assert.equal(state.exportConfig.metadataModal.dirty, true);
+});
+
+test("metadata typing preserves focus on the same field after rerender", async () => {
+  installBrowserStubs();
+  const root = createRoot();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+      reviewExport: async () => ({}),
+    },
+  });
+
+  seedExportState(app);
+  await root.dispatchAction("run-export");
+  await flush();
+
+  const titleInput = root.querySelector("#stagePane")?.querySelector?.('[data-action="update-export-metadata"][data-field="title"]');
+  assert.ok(titleInput);
+  titleInput.focus();
+  titleInput.value = "A";
+  titleInput.setSelectionRange(1, 1);
+
+  root.dispatchInput(titleInput);
+  await flush();
+
+  const activeElement = globalThis.document?.activeElement;
+  assert.ok(activeElement, "expected focus to stay within the metadata modal");
+  assert.equal(activeElement.dataset?.field, "title");
+  assert.equal(activeElement.value, "A");
+  assert.equal(activeElement.selectionStart, 1);
+  assert.equal(activeElement.selectionEnd, 1);
 });
 
 test("confirm-export-metadata blocks blank titles before job creation", async () => {

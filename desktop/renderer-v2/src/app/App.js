@@ -164,6 +164,36 @@ function syncDocumentChrome(locale) {
   }
 }
 
+function captureStageInputFocus() {
+  const activeElement = globalThis?.document?.activeElement;
+  if (activeElement?.dataset?.action !== "update-export-metadata" || !activeElement.dataset.field) {
+    return null;
+  }
+  return {
+    selector: `[data-action="update-export-metadata"][data-field="${activeElement.dataset.field}"]`,
+    selectionStart: Number.isInteger(activeElement.selectionStart) ? activeElement.selectionStart : null,
+    selectionEnd: Number.isInteger(activeElement.selectionEnd) ? activeElement.selectionEnd : null,
+  };
+}
+
+function restoreStageInputFocus(stagePane, snapshot) {
+  if (!stagePane || !snapshot?.selector) {
+    return;
+  }
+  const nextField = stagePane.querySelector?.(snapshot.selector);
+  if (typeof nextField?.focus !== "function") {
+    return;
+  }
+  nextField.focus();
+  if (
+    typeof nextField.setSelectionRange === "function"
+    && Number.isInteger(snapshot.selectionStart)
+    && Number.isInteger(snapshot.selectionEnd)
+  ) {
+    nextField.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd);
+  }
+}
+
 export function createApp(root, dependencies = {}) {
   const runtimeBridge = dependencies.bridge || bridge;
   const readMetadata = dependencies.readVideoMetadata || readVideoMetadata;
@@ -370,8 +400,10 @@ export function createApp(root, dependencies = {}) {
     }
     shell.contextLane.hidden = !laneMarkup.trim();
     if (stageMarkupValue !== lastStageMarkup) {
+      const focusSnapshot = captureStageInputFocus();
       shell.stagePane.innerHTML = stageMarkupValue;
       lastStageMarkup = stageMarkupValue;
+      restoreStageInputFocus(shell.stagePane, focusSnapshot);
     }
     if (statusMarkup !== lastStatusMarkup) {
       shell.statusBar.innerHTML = statusMarkup;
