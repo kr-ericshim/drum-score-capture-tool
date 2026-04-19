@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import shutil
-from io import BytesIO
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -590,15 +589,9 @@ def _prepare_pdf_image(image: Image.Image) -> Image.Image:
         resampling = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
         rgb = rgb.resize(target, resampling)
 
-    # Re-encode once to JPEG in-memory so PIL PDF writer can use compressed streams reliably.
-    buf = BytesIO()
-    rgb.save(buf, format="JPEG", quality=PDF_JPEG_QUALITY, optimize=True)
-    buf.seek(0)
-    compressed = Image.open(buf).convert("RGB")
-    compressed.load()
-    buf.close()
+    prepared = rgb.copy()
     rgb.close()
-    return compressed
+    return prepared
 
 
 def _diagnose_page_image(image, page_index: int) -> Dict[str, object]:
