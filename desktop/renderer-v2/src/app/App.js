@@ -30,6 +30,7 @@ import { createSourceController } from "../features/source/sourceController.js";
 import { renderRoiScreen } from "../features/roi/RoiScreen.js";
 import { renderExportScreen } from "../features/export/ExportScreen.js";
 import { renderReviewScreen } from "../features/review/ReviewScreen.js";
+import { renderArchiveModal } from "../features/archive/ArchiveModal.js";
 import { mountRoiEditor } from "../features/roi/roiEditor.js";
 import {
   createJob,
@@ -294,10 +295,17 @@ export function createApp(root, dependencies = {}) {
   }
 
   function stageMarkup(state) {
-    if (state.ui.activeStep === "source") return renderSourceScreen(state);
-    if (state.ui.activeStep === "roi") return renderRoiScreen(state);
-    if (state.ui.activeStep === "export") return renderExportScreen(state);
-    return renderReviewScreen(state);
+    let screenMarkup = "";
+    if (state.ui.activeStep === "source") {
+      screenMarkup = renderSourceScreen(state);
+    } else if (state.ui.activeStep === "roi") {
+      screenMarkup = renderRoiScreen(state);
+    } else if (state.ui.activeStep === "export") {
+      screenMarkup = renderExportScreen(state);
+    } else {
+      screenMarkup = renderReviewScreen(state);
+    }
+    return `${screenMarkup}${renderArchiveModal(state)}`;
   }
 
   function destroyRoiEditor() {
@@ -497,6 +505,33 @@ export function createApp(root, dependencies = {}) {
         return next;
       });
     }
+  }
+
+  function openArchive() {
+    const state = store.getState();
+    setState((next) => {
+      next.archive.isOpen = true;
+      return next;
+    });
+    if (state.ui.backend?.ready && (state.archive.status === "idle" || state.archive.status === "error")) {
+      void refreshArchiveLibrary();
+    }
+  }
+
+  function closeArchive() {
+    setState((next) => {
+      next.archive.isOpen = false;
+      next.archive.selectedSourceKey = "";
+      return next;
+    });
+  }
+
+  function getArchiveItem(sourceKey) {
+    const key = String(sourceKey || "").trim() || store.getState().archive.selectedSourceKey;
+    if (!key) {
+      return null;
+    }
+    return store.getState().archive.items.find((item) => item.sourceKey === key) || null;
   }
 
   function refreshCompletedLibraries() {
@@ -1203,6 +1238,32 @@ export function createApp(root, dependencies = {}) {
       });
       return;
     }
+    if (action === "open-archive") {
+      openArchive();
+      return;
+    }
+    if (action === "close-archive") {
+      closeArchive();
+      return;
+    }
+    if (action === "retry-archive") {
+      void refreshArchiveLibrary();
+      return;
+    }
+    if (action === "select-archive-item") {
+      setState((next) => {
+        next.archive.selectedSourceKey = String(target.dataset.sourceKey || "");
+        return next;
+      });
+      return;
+    }
+    if (action === "back-archive-detail") {
+      setState((next) => {
+        next.archive.selectedSourceKey = "";
+        return next;
+      });
+      return;
+    }
     if (action === "open-step") {
       const { step } = target.dataset;
       if (canOpenStep(store.getState(), step)) {
@@ -1275,6 +1336,18 @@ export function createApp(root, dependencies = {}) {
     if (action === "copy-output-dir") {
       const locale = store.getState().ui.locale || "en";
       await handleCopyText(store.getState().review.outputDir, t("label.outputPath", { locale }));
+      return;
+    }
+    if (action === "open-archive-pdf") {
+      const locale = store.getState().ui.locale || "en";
+      const item = getArchiveItem(target.dataset.sourceKey);
+      await handleOpenPath(item?.pdfPath, t("archive.pathLabel.pdf", { locale }));
+      return;
+    }
+    if (action === "open-archive-folder") {
+      const locale = store.getState().ui.locale || "en";
+      const item = getArchiveItem(target.dataset.sourceKey);
+      await handleOpenPath(item?.outputDir, t("archive.pathLabel.folder", { locale }));
     }
   };
 

@@ -15,6 +15,7 @@ export function renderTopBar(state, summary) {
         <span class="topbar-step">${stepLabel}</span>
       </div>
       <div class="topbar-tools">
+        <button class="topbar-archive" type="button" data-action="open-archive">${t("topbar.archive", { locale })}</button>
         <button class="topbar-locale ${locale === "ko" ? "is-active" : ""}" data-action="set-locale" data-locale="ko">${t("topbar.locale.ko", { locale })}</button>
         <button class="topbar-locale ${locale === "en" ? "is-active" : ""}" data-action="set-locale" data-locale="en">${t("topbar.locale.en", { locale })}</button>
       </div>
@@ -34,6 +35,7 @@ export function renderTopBar(state, summary) {
       <span class="topbar-step">${stepLabel}</span>
     </div>
     <div class="topbar-tools">
+      <button class="topbar-archive" type="button" data-action="open-archive">${t("topbar.archive", { locale })}</button>
       <button class="topbar-locale ${locale === "ko" ? "is-active" : ""}" data-action="set-locale" data-locale="ko">${t("topbar.locale.ko", { locale })}</button>
       <button class="topbar-locale ${locale === "en" ? "is-active" : ""}" data-action="set-locale" data-locale="en">${t("topbar.locale.en", { locale })}</button>
       <span class="engine-badge ${backendReady ? "is-ready" : "is-waiting"}">${backendReady ? t("topbar.engine.ready", { locale }) : t("topbar.engine.waiting", { locale })}</span>
