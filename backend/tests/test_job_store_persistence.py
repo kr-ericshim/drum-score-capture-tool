@@ -85,6 +85,40 @@ class TestJobStorePersistence(unittest.TestCase):
             self.assertTrue((artifact_dir / "job.corrupt.json").exists())
             self.assertIn("corrupt", job.message.lower())
 
+    def test_set_state_can_clear_error_code(self):
+        with tempfile.TemporaryDirectory() as td:
+            jobs_root = Path(td)
+            artifact_dir = jobs_root / "job-4"
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+
+            store = JobStore(jobs_root)
+            store.create(
+                Job(
+                    id="job-4",
+                    source_type="file",
+                    file_path="/tmp/source.mp4",
+                    youtube_url=None,
+                    options={},
+                    artifact_dir=str(artifact_dir),
+                    status=JobStatus.ERROR,
+                    error_code="PIPELINE_ERROR",
+                )
+            )
+
+            store.set_state(
+                "job-4",
+                JobStatus.DONE,
+                progress=1.0,
+                current_step="done",
+                message="recovered",
+                error_code=None,
+            )
+
+            job = store.get("job-4")
+            self.assertIsNotNone(job)
+            self.assertEqual(job.status, JobStatus.DONE)
+            self.assertIsNone(job.error_code)
+
 
 if __name__ == "__main__":
     unittest.main()

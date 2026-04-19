@@ -430,6 +430,118 @@ test("runExport does not create a job when zero formats are selected", async () 
   assert.match(app.debug.getState().exportConfig.error, /형식|format/i);
 });
 
+test("runExport blocks job creation when ROI health is critical", async () => {
+  installBrowserStubs();
+  let createJobCalls = 0;
+  let roiHealthCalls = 0;
+  const root = createRoot();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+      requestPreviewRoiHealth: async () => {
+        roiHealthCalls += 1;
+        return {
+          riskLevel: "critical",
+          summary: "ROI is unsafe for capture",
+          diagnostics: [{ code: "roi_margin_tight", level: "critical" }],
+        };
+      },
+      createJob: async () => {
+        createJobCalls += 1;
+        return "job-1";
+      },
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+      reviewExport: async () => ({}),
+    },
+  });
+
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/source-a.mp4";
+    next.source.displayName = "source-a.mp4";
+    next.roi.frameTime = 5;
+    next.roi.appliedRect = ROI_RECT;
+    next.exportConfig.formats = ["png"];
+    next.exportConfig.jobId = "job-old";
+    next.exportConfig.outputDir = "/tmp/old-export";
+    next.exportConfig.pdfPath = "/tmp/old-export/result.pdf";
+    next.review.pages = [{ id: "page-1", capturePath: "/tmp/old-export/page-1.png" }];
+    next.review.selectedPageIds = ["page-1"];
+    next.review.outputDir = "/tmp/old-export";
+    next.review.pdfPath = "/tmp/old-export/result.pdf";
+    next.ui.activeStep = "export";
+    return next;
+  });
+
+  await root.dispatchAction("run-export");
+  await flush();
+
+  const state = app.debug.getState();
+  assert.equal(roiHealthCalls, 1);
+  assert.equal(createJobCalls, 0);
+  assert.equal(state.exportConfig.runStatus, "idle");
+  assert.match(state.exportConfig.error, /unsafe/i);
+  assert.equal(state.exportConfig.jobId, "");
+  assert.equal(state.exportConfig.outputDir, "");
+  assert.equal(state.exportConfig.pdfPath, "");
+  assert.equal(state.review.pages.length, 0);
+  assert.equal(state.review.outputDir, "");
+  assert.equal(state.review.pdfPath, "");
+  assert.deepEqual(state.roi.diagnostics, [{ code: "roi_margin_tight", level: "critical" }]);
+});
+
+test("runExport prevents duplicate jobs when re-entered before ROI health resolves", async () => {
+  installBrowserStubs();
+  let createJobCalls = 0;
+  let roiHealthCalls = 0;
+  const roiHealth = deferred();
+  const root = createRoot();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+      requestPreviewRoiHealth: async () => {
+        roiHealthCalls += 1;
+        return roiHealth.promise;
+      },
+      createJob: async () => {
+        createJobCalls += 1;
+        return `job-${createJobCalls}`;
+      },
+      getJob: async (jobId) => ({ job_id: jobId, status: "done", progress: 1, result: {} }),
+      reviewExport: async () => ({}),
+    },
+  });
+
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/source-a.mp4";
+    next.source.displayName = "source-a.mp4";
+    next.roi.frameTime = 5;
+    next.roi.appliedRect = ROI_RECT;
+    next.exportConfig.formats = ["png"];
+    next.ui.activeStep = "export";
+    return next;
+  });
+
+  const first = root.dispatchAction("run-export");
+  const second = root.dispatchAction("run-export");
+  await flush();
+
+  roiHealth.resolve({
+    riskLevel: "info",
+    summary: "",
+    diagnostics: [],
+  });
+
+  await first;
+  await second;
+  await flush();
+
+  assert.equal(roiHealthCalls, 1);
+  assert.equal(createJobCalls, 1);
+  assert.equal(app.debug.getState().exportConfig.jobId, "job-1");
+});
+
 test("runExport opens the metadata modal before polling when pdf is selected", async () => {
   installBrowserStubs();
   let createJobCalls = 0;

@@ -48,6 +48,21 @@ test("top bar drops the generic workflow-v2 meta-chip identity", () => {
   assert.doesNotMatch(markup, /aria-label="도움말"|aria-label="설정"/);
 });
 
+test("top bar exposes locale toggle state with pressed semantics", () => {
+  const state = createInitialSessionState();
+  state.ui.locale = "en";
+
+  const markup = renderTopBar(state, {
+    sourceLabel: "song.mp4",
+    stepLabel: "source",
+    stepState: { enabled: true, complete: false },
+  });
+
+  assert.match(markup, /topbar-locale-group/);
+  assert.match(markup, /data-locale="en" aria-pressed="true"/);
+  assert.match(markup, /data-locale="ko" aria-pressed="false"/);
+});
+
 test("roi top bar collapses to source and step only", () => {
   const state = createInitialSessionState();
   state.ui.locale = "ko";
@@ -60,7 +75,10 @@ test("roi top bar collapses to source and step only", () => {
   });
 
   assert.match(markup, /song\.mp4/);
-  assert.match(markup, /ROI 프레임 선택/);
+  assert.match(markup, /ROI 지정/);
+  assert.match(markup, /class="topbar-roi"/);
+  assert.match(markup, /class="topbar-balance"/);
+  assert.match(markup, /class="topbar-tools topbar-tools-compact"/);
   assert.doesNotMatch(markup, /DRUM SHEET CAPTURE|ENGINE_READY|ENGINE_WAITING/);
 });
 
@@ -134,9 +152,9 @@ test("review process rail keeps export settings and finalize actions in the left
 
   const markup = renderProcessRail(state, getProcessRailItems(state));
 
-  assert.match(markup, /EXPORT SETTINGS/);
-  assert.match(markup, /OPEN PDF/);
-  assert.match(markup, /COPY PATH|경로 복사/);
+  assert.match(markup, /Export settings/);
+  assert.match(markup, /Open PDF/);
+  assert.match(markup, /Copy path|경로 복사/);
 });
 
 test("source process rail uses live workbench status instead of fabricated system resource meters", () => {
@@ -145,6 +163,6 @@ test("source process rail uses live workbench status instead of fabricated syste
 
   const markup = renderProcessRail(state, getProcessRailItems(state));
 
-  assert.match(markup, /WORKBENCH STATUS/);
+  assert.match(markup, /System status/);
   assert.doesNotMatch(markup, /SYSTEM RESOURCES|BUFFER|32%/);
 });

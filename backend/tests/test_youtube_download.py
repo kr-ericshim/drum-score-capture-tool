@@ -160,3 +160,44 @@ class DownloadYoutubeTests(unittest.TestCase):
             {"node": {"path": str(fake_node.resolve())}},
         )
         self.assertEqual(FakeYoutubeDL.seen_opts[0]["remote_components"], ["ejs:github"])
+
+    def test_progress_hook_maps_downloading_state_to_determinate_progress(self):
+        updates = []
+        logs = []
+        hook = extract._build_youtube_progress_hook(
+            progress_callback=updates.append,
+            logger=logs.append,
+        )
+
+        hook(
+            {
+                "status": "downloading",
+                "downloaded_bytes": 42,
+                "total_bytes": 100,
+                "_percent_str": " 42.0%",
+            }
+        )
+
+        self.assertEqual(updates[-1]["stage"], "download")
+        self.assertEqual(updates[-1]["progress_mode"], "determinate")
+        self.assertAlmostEqual(updates[-1]["progress"], 0.42, places=2)
+        self.assertIn("42%", updates[-1]["message"])
+
+    def test_postprocessor_hook_maps_ffmpeg_merge_to_indeterminate_progress(self):
+        updates = []
+        logs = []
+        hook = extract._build_youtube_postprocessor_hook(
+            progress_callback=updates.append,
+            logger=logs.append,
+        )
+
+        hook(
+            {
+                "status": "started",
+                "postprocessor": "FFmpegMergerPP",
+            }
+        )
+
+        self.assertEqual(updates[-1]["stage"], "postprocess")
+        self.assertEqual(updates[-1]["progress_mode"], "indeterminate")
+        self.assertIn("merge", updates[-1]["message"].lower())

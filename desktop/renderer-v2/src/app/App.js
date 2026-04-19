@@ -40,6 +40,7 @@ import {
   getPreviewSourceJob,
   preparePreviewSource,
   requestPreviewFrame,
+  requestPreviewRoiHealth,
   reviewExport,
 } from "../lib/api.js";
 import { escapeHtml } from "../lib/html.js";
@@ -202,6 +203,14 @@ export function createApp(root, dependencies = {}) {
     ? {
       getArchiveLibrary: async () => ({ items: [] }),
       getLocalMediaRegistry: async () => ({ items: [] }),
+      requestPreviewRoiHealth: async () => ({
+        riskLevel: "info",
+        summary: "",
+        diagnostics: [],
+        sampledFrames: 0,
+        checkedSeconds: [],
+        metrics: {},
+      }),
       ...dependencies.api,
     }
     : {
@@ -213,6 +222,7 @@ export function createApp(root, dependencies = {}) {
       getPreviewSourceJob,
       preparePreviewSource,
       requestPreviewFrame,
+      requestPreviewRoiHealth,
       reviewExport,
     };
   const mountShellImpl = dependencies.mountShell || mountShell;
@@ -1000,6 +1010,9 @@ export function createApp(root, dependencies = {}) {
   }
 
   async function startExportRun(state = store.getState()) {
+    if (state.exportConfig.runStatus === "running") {
+      return;
+    }
     if (!canRunExport(state)) {
       if (state.source.filePath && isRectValid(state.roi.appliedRect) && state.exportConfig.formats.length === 0) {
         setState((next) => {
@@ -1015,6 +1028,26 @@ export function createApp(root, dependencies = {}) {
       return resetExportOutputs(next);
     });
     try {
+      const roiHealth = await runtimeApi.requestPreviewRoiHealth({
+        sourceType: "file",
+        filePath: state.source.filePath,
+        startSec: state.roi.frameTime || 0,
+        roi: state.roi.appliedRect,
+      });
+      if (!runtimeGuards.isCurrentExport(exportRun)) {
+        return;
+      }
+      if (roiHealth?.riskLevel === "critical") {
+        setState((next) => {
+          next.roi.diagnostics = Array.isArray(roiHealth.diagnostics) ? roiHealth.diagnostics : [];
+          next.exportConfig.runStatus = "idle";
+          next.exportConfig.currentStep = "";
+          next.exportConfig.message = "";
+          next.exportConfig.error = String(roiHealth.summary || "ROI is unsafe for capture");
+          return next;
+        });
+        return;
+      }
       const jobId = await runtimeApi.createJob(buildJobPayload(state));
       const jobHandle = runtimeGuards.attachJob(exportRun, jobId);
       if (!jobHandle) {
@@ -1317,6 +1350,9 @@ export function createApp(root, dependencies = {}) {
       return;
     }
     if (target.dataset.action === "update-export-metadata") {
+      if (event.isComposing) {
+        return;
+      }
       updateExportMetadata(String(target.dataset.field || ""), target.value);
       return;
     }

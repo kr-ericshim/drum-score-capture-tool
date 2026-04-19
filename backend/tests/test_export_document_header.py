@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import cv2
 import numpy as np
+from PIL import Image
 
 from app.pipeline.export import (
     _compose_pdf_pages_with_document_header,
@@ -42,6 +43,29 @@ def _make_score_page(*, label: str, top_staff_y: int = 220) -> np.ndarray:
 
 
 class TestExportDocumentHeader(unittest.TestCase):
+    def test_prepare_pdf_image_does_not_force_jpeg_reencode(self):
+        gradient = np.zeros((1800, 1200, 3), dtype=np.uint8)
+        gradient[:, :, 0] = np.tile(np.arange(1200, dtype=np.uint16) % 256, (1800, 1)).astype(np.uint8)
+        gradient[:, :, 1] = np.tile((np.arange(1800, dtype=np.uint16) % 256).reshape(1800, 1), (1, 1200)).astype(np.uint8)
+        gradient[:, :, 2] = ((gradient[:, :, 0].astype(np.uint16) + gradient[:, :, 1].astype(np.uint16)) % 256).astype(np.uint8)
+        image = Image.fromarray(gradient, "RGB")
+        self.addCleanup(image.close)
+
+        prepared = _prepare_pdf_image(image)
+        self.addCleanup(prepared.close)
+
+        self.assertEqual(prepared.mode, "RGB")
+        self.assertTrue(np.array_equal(np.asarray(prepared), gradient))
+
+    def test_finalize_export_pages_preserves_color_channels_for_output_pages(self):
+        page = np.zeros((220, 220, 3), dtype=np.uint8)
+        page[:, :, 2] = 200
+
+        finalized = _finalize_export_pages([page], page_fill_mode="performance")
+
+        self.assertEqual(len(finalized), 1)
+        self.assertFalse(np.array_equal(finalized[0][:, :, 0], finalized[0][:, :, 2]))
+
     def test_compose_pdf_pages_with_document_header_adds_band_to_first_page_only(self):
         page_one = _make_score_page(label="One")
         page_two = _make_score_page(label="Two", top_staff_y=260)

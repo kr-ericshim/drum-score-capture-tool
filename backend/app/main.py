@@ -53,7 +53,7 @@ from app.pipeline.extract import (
     prepare_preview_source,
 )
 from app.pipeline.layout_profiles import infer_layout_hint_from_roi
-from app.pipeline.roi_health import analyze_roi_health_for_source
+from app.pipeline.roi_health import analyze_roi_health_for_source, should_block_roi_capture
 from app.pipeline.detect import detect_sheet_regions
 from app.pipeline.rectify import rectify_frames
 from app.pipeline.stitch import select_review_candidates, stitch_pages
@@ -154,6 +154,62 @@ def _normalize_source_inputs(*, source_type: str, file_path: str | None, youtube
     if source_type == "youtube":
         return None, _normalize_supported_youtube_url(youtube_url or "")
     raise ValueError(f"unsupported source_type: {source_type}")
+
+
+def _analyze_roi_health(
+    *,
+    source_type: str,
+    file_path: str | None,
+    youtube_url: str | None,
+    start_sec: float | None,
+    roi: List[List[float]],
+    workspace: Path,
+    logger,
+) -> Dict[str, object]:
+    workspace.mkdir(parents=True, exist_ok=True)
+    resolved_source_type = source_type
+    resolved_file_path = file_path
+    resolved_youtube_url = youtube_url
+
+    if source_type == "youtube" and youtube_url:
+        cached_video, _ = _get_or_prepare_cached_youtube_video(youtube_url, logger=logger)
+        resolved_source_type = "file"
+        resolved_file_path = str(cached_video)
+        resolved_youtube_url = None
+
+    return analyze_roi_health_for_source(
+        source_type=resolved_source_type,
+        file_path=resolved_file_path,
+        youtube_url=resolved_youtube_url,
+        start_sec=start_sec,
+        roi=roi,
+        workspace=workspace,
+        logger=logger,
+    )
+
+
+def _enforce_roi_capture_gate(
+    *,
+    source_type: str,
+    file_path: str | None,
+    youtube_url: str | None,
+    start_sec: float | None,
+    roi: List[List[float]],
+    workspace: Path,
+    logger,
+) -> Dict[str, object]:
+    analysis = _analyze_roi_health(
+        source_type=source_type,
+        file_path=file_path,
+        youtube_url=youtube_url,
+        start_sec=start_sec,
+        roi=roi,
+        workspace=workspace,
+        logger=logger,
+    )
+    if should_block_roi_capture(analysis):
+        raise RuntimeError(f"ROI is unsafe for capture: {analysis.get('summary') or 'critical ROI diagnostics'}")
+    return analysis
 
 
 def _resolve_jobs_file_path(file_path: str) -> Path:
@@ -382,20 +438,10 @@ def preview_roi_health(payload: PreviewRoiHealthRequest) -> PreviewRoiHealthResp
 
         preview_workspace = jobs_root / "_preview_health" / str(uuid.uuid4())
         preview_workspace.mkdir(parents=True, exist_ok=True)
-        resolved_source_type = payload.source_type
-        resolved_file_path = normalized_file_path
-        resolved_youtube_url = normalized_youtube_url
-
-        if payload.source_type == "youtube" and normalized_youtube_url:
-            cached_video, _ = _get_or_prepare_cached_youtube_video(normalized_youtube_url, logger=lambda _: None)
-            resolved_source_type = "file"
-            resolved_file_path = str(cached_video)
-            resolved_youtube_url = None
-
-        analysis = analyze_roi_health_for_source(
-            source_type=resolved_source_type,
-            file_path=resolved_file_path,
-            youtube_url=resolved_youtube_url,
+        analysis = _analyze_roi_health(
+            source_type=payload.source_type,
+            file_path=normalized_file_path,
+            youtube_url=normalized_youtube_url,
             start_sec=payload.start_sec,
             roi=payload.roi,
             workspace=preview_workspace,
@@ -490,6 +536,20 @@ def create_job(payload: JobCreate) -> JobCreateResponse:
         raise HTTPException(status_code=400, detail=str(exc))
 
     _apply_auto_layout_hints(payload)
+    detect_opts = payload.options.detect
+
+    try:
+        _enforce_roi_capture_gate(
+            source_type=payload.source_type,
+            file_path=normalized_file_path,
+            youtube_url=normalized_youtube_url,
+            start_sec=payload.options.extract.start_sec,
+            roi=detect_opts.roi,
+            workspace=jobs_root / "_preview_health" / str(uuid.uuid4()),
+            logger=lambda _: None,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     job_id = str(uuid.uuid4())
     artifact_dir = jobs_root / job_id
@@ -792,6 +852,16 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
             resolved_source_type = "file"
             resolved_file_path = str(cached_video)
             resolved_youtube_url = None
+
+        result["roi_health"] = _enforce_roi_capture_gate(
+            source_type=resolved_source_type,
+            file_path=resolved_file_path,
+            youtube_url=resolved_youtube_url,
+            start_sec=extract_opts.start_sec,
+            roi=detect_opts.roi,
+            workspace=artifact_dir / "roi-health",
+            logger=lambda msg: _append(job_id, msg),
+        )
 
         accel = get_runtime_acceleration(
             logger=lambda msg: _append(job_id, msg),

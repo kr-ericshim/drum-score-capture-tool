@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Literal, Optional, Sequence
 
 
 LayoutMode = Literal["bottom_bar", "full_scroll", "page_turn"]
@@ -81,6 +81,7 @@ def resolve_layout_hint(
     *,
     source_type: Optional[str],
     prefer_bottom: Optional[bool] = None,
+    roi: Optional[Sequence[Sequence[float]]] = None,
 ) -> LayoutMode:
     if layout_hint in DETECTION_PROFILES:
         return layout_hint  # type: ignore[return-value]
@@ -90,9 +91,45 @@ def resolve_layout_hint(
     if prefer_bottom is False:
         return LAYOUT_FULL_SCROLL
 
-    if source_type == "youtube":
+    return infer_layout_hint_from_roi(roi, source_type=source_type)
+
+
+def infer_layout_hint_from_roi(
+    roi: Optional[Sequence[Sequence[float]]],
+    *,
+    source_type: Optional[str],
+) -> LayoutMode:
+    bounds = _roi_bounds(roi)
+    if bounds is None:
+        if source_type == "youtube":
+            return LAYOUT_BOTTOM_BAR
+        return LAYOUT_FULL_SCROLL
+
+    width, height = bounds
+    if width <= 0.0 or height <= 0.0:
+        if source_type == "youtube":
+            return LAYOUT_BOTTOM_BAR
+        return LAYOUT_FULL_SCROLL
+
+    aspect = width / max(1e-6, height)
+    if aspect >= 2.25:
         return LAYOUT_BOTTOM_BAR
+    if aspect <= 1.05:
+        return LAYOUT_PAGE_TURN
     return LAYOUT_FULL_SCROLL
+
+
+def _roi_bounds(roi: Optional[Sequence[Sequence[float]]]) -> Optional[tuple[float, float]]:
+    if not roi or len(roi) != 4:
+        return None
+    try:
+        xs = [float(point[0]) for point in roi]
+        ys = [float(point[1]) for point in roi]
+    except (TypeError, ValueError, IndexError):
+        return None
+    width = max(xs) - min(xs)
+    height = max(ys) - min(ys)
+    return width, height
 
 
 def get_detection_profile(layout_mode: LayoutMode) -> DetectionProfile:

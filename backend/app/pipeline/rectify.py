@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 import cv2
 import numpy as np
 
+from app.pipeline.roi_health import pad_roi_rect
 from app.schemas import RectifyOptions
 
 
@@ -24,6 +25,7 @@ def rectify_frames(
         for idx, item in enumerate(detections):
             if not item.get("roi"):
                 item["roi"] = forced.tolist()
+                item.pop("safe_roi", None)
 
     logger(f"rectify mode auto={options.auto}")
     for idx, item in enumerate(detections):
@@ -36,7 +38,12 @@ def rectify_frames(
             out_paths.append(frame_path)
             continue
 
-        points = np.array(roi, dtype=np.float32).reshape(4, 2)
+        safe_roi = item.get("safe_roi") or pad_roi_rect(
+            roi,
+            image_width=image.shape[1],
+            image_height=image.shape[0],
+        )
+        points = np.array(safe_roi, dtype=np.float32).reshape(4, 2)
         points = _order_points(points)
         warped = _warp_sheet(image, points)
         if options.auto:

@@ -11,7 +11,7 @@ test("context lane renders english source guidance when locale is en", () => {
 
   const markup = renderContextLane(state);
 
-  assert.match(markup, /SOURCE SUMMARY|INGEST STATUS|NEXT STEP/);
+  assert.match(markup, /Source summary|Source status|Next step/);
   assert.doesNotMatch(markup, /대표 프레임|먼저 로컬 영상을 선택합니다/);
 });
 
@@ -32,7 +32,7 @@ test("context lane renders english review preview labels when locale is en", () 
 
   const markup = renderContextLane(state);
 
-  assert.match(markup, /OUTPUT Page 1/);
-  assert.match(markup, /OUTPUT SUMMARY|NEXT ACTION/);
+  assert.match(markup, /Result Page 1/);
+  assert.match(markup, /Output summary|Next step/);
   assert.doesNotMatch(markup, /결과 요약|다음 작업/);
 });

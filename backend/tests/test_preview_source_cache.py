@@ -59,7 +59,10 @@ class TestPreviewSourceCache(unittest.TestCase):
                 cached_video = cache_dir / "cached.mp4"
                 cached_video.write_bytes(b"cached-video")
 
-                with patch.object(main, "prepare_preview_source") as prepare_source:
+                with patch.object(main, "_probe_video_resolution", return_value=(1920, 1080)), patch.object(
+                    main,
+                    "prepare_preview_source",
+                ) as prepare_source:
                     resolved, from_cache = main._get_or_prepare_cached_youtube_video(url, logger=lambda *_: None)
 
             self.assertTrue(from_cache)

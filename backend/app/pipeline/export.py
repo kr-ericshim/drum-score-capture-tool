@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import shutil
-from io import BytesIO
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -13,9 +12,9 @@ from PIL import Image, ImageDraw, ImageFont
 from app.pipeline.sheet_finalize import finalize_sheet_pages
 from app.schemas import ExportOptions, PageFillMode
 
-PDF_IMAGE_MAX_EDGE = 2400
+PDF_IMAGE_MAX_EDGE = 3600
 PDF_JPEG_QUALITY = 86
-PDF_RESOLUTION = 150.0
+PDF_RESOLUTION = 300.0
 SCORE_HEADER_BACKGROUND = (255, 255, 255)
 SCORE_HEADER_TEXT = (26, 23, 18)
 SCORE_HEADER_MUTED = (88, 83, 72)
@@ -225,7 +224,7 @@ def _finalize_export_pages(
 ) -> List[np.ndarray]:
     finalized_pages: List[np.ndarray] = []
     for image in images:
-        pages = finalize_sheet_pages(image, page_fill_mode=page_fill_mode)
+        pages = finalize_sheet_pages(image, page_fill_mode=page_fill_mode, normalize_tone=False)
         if pages:
             finalized_pages.extend(pages)
             continue
@@ -590,15 +589,9 @@ def _prepare_pdf_image(image: Image.Image) -> Image.Image:
         resampling = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
         rgb = rgb.resize(target, resampling)
 
-    # Re-encode once to JPEG in-memory so PIL PDF writer can use compressed streams reliably.
-    buf = BytesIO()
-    rgb.save(buf, format="JPEG", quality=PDF_JPEG_QUALITY, optimize=True)
-    buf.seek(0)
-    compressed = Image.open(buf).convert("RGB")
-    compressed.load()
-    buf.close()
+    prepared = rgb.copy()
     rgb.close()
-    return compressed
+    return prepared
 
 
 def _diagnose_page_image(image, page_index: int) -> Dict[str, object]:

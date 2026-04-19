@@ -15,11 +15,12 @@ def finalize_sheet_pages(
     *,
     page_ratio: float = PORTRAIT_PAGE_RATIO,
     page_fill_mode: PageFillMode = "performance",
+    normalize_tone: bool = True,
 ) -> List[np.ndarray]:
     if image is None or image.size == 0:
         return []
 
-    prepared = _normalize_score_tone(image)
+    prepared = _normalize_score_tone(image) if normalize_tone else image.copy()
     pages = _split_long_page(prepared, page_ratio=page_ratio, page_fill_mode=page_fill_mode)
     if not pages:
         pages = [prepared]
@@ -31,15 +32,17 @@ def finalize_sheet_sequence(
     *,
     page_ratio: float = PORTRAIT_PAGE_RATIO,
     page_fill_mode: PageFillMode = "performance",
+    normalize_inputs: bool = True,
+    dedupe_near_same: bool = True,
 ) -> Tuple[List[np.ndarray], Optional[np.ndarray], int]:
     prepared_frames: List[np.ndarray] = []
     for image in images:
         if image is None or image.size == 0:
             continue
-        prepared = _normalize_score_tone(image)
+        prepared = _normalize_score_tone(image) if normalize_inputs else image.copy()
         if prepared is None or prepared.size == 0:
             continue
-        if prepared_frames and _is_near_same_frame(prepared_frames[-1], prepared):
+        if dedupe_near_same and prepared_frames and _is_near_same_frame(prepared_frames[-1], prepared):
             continue
         prepared_frames.append(prepared)
 
@@ -310,6 +313,17 @@ def _split_long_page(image, *, page_ratio: float, page_fill_mode: PageFillMode =
             page_ratio=page_ratio,
         )
 
+    # If the band pass omits rows that still look active, it is clipping notation.
+    # Fall back to whitespace slicing, which preserves full row coverage.
+    if _ranges_drop_active_rows(pages, active_mask=active):
+        return _slice_by_whitespace(
+            image,
+            row_density=row_density,
+            target_h=target_h,
+            page_fill_mode=mode,
+            page_ratio=page_ratio,
+        )
+
     normalized_pages: List[np.ndarray] = []
     for s, e in pages:
         if e - s > int(target_h * 1.32):
@@ -417,6 +431,36 @@ def _has_internal_page_gaps(ranges: List[Tuple[int, int]], *, max_gap: int) -> b
     for (_, prev_e), (next_s, _) in zip(ranges, ranges[1:]):
         if int(next_s) - int(prev_e) > max_gap:
             return True
+    return False
+
+
+def _ranges_drop_active_rows(ranges: List[Tuple[int, int]], *, active_mask: np.ndarray) -> bool:
+    if not ranges:
+        return False
+
+    total_h = int(active_mask.shape[0])
+    omitted: List[Tuple[int, int]] = []
+    if int(ranges[0][0]) > 0:
+        omitted.append((0, int(ranges[0][0])))
+
+    for (_, prev_e), (next_s, _) in zip(ranges, ranges[1:]):
+        prev_end = int(prev_e)
+        next_start = int(next_s)
+        if next_start > prev_end:
+            omitted.append((prev_end, next_start))
+
+    if int(ranges[-1][1]) < total_h:
+        omitted.append((int(ranges[-1][1]), total_h))
+
+    for start, end in omitted:
+        run = 0
+        for row_active in active_mask[start:end].tolist():
+            if row_active:
+                run += 1
+                if run >= 4:
+                    return True
+            else:
+                run = 0
     return False
 
 

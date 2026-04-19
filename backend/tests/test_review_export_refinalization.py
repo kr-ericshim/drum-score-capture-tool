@@ -37,7 +37,7 @@ def _make_score_strip(*, label: str, add_bottom_staff: bool) -> np.ndarray:
 
 
 class TestReviewExportRefinalization(unittest.TestCase):
-    def test_export_selected_pages_refinalizes_selected_captures(self):
+    def test_export_selected_pages_preserves_selected_page_inputs_as_individual_pages(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             page_one = root / "capture_1.png"
@@ -53,9 +53,33 @@ class TestReviewExportRefinalization(unittest.TestCase):
                 logger=lambda _msg: None,
             )
 
-            self.assertEqual(len(result["images"]), 1)
+            self.assertEqual(len(result["images"]), 2)
             self.assertTrue(str(result["pdf"]).endswith("sheet_export.pdf"))
-            self.assertEqual(len(result["page_diagnostics"]), 1)
+            self.assertEqual(len(result["page_diagnostics"]), 2)
+
+    def test_export_selected_pages_avoids_cutting_staff_across_page_boundary(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            page_one = root / "capture_top.png"
+            page_two = root / "capture_bottom.png"
+
+            cv2.imwrite(str(page_one), _make_score_strip(label="TOP", add_bottom_staff=False))
+            cv2.imwrite(str(page_two), _make_score_strip(label="BOTTOM", add_bottom_staff=True))
+
+            result = export_selected_pages(
+                page_paths=[page_one, page_two],
+                formats=["png"],
+                workspace=root / "export",
+                logger=lambda _msg: None,
+            )
+
+            self.assertEqual(len(result["images"]), 2)
+            first = cv2.imread(result["images"][0], cv2.IMREAD_GRAYSCALE)
+            second = cv2.imread(result["images"][1], cv2.IMREAD_GRAYSCALE)
+            self.assertIsNotNone(first)
+            self.assertIsNotNone(second)
+            self.assertEqual(first.shape, second.shape)
+            self.assertFalse(np.array_equal(first, second))
 
     def test_export_selected_pages_writes_preview_images_for_pdf_only_output(self):
         with tempfile.TemporaryDirectory() as td:
