@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 from io import BytesIO
 from pathlib import Path
@@ -7,7 +8,7 @@ from typing import Dict, List, Optional
 
 import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 from app.pipeline.sheet_finalize import finalize_sheet_pages
 from app.schemas import ExportOptions, PageFillMode
@@ -15,6 +16,10 @@ from app.schemas import ExportOptions, PageFillMode
 PDF_IMAGE_MAX_EDGE = 2400
 PDF_JPEG_QUALITY = 86
 PDF_RESOLUTION = 150.0
+SCORE_HEADER_BACKGROUND = (255, 255, 255)
+SCORE_HEADER_TEXT = (26, 23, 18)
+SCORE_HEADER_MUTED = (88, 83, 72)
+SCORE_HEADER_RULE = (190, 184, 170)
 
 
 def export_frames(
@@ -31,8 +36,6 @@ def export_frames(
 
     image_dir = workspace / "images"
     image_dir.mkdir(parents=True, exist_ok=True)
-    _ = document_header
-
     if options.include_raw_frames and source_frames:
         raw_dir = workspace / "raw_frames"
         raw_dir.mkdir(parents=True, exist_ok=True)
@@ -42,7 +45,6 @@ def export_frames(
             output["raw_frames"].append(str(target))
 
     image_paths: List[Path] = []
-    pdf_images: List[Image.Image] = []
     wants_png = "png" in options.formats
     wants_jpg = "jpg" in options.formats or "jpeg" in options.formats
     wants_pdf = "pdf" in options.formats
@@ -68,10 +70,8 @@ def export_frames(
     export_idx = 1
     for finalized in finalized_pages:
         rgb = None
-        if wants_pdf or wants_jpg:
+        if wants_jpg:
             rgb = cv2.cvtColor(finalized, cv2.COLOR_BGR2RGB)
-        if wants_pdf and rgb is not None:
-            pdf_images.append(Image.fromarray(rgb))
         if wants_png:
             out = image_dir / f"page_{export_idx:04d}.png"
             if cv2.imwrite(str(out), finalized):
@@ -92,6 +92,7 @@ def export_frames(
 
     if wants_pdf:
         pdf_path = workspace / "sheet_export.pdf"
+        pdf_images = _compose_pdf_pages_with_document_header(finalized_pages, document_header)
         if not pdf_images:
             raise RuntimeError("no pages available for PDF export")
         pil_images = [_prepare_pdf_image(img) for img in pdf_images]
@@ -132,7 +133,6 @@ def export_selected_pages(
     preview_dir.mkdir(parents=True, exist_ok=True)
 
     _clear_previous_review_outputs(workspace=workspace, image_dir=image_dir, preview_dir=preview_dir)
-    _ = document_header
 
     normalized_formats = _normalize_formats(formats)
     wants_png = "png" in normalized_formats
@@ -164,15 +164,12 @@ def export_selected_pages(
 
     image_paths: List[Path] = []
     preview_paths: List[Path] = []
-    pdf_images: List[Image.Image] = []
 
     export_idx = 1
     for page in finalized_pages:
         rgb_image = None
-        if wants_pdf or wants_jpg:
+        if wants_jpg:
             rgb_image = cv2.cvtColor(page, cv2.COLOR_BGR2RGB)
-        if wants_pdf and rgb_image is not None:
-            pdf_images.append(Image.fromarray(rgb_image))
         if wants_png:
             png_out = image_dir / f"page_{export_idx:04d}.png"
             if cv2.imwrite(str(png_out), page):
@@ -197,6 +194,7 @@ def export_selected_pages(
 
     if wants_pdf:
         pdf_path = workspace / "sheet_export.pdf"
+        pdf_images = _compose_pdf_pages_with_document_header(finalized_pages, document_header)
         if not pdf_images:
             raise RuntimeError("no pages available for PDF export")
         pil_images = [_prepare_pdf_image(img) for img in pdf_images]
@@ -267,6 +265,272 @@ def _clear_previous_review_outputs(*, workspace: Path, image_dir: Path, preview_
             pdf_path.unlink()
         except OSError:
             pass
+
+
+def _compose_pdf_pages_with_document_header(
+    pages: List[np.ndarray],
+    document_header: Optional[Dict[str, object]],
+) -> List[Image.Image]:
+    normalized_header = _normalize_document_header(document_header)
+    pdf_pages: List[Image.Image] = []
+
+    for page_index, page in enumerate(pages):
+        rgb_page = Image.fromarray(cv2.cvtColor(page, cv2.COLOR_BGR2RGB))
+        if page_index == 0 and normalized_header.get("title"):
+            header_band = _render_document_header_band(
+                page_size=rgb_page.size,
+                document_header=normalized_header,
+            )
+            composed = Image.new(
+                "RGB",
+                (rgb_page.size[0], rgb_page.size[1] + header_band.size[1]),
+                SCORE_HEADER_BACKGROUND,
+            )
+            composed.paste(header_band, (0, 0))
+            composed.paste(rgb_page, (0, header_band.size[1]))
+            header_band.close()
+            rgb_page.close()
+            pdf_pages.append(composed)
+            continue
+        pdf_pages.append(rgb_page)
+
+    return pdf_pages
+
+
+def _render_document_header_band(
+    *,
+    page_size: tuple[int, int],
+    document_header: Dict[str, object],
+) -> Image.Image:
+    page_width, page_height = page_size
+    horizontal_padding = max(48, int(round(page_width * 0.08)))
+    max_text_width = max(160, page_width - (horizontal_padding * 2))
+    top_padding = max(34, int(round(page_height * 0.028)))
+    bottom_padding = max(26, int(round(page_height * 0.024)))
+    title_gap = max(8, int(round(page_height * 0.006)))
+    body_gap = max(6, int(round(page_height * 0.0045)))
+    section_gap = max(12, int(round(page_height * 0.009)))
+    title_font = _resolve_score_header_font(max(34, int(round(page_width * 0.041))))
+    meta_font = _resolve_score_header_font(max(18, int(round(page_width * 0.022))))
+    memo_font = _resolve_score_header_font(max(17, int(round(page_width * 0.019))))
+    measuring_image = Image.new("RGB", (page_width, 32), SCORE_HEADER_BACKGROUND)
+    draw = ImageDraw.Draw(measuring_image)
+
+    title_lines = _wrap_header_text(
+        draw,
+        str(document_header.get("title") or "").strip(),
+        font=title_font,
+        max_width=max_text_width,
+        max_lines=3,
+    )
+    performer_text = str(document_header.get("performer") or "").strip()
+    bpm_value = document_header.get("bpm")
+    date_text = str(document_header.get("date") or "").strip()
+    memo_text = str(document_header.get("memo") or "").strip()
+
+    metadata_lines: List[tuple[str, ImageFont.ImageFont]] = []
+    if performer_text:
+        metadata_lines.append((f"PERFORMER  {performer_text}", meta_font))
+
+    tempo_parts: List[str] = []
+    if bpm_value is not None:
+        tempo_parts.append(f"BPM {bpm_value}")
+    if date_text:
+        tempo_parts.append(f"DATE {date_text}")
+    if tempo_parts:
+        metadata_lines.append(("   ·   ".join(tempo_parts), meta_font))
+
+    if memo_text:
+        for memo_line in _wrap_header_text(
+            draw,
+            f"MEMO  {memo_text}",
+            font=memo_font,
+            max_width=max_text_width,
+            max_lines=2,
+        ):
+            metadata_lines.append((memo_line, memo_font))
+
+    title_heights = [_measure_text_height(draw, line, title_font) for line in title_lines]
+    metadata_heights = [_measure_text_height(draw, line, font) for line, font in metadata_lines]
+    needed_height = top_padding + bottom_padding + sum(title_heights) + sum(metadata_heights)
+    if len(title_heights) > 1:
+        needed_height += title_gap * (len(title_heights) - 1)
+    if title_heights and metadata_heights:
+        needed_height += section_gap
+    if len(metadata_heights) > 1:
+        needed_height += body_gap * (len(metadata_heights) - 1)
+    needed_height += max(16, int(round(page_height * 0.012)))
+
+    min_band_height = max(150, int(round(page_height * 0.12)))
+    max_band_height = max(min_band_height, int(round(page_height * 0.32)))
+    band_height = max(min_band_height, min(max_band_height, needed_height))
+    band = Image.new("RGB", (page_width, band_height), SCORE_HEADER_BACKGROUND)
+    draw = ImageDraw.Draw(band)
+    y = top_padding
+
+    for idx, line in enumerate(title_lines):
+        draw.text(
+            (page_width / 2.0, y),
+            line,
+            fill=SCORE_HEADER_TEXT,
+            font=title_font,
+            anchor="mt",
+        )
+        y += title_heights[idx] + title_gap
+
+    if title_heights and metadata_heights:
+        y += section_gap - title_gap
+
+    for idx, (line, font) in enumerate(metadata_lines):
+        draw.text(
+            (page_width / 2.0, y),
+            line,
+            fill=SCORE_HEADER_MUTED,
+            font=font,
+            anchor="mt",
+        )
+        y += metadata_heights[idx] + body_gap
+
+    divider_y = max(y, band_height - bottom_padding)
+    divider_y = min(divider_y, band_height - max(10, bottom_padding // 2))
+    draw.line(
+        ((horizontal_padding, divider_y), (page_width - horizontal_padding, divider_y)),
+        fill=SCORE_HEADER_RULE,
+        width=1,
+    )
+    measuring_image.close()
+    return band
+
+
+def _resolve_score_header_font(size: int) -> ImageFont.ImageFont:
+    requested_size = max(12, int(size))
+    for font_path in _iter_score_header_font_paths():
+        if not font_path.exists():
+            continue
+        try:
+            return ImageFont.truetype(str(font_path), requested_size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def _iter_score_header_font_paths() -> List[Path]:
+    windows_root = Path(os.environ.get("WINDIR", "C:/Windows"))
+    return [
+        Path("/System/Library/Fonts/AppleSDGothicNeo.ttc"),
+        windows_root / "Fonts" / "malgun.ttf",
+        Path("/Library/Fonts/NotoSansCJK-Regular.ttc"),
+        Path("/Library/Fonts/Noto Sans CJK KR.ttc"),
+        Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+        Path("/usr/share/fonts/opentype/noto/NotoSansCJKkr-Regular.otf"),
+        Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
+        Path("/usr/share/fonts/truetype/nanum/NanumGothic.ttf"),
+    ]
+
+
+def _normalize_document_header(document_header: Optional[Dict[str, object]]) -> Dict[str, object]:
+    header = document_header or {}
+    title = str(header.get("title") or "").strip()
+    performer = str(header.get("performer") or "").strip()
+    date = str(header.get("date") or "").strip()
+    memo = str(header.get("memo") or "").strip()
+    bpm = _normalize_document_header_bpm(header.get("bpm"))
+    return {
+        "title": title,
+        "performer": performer,
+        "bpm": bpm,
+        "date": date,
+        "memo": memo,
+    }
+
+
+def _normalize_document_header_bpm(value: object) -> Optional[int]:
+    if value in (None, "") or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.lstrip("+-").isdigit():
+        return int(text)
+    return None
+
+
+def _wrap_header_text(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    *,
+    font: ImageFont.ImageFont,
+    max_width: int,
+    max_lines: int,
+) -> List[str]:
+    normalized = " ".join(str(text or "").split())
+    if not normalized:
+        return []
+
+    lines: List[str] = []
+    remaining = normalized
+    while remaining and len(lines) < max_lines:
+        fitted = ""
+        consumed = 0
+        for idx in range(1, len(remaining) + 1):
+            candidate = remaining[:idx]
+            if fitted and _measure_text_width(draw, candidate, font) > max_width:
+                break
+            fitted = candidate
+            consumed = idx
+            if _measure_text_width(draw, candidate, font) > max_width:
+                break
+
+        if consumed == 0:
+            fitted = remaining[:1]
+            consumed = 1
+
+        remaining = remaining[consumed:].lstrip()
+        if len(lines) == max_lines - 1 and remaining:
+            fitted = _truncate_text_to_width(
+                draw,
+                f"{fitted} {remaining}",
+                font=font,
+                max_width=max_width,
+                ellipsis=True,
+            )
+            remaining = ""
+        else:
+            fitted = _truncate_text_to_width(draw, fitted, font=font, max_width=max_width)
+        lines.append(fitted)
+    return [line for line in lines if line]
+
+
+def _truncate_text_to_width(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    *,
+    font: ImageFont.ImageFont,
+    max_width: int,
+    ellipsis: bool = False,
+) -> str:
+    candidate = text.strip()
+    suffix = "..." if ellipsis else ""
+    while candidate and _measure_text_width(draw, f"{candidate}{suffix}", font) > max_width:
+        candidate = candidate[:-1].rstrip()
+    if not candidate:
+        return suffix if suffix else text[:1]
+    return f"{candidate}{suffix}"
+
+
+def _measure_text_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont) -> int:
+    if not text:
+        return 0
+    bbox = draw.textbbox((0, 0), text, font=font)
+    return max(0, int(bbox[2] - bbox[0]))
+
+
+def _measure_text_height(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont) -> int:
+    sample = text or "Ag"
+    bbox = draw.textbbox((0, 0), sample, font=font)
+    return max(1, int(bbox[3] - bbox[1]))
 
 
 def _prepare_pdf_image(image: Image.Image) -> Image.Image:
