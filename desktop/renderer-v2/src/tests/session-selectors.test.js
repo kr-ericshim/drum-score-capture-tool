@@ -2,11 +2,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  createInitialExportConfig,
   createInitialSessionState,
+  createDocumentHeaderState,
   deriveCapturePages,
+  getProcessRailItems,
   getStepState,
+  getTopBarSummary,
   inferLayoutHintFromRoi,
   isRectValid,
+  normalizeDocumentHeader,
   summarizeSelection,
 } from "../app/session/selectors.js";
 
@@ -33,10 +38,74 @@ test("initial session state starts in file mode with empty youtube preparation s
   assert.equal(state.source.sourceType, "file");
   assert.equal(state.source.youtubeUrl, "");
   assert.equal(state.source.prepareStatus, "idle");
+  assert.equal(state.source.prepareJobId, "");
+  assert.equal(state.source.prepareStage, "");
+  assert.equal(state.source.prepareProgress, 0);
+  assert.equal(state.source.prepareProgressMode, "indeterminate");
+  assert.equal(state.source.prepareMessage, "");
+  assert.equal(state.source.prepareFromCache, false);
   assert.deepEqual(state.source.prepareLogs, []);
   assert.equal(state.source.preparedFromYouTube, false);
   assert.equal(state.source.preparedVideoPath, "");
   assert.equal(state.source.prepareErrorDetail, "");
+  assert.deepEqual(state.source.registryItems, []);
+});
+
+test("initial export config includes the document-header contract with today's date", () => {
+  const state = createInitialSessionState();
+
+  assert.deepEqual(Object.keys(state.exportConfig.documentHeader).sort(), ["bpm", "date", "memo", "performer", "title"]);
+  assert.equal(state.exportConfig.documentHeader.title, "");
+  assert.equal(state.exportConfig.documentHeader.performer, "");
+  assert.equal(state.exportConfig.documentHeader.bpm, null);
+  assert.match(state.exportConfig.documentHeader.date, /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(state.exportConfig.documentHeader.memo, "");
+});
+
+test("export config reset defaults the document title from the source filename stem", () => {
+  const exportConfig = createInitialExportConfig("/tmp/score-library/My Autumn Leaves.mp4", new Date("2026-04-19T09:00:00Z"));
+
+  assert.equal(exportConfig.documentHeader.title, "My Autumn Leaves");
+  assert.equal(exportConfig.documentHeader.date, "2026-04-19");
+});
+
+test("document header helpers normalize title and optional blank fields without placeholders", () => {
+  const fallbackHeader = createDocumentHeaderState("/tmp/Take Five.mkv", new Date("2026-04-19T09:00:00Z"));
+  const normalized = normalizeDocumentHeader(
+    {
+      title: "   ",
+      performer: "  Dave Brubeck Quartet  ",
+      bpm: "128.8",
+      date: "",
+      memo: "   ",
+    },
+    fallbackHeader,
+  );
+
+  assert.deepEqual(normalized, {
+    title: "Take Five",
+    performer: "Dave Brubeck Quartet",
+    bpm: 128,
+    date: "",
+    memo: "",
+  });
+});
+
+test("top bar and process rail prefer youtube prepare progress over file labels while loading", () => {
+  const state = createInitialSessionState();
+  state.ui.locale = "en";
+  state.source.youtubeUrl = "https://youtu.be/demo";
+  state.source.prepareStatus = "loading";
+  state.source.prepareStage = "download";
+  state.source.prepareProgress = 0.42;
+  state.source.prepareProgressMode = "determinate";
+  state.source.prepareMessage = "downloading video 42%";
+
+  const summary = getTopBarSummary(state);
+  const railItems = getProcessRailItems(state);
+
+  assert.match(summary.sourceLabel, /42%/);
+  assert.match(railItems[0].summary, /42%/);
 });
 
 test("roi completion requires both a representative frame and an applied roi", () => {
@@ -139,11 +208,13 @@ test("deriveCapturePages normalizes windows preview paths for img rendering", ()
   assert.equal(pages[0].previewPath, "file:///C:/exports/review%20page%20%231.png");
 });
 
-test("inferLayoutHintFromRoi treats wide strips as bottom bars", () => {
+test("inferLayoutHintFromRoi distinguishes bottom bar, page turn, and scroll layouts", () => {
   const bottomBar = inferLayoutHintFromRoi([[0, 0], [300, 0], [300, 60], [0, 60]]);
-  const fullScroll = inferLayoutHintFromRoi([[0, 0], [160, 0], [160, 200], [0, 200]]);
+  const pageTurn = inferLayoutHintFromRoi([[0, 0], [160, 0], [160, 200], [0, 200]]);
+  const fullScroll = inferLayoutHintFromRoi([[0, 0], [240, 0], [240, 180], [0, 180]]);
 
   assert.equal(bottomBar, "bottom_bar");
+  assert.equal(pageTurn, "page_turn");
   assert.equal(fullScroll, "full_scroll");
 });
 
