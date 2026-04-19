@@ -68,12 +68,12 @@ export function renderArchiveModal(state) {
   const items = Array.isArray(state.archive.items) ? state.archive.items : [];
   const selectedItem = items.find((item) => item.sourceKey === state.archive.selectedSourceKey) || null;
   const isError = state.archive.status === "error";
-  const isLoading = state.archive.status === "loading" && !items.length;
+  const isLoading = state.archive.status === "loading";
 
   return `
     <div class="archive-overlay" data-archive-modal>
       <button class="archive-backdrop" type="button" data-action="close-archive" aria-label="${escapeAttr(t("archive.close", { locale }))}"></button>
-      <section class="archive-modal" role="dialog" aria-modal="true" aria-labelledby="archiveModalTitle">
+      <section class="archive-modal" role="dialog" aria-modal="true" aria-labelledby="archiveModalTitle" tabindex="-1" data-archive-dialog>
         <header class="archive-modal-head">
           <div class="archive-modal-copy">
             <p class="archive-modal-kicker">${t("topbar.archive", { locale })}</p>
@@ -82,14 +82,14 @@ export function renderArchiveModal(state) {
           </div>
           <button class="archive-close" type="button" data-action="close-archive">${t("archive.close", { locale })}</button>
         </header>
-        <div class="archive-modal-body">
+        <div class="archive-modal-body" aria-busy="${isLoading ? "true" : "false"}">
           ${isError ? `
             <div class="archive-feedback">
               <p class="inline-error" role="alert">${escapeHtml(state.archive.error || t("archive.error", { locale }))}</p>
               <button class="button button-secondary" type="button" data-action="retry-archive">${t("archive.retry", { locale })}</button>
             </div>
           ` : isLoading
-            ? `<p class="archive-empty">${t("archive.loading", { locale })}</p>`
+            ? `<p class="archive-empty" role="status">${t("archive.loading", { locale })}</p>`
             : selectedItem
               ? renderArchiveDetail(selectedItem, locale)
               : renderArchiveList(items, locale)}

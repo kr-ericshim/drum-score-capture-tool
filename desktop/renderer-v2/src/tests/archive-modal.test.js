@@ -89,3 +89,25 @@ test("archive modal shows empty state and disables missing-path actions", async 
   assert.match(detailMarkup, /data-action="open-archive-pdf"[^>]*disabled/);
   assert.match(detailMarkup, /data-action="open-archive-folder"[^>]*disabled/);
 });
+
+test("archive modal shows an explicit loading state instead of stale rows during refresh", async () => {
+  const { renderArchiveModal } = await import("../features/archive/ArchiveModal.js");
+  const state = createInitialSessionState();
+  state.ui.locale = "en";
+  state.archive.isOpen = true;
+  state.archive.status = "loading";
+  state.archive.items = [
+    {
+      sourceKey: "source-3",
+      displayName: "Stale Library Row",
+      completedAt: 1713526200,
+      pdfPath: "/tmp/stale.pdf",
+      outputDir: "/tmp/stale",
+    },
+  ];
+
+  const markup = renderArchiveModal(state);
+
+  assert.match(markup, /Loading archive\.\.\.|보관함을 불러오는 중입니다\./);
+  assert.doesNotMatch(markup, /Stale Library Row/);
+});

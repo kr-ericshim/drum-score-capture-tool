@@ -1,7 +1,18 @@
 .app-shell {
+  position: relative;
   min-height: 100vh;
   display: grid;
   grid-template-rows: 48px minmax(0, 1fr) 30px;
+}
+
+.shell-modal-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+}
+
+.shell-modal-layer:empty {
+  display: none;
 }
 
 .workspace-shell {

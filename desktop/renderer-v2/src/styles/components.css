@@ -853,6 +853,7 @@
 
 .archive-close:focus-visible,
 .archive-back:focus-visible,
+.archive-modal:focus-visible,
 .archive-row:focus-visible,
 .archive-backdrop:focus-visible {
   outline: 2px solid rgba(236, 182, 19, 0.92);
