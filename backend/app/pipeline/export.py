@@ -288,6 +288,7 @@ def _compose_pdf_pages_with_document_header(
             )
             composed.paste(header_band, (0, 0))
             composed.paste(rgb_page, (0, header_band.size[1]))
+            composed.info["score_header_band_height"] = int(header_band.size[1])
             header_band.close()
             rgb_page.close()
             pdf_pages.append(composed)
@@ -536,7 +537,9 @@ def _measure_text_height(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.I
 def _prepare_pdf_image(image: Image.Image) -> Image.Image:
     rgb = image.convert("RGB")
     width, height = rgb.size
-    long_edge = max(width, height)
+    header_band_height = int(image.info.get("score_header_band_height") or rgb.info.get("score_header_band_height") or 0)
+    content_height = max(1, height - max(0, header_band_height))
+    long_edge = max(width, content_height)
     if long_edge > PDF_IMAGE_MAX_EDGE and long_edge > 0:
         scale = PDF_IMAGE_MAX_EDGE / float(long_edge)
         target = (max(1, int(round(width * scale))), max(1, int(round(height * scale))))
