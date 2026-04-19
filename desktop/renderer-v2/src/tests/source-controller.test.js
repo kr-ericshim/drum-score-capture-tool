@@ -179,6 +179,10 @@ test("editing the youtube url clears stale prepare errors and cached youtube sta
   const { store, controller } = createController();
 
   store.setState((next) => {
+    next.source.displayName = "Take Five Drum Lesson";
+    next.source.archiveSourceKind = "youtube";
+    next.source.archiveSourceKey = "https://www.youtube.com/watch?v=abc123";
+    next.source.archiveDisplayName = "Take Five Drum Lesson";
     next.source.prepareStatus = "error";
     next.source.prepareJobId = "source-1";
     next.source.prepareStage = "failed";
@@ -198,6 +202,10 @@ test("editing the youtube url clears stale prepare errors and cached youtube sta
 
   const state = store.getState();
   assert.equal(state.source.youtubeUrl, "https://youtu.be/new");
+  assert.equal(state.source.displayName, "");
+  assert.equal(state.source.archiveSourceKind, "");
+  assert.equal(state.source.archiveSourceKey, "");
+  assert.equal(state.source.archiveDisplayName, "");
   assert.equal(state.source.prepareStatus, "idle");
   assert.equal(state.source.prepareJobId, "");
   assert.equal(state.source.prepareStage, "");

@@ -278,7 +278,7 @@ def local_media_registry() -> LocalMediaRegistryResponse:
         completed_jobs.append(
             {
                 "source_path": str(source_path),
-                "display_name": source_path.name,
+                "display_name": str((job.source_identity or {}).get("display_name") or "").strip() or source_path.name,
                 "pdf_path": str(pdf_path) if pdf_path else None,
                 "output_dir": str(output_dir) if output_dir else None,
                 "source_origin": "job",
@@ -306,7 +306,7 @@ def local_media_registry() -> LocalMediaRegistryResponse:
         prepared_sources.append(
             {
                 "source_path": str(source_path),
-                "display_name": source_path.name,
+                "display_name": str(dict(job.result or {}).get("video_title") or "").strip() or source_path.name,
                 "pdf_path": None,
                 "output_dir": None,
                 "source_origin": "prepared",
