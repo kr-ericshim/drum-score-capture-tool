@@ -287,7 +287,7 @@ test("confirm-export-metadata normalizes the draft into payload-safe document he
       draft: {
         title: "  Blue in Green  ",
         performer: "  Bill Evans Trio  ",
-        bpm: "128.8",
+        bpm: "128",
         date: "",
         memo: "   half-time feel  ",
       },

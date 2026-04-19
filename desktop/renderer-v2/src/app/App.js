@@ -2,6 +2,7 @@ import { bridge, readVideoMetadata } from "./bridge.js";
 import { createStore } from "./session/store.js";
 import {
   createDocumentHeaderState,
+  createExportMetadataModalState,
   createInitialExportConfig,
   createInitialSessionState,
   deriveCapturePages,
@@ -11,8 +12,12 @@ import {
   getSourcePrepareSummary,
   getTopBarSummary,
   inferLayoutHintFromRoi,
+  isExportMetadataDirty,
+  isPdfSelected,
   isRectValid,
   normalizeDocumentHeader,
+  sanitizeDocumentHeaderDraftField,
+  validateExportMetadataDraft,
 } from "./session/selectors.js";
 import { canRunExport, createRuntimeGuards, invalidatePreviewFlow } from "./session/runtimeSafety.js";
 import { canOpenStep } from "./routes.js";
@@ -637,8 +642,93 @@ export function createApp(root, dependencies = {}) {
     };
   }
 
-  async function runExport() {
+  function resetExportOutputs(next) {
+    next.exportConfig.runStatus = "running";
+    next.exportConfig.error = "";
+    next.exportConfig.progress = 0;
+    next.exportConfig.message = t("export.starting", { locale: next.ui.locale });
+    next.exportConfig.currentStep = "";
+    next.exportConfig.outputDir = "";
+    next.exportConfig.pdfPath = "";
+    next.exportConfig.jobId = "";
+    next.review.pages = [];
+    next.review.selectedPageIds = [];
+    next.review.focusedPageId = "";
+    next.review.outputDir = "";
+    next.review.pdfPath = "";
+    next.review.keptCount = 0;
+    next.review.error = "";
+    next.review.status = "idle";
+    return next;
+  }
+
+  function openExportMetadataModal() {
     const state = store.getState();
+    const fallbackDocumentHeader = createDocumentHeaderState(state.source.filePath);
+    const confirmedHeader = normalizeDocumentHeader(state.exportConfig.documentHeader, fallbackDocumentHeader);
+    setState((next) => {
+      next.exportConfig.error = "";
+      next.exportConfig.metadataModal = createExportMetadataModalState(
+        next.source.filePath,
+        new Date(),
+        confirmedHeader,
+      );
+      next.exportConfig.metadataModal.isOpen = true;
+      return next;
+    });
+  }
+
+  function closeExportMetadataModal(forceDiscard = false) {
+    const state = store.getState();
+    const modal = state.exportConfig.metadataModal;
+    if (!modal?.isOpen) {
+      return;
+    }
+    if (modal.dirty && !forceDiscard) {
+      setState((next) => {
+        next.exportConfig.metadataModal.showDiscardConfirm = true;
+        return next;
+      });
+      return;
+    }
+    setState((next) => {
+      next.exportConfig.metadataModal = createExportMetadataModalState(
+        next.source.filePath,
+        new Date(),
+        next.exportConfig.documentHeader,
+      );
+      return next;
+    });
+  }
+
+  function updateExportMetadata(field, value) {
+    const state = store.getState();
+    const modal = state.exportConfig.metadataModal;
+    if (!modal?.isOpen || !field) {
+      return;
+    }
+    const nextValue = sanitizeDocumentHeaderDraftField(field, value);
+    setState((next) => {
+      const currentModal = next.exportConfig.metadataModal || createExportMetadataModalState(next.source.filePath);
+      const draft = {
+        ...currentModal.draft,
+        [field]: nextValue,
+      };
+      currentModal.draft = draft;
+      currentModal.dirty = isExportMetadataDirty(draft, next.exportConfig.documentHeader);
+      currentModal.showDiscardConfirm = false;
+      if (field === "title") {
+        currentModal.validation.title = "";
+      }
+      if (field === "bpm") {
+        currentModal.validation.bpm = "";
+      }
+      next.exportConfig.metadataModal = currentModal;
+      return next;
+    });
+  }
+
+  async function startExportRun(state = store.getState()) {
     if (!canRunExport(state)) {
       if (state.source.filePath && isRectValid(state.roi.appliedRect) && state.exportConfig.formats.length === 0) {
         setState((next) => {
@@ -651,23 +741,7 @@ export function createApp(root, dependencies = {}) {
     const exportRun = runtimeGuards.beginExportRun();
     activeJobHandle = null;
     setState((next) => {
-      next.exportConfig.runStatus = "running";
-      next.exportConfig.error = "";
-      next.exportConfig.progress = 0;
-      next.exportConfig.message = t("export.starting", { locale: next.ui.locale });
-      next.exportConfig.currentStep = "";
-      next.exportConfig.outputDir = "";
-      next.exportConfig.pdfPath = "";
-      next.exportConfig.jobId = "";
-      next.review.pages = [];
-      next.review.selectedPageIds = [];
-      next.review.focusedPageId = "";
-      next.review.outputDir = "";
-      next.review.pdfPath = "";
-      next.review.keptCount = 0;
-      next.review.error = "";
-      next.review.status = "idle";
-      return next;
+      return resetExportOutputs(next);
     });
     try {
       const jobId = await runtimeApi.createJob(buildJobPayload(state));
@@ -688,6 +762,52 @@ export function createApp(root, dependencies = {}) {
         return next;
       });
     }
+  }
+
+  async function confirmExportMetadata() {
+    const state = store.getState();
+    const modal = state.exportConfig.metadataModal;
+    if (!modal?.isOpen) {
+      return;
+    }
+    const sanitizedDraft = {
+      ...modal.draft,
+      bpm: sanitizeDocumentHeaderDraftField("bpm", modal.draft?.bpm),
+    };
+    const validation = validateExportMetadataDraft(sanitizedDraft, state.ui.locale || "en");
+    if (validation.title || validation.bpm) {
+      setState((next) => {
+        next.exportConfig.metadataModal.validation = validation;
+        next.exportConfig.metadataModal.showDiscardConfirm = false;
+        return next;
+      });
+      return;
+    }
+    const fallbackDocumentHeader = createDocumentHeaderState(state.source.filePath);
+    const documentHeader = normalizeDocumentHeader(sanitizedDraft, fallbackDocumentHeader);
+    setState((next) => {
+      next.exportConfig.documentHeader = documentHeader;
+      next.exportConfig.metadataModal = createExportMetadataModalState(
+        next.source.filePath,
+        new Date(),
+        documentHeader,
+      );
+      return next;
+    });
+    await startExportRun(store.getState());
+  }
+
+  async function runExport() {
+    const state = store.getState();
+    if (!canRunExport(state)) {
+      await startExportRun(state);
+      return;
+    }
+    if (isPdfSelected(state.exportConfig.formats)) {
+      openExportMetadataModal();
+      return;
+    }
+    await startExportRun(state);
   }
 
   async function applyReviewSelection() {
@@ -828,6 +948,27 @@ export function createApp(root, dependencies = {}) {
       await runExport();
       return;
     }
+    if (action === "confirm-export-metadata") {
+      await confirmExportMetadata();
+      return;
+    }
+    if (action === "close-export-metadata") {
+      closeExportMetadataModal(false);
+      return;
+    }
+    if (action === "discard-export-metadata") {
+      closeExportMetadataModal(true);
+      return;
+    }
+    if (action === "continue-export-metadata") {
+      setState((next) => {
+        if (next.exportConfig.metadataModal) {
+          next.exportConfig.metadataModal.showDiscardConfirm = false;
+        }
+        return next;
+      });
+      return;
+    }
     if (action === "focus-review-page") {
       const { pageId } = target.dataset;
       setState((next) => {
@@ -896,6 +1037,10 @@ export function createApp(root, dependencies = {}) {
         next.exportConfig.formats = Array.from(nextFormats);
         return next;
       });
+      return;
+    }
+    if (target.dataset.action === "update-export-metadata") {
+      updateExportMetadata(String(target.dataset.field || ""), target.value);
       return;
     }
     if (target.dataset.action === "toggle-review-page") {

@@ -41,6 +41,13 @@ function normalizeOptionalText(value) {
   return String(value ?? "").trim();
 }
 
+function compareableHeaderValue(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return String(value);
+}
+
 function normalizeBpmValue(value) {
   if (value === null || value === undefined) {
     return null;
@@ -92,7 +99,57 @@ export function normalizeDocumentHeader(documentHeader = {}, fallbackHeader = cr
   };
 }
 
+export function sanitizeDocumentHeaderDraftField(field, value) {
+  if (field === "bpm") {
+    return String(value ?? "").replace(/\D/g, "");
+  }
+  return String(value ?? "");
+}
+
+export function isPdfSelected(formats = []) {
+  return Array.isArray(formats) && formats.includes("pdf");
+}
+
+export function isExportMetadataDirty(draft = {}, confirmed = {}) {
+  return compareableHeaderValue(draft.title) !== compareableHeaderValue(confirmed.title)
+    || compareableHeaderValue(draft.performer) !== compareableHeaderValue(confirmed.performer)
+    || compareableHeaderValue(draft.bpm) !== compareableHeaderValue(confirmed.bpm)
+    || compareableHeaderValue(draft.date) !== compareableHeaderValue(confirmed.date)
+    || compareableHeaderValue(draft.memo) !== compareableHeaderValue(confirmed.memo);
+}
+
+export function validateExportMetadataDraft(draft = {}, locale = "en") {
+  const title = normalizeOptionalText(draft.title);
+  const bpm = compareableHeaderValue(draft.bpm).trim();
+  return {
+    title: title ? "" : t("export.metadata.validation.titleRequired", { locale }),
+    bpm: !bpm || /^\d+$/.test(bpm) ? "" : t("export.metadata.validation.bpmDigits", { locale }),
+  };
+}
+
+export function createExportMetadataModalState(
+  sourceFilePath = "",
+  today = new Date(),
+  documentHeader = createDocumentHeaderState(sourceFilePath, today),
+) {
+  const fallbackHeader = createDocumentHeaderState(sourceFilePath, today);
+  const confirmed = normalizeDocumentHeader(documentHeader, fallbackHeader);
+  return {
+    isOpen: false,
+    draft: {
+      ...confirmed,
+    },
+    dirty: false,
+    validation: {
+      title: "",
+      bpm: "",
+    },
+    showDiscardConfirm: false,
+  };
+}
+
 export function createInitialExportConfig(sourceFilePath = "", today = new Date()) {
+  const documentHeader = createDocumentHeaderState(sourceFilePath, today);
   return {
     formats: DEFAULT_FORMATS.slice(),
     outputDir: "",
@@ -105,7 +162,8 @@ export function createInitialExportConfig(sourceFilePath = "", today = new Date(
     message: "",
     pdfPath: "",
     error: "",
-    documentHeader: createDocumentHeaderState(sourceFilePath, today),
+    documentHeader,
+    metadataModal: createExportMetadataModalState(sourceFilePath, today, documentHeader),
   };
 }
 
@@ -322,7 +380,9 @@ export function getPrimaryAction(state) {
       id: "run-export",
       label: state.exportConfig.runStatus === "running"
         ? t("selector.primary.runExportBusy", { locale })
-        : t("selector.primary.runExport", { locale }),
+        : isPdfSelected(state.exportConfig.formats)
+          ? t("selector.primary.runExportPdf", { locale })
+          : t("selector.primary.runExportDirect", { locale }),
       disabled: !getStepState(state, "export").enabled || state.exportConfig.runStatus === "running" || !hasFormats,
     };
   }
