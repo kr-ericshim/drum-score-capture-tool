@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from app.job_store import Job, JobStatus, JobStore
+from app.job_store import Job, JobStatus, JobStore, SourcePrepareJob, SourcePrepareStore
 from app.schemas import JobCreate
 
 
@@ -195,6 +195,46 @@ class TestArchiveLibrary(unittest.TestCase):
             loaded = store.get("job-3")
             self.assertIsNotNone(loaded)
             self.assertEqual(loaded.completed_at, 1713526200.0)
+
+    def test_archive_prepare_snapshot_exposes_video_title_and_source_key(self):
+        main = self._import_main_with_stubbed_cv()
+        with tempfile.TemporaryDirectory() as td:
+            jobs_root = Path(td) / "jobs"
+            jobs_root.mkdir(parents=True, exist_ok=True)
+            store = SourcePrepareStore(jobs_root / "_preview_source_jobs")
+            artifact_dir = store.root / "source-1"
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+
+            store.create(
+                SourcePrepareJob(
+                    id="source-1",
+                    youtube_url="https://www.youtube.com/watch?v=abc123",
+                    artifact_dir=str(artifact_dir),
+                )
+            )
+
+            with (
+                patch.object(main, "source_prepare_store", store),
+                patch.object(
+                    main,
+                    "_get_or_prepare_cached_youtube_video",
+                    return_value={
+                        "video_path": Path("/tmp/cache/abc123.mp4"),
+                        "from_cache": True,
+                        "video_title": "Take Five Drum Lesson",
+                        "source_key": "https://www.youtube.com/watch?v=abc123",
+                    },
+                ),
+                patch.object(main, "_to_jobs_files_url", return_value="/jobs-files/_preview/youtube.mp4"),
+            ):
+                main._run_source_prepare_job("source-1")
+
+            job = store.get("source-1")
+            self.assertIsNotNone(job)
+            self.assertEqual(job.status, JobStatus.DONE)
+            result = job.result or {}
+            self.assertEqual(result["video_title"], "Take Five Drum Lesson")
+            self.assertEqual(result["source_key"], "https://www.youtube.com/watch?v=abc123")
 
 
 if __name__ == "__main__":

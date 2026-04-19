@@ -342,9 +342,9 @@ def preview_frame(payload: PreviewFrameRequest) -> PreviewFrameResponse:
         resolved_youtube_url = normalized_youtube_url
 
         if payload.source_type == "youtube" and normalized_youtube_url:
-            cached_video, _ = _get_or_prepare_cached_youtube_video(normalized_youtube_url, logger=lambda _: None)
+            prepared = _get_or_prepare_cached_youtube_video(normalized_youtube_url, logger=lambda _: None)
             resolved_source_type = "file"
-            resolved_file_path = str(cached_video)
+            resolved_file_path = str(prepared["video_path"])
             resolved_youtube_url = None
 
         image_path = extract_preview_frame(
@@ -387,9 +387,9 @@ def preview_roi_health(payload: PreviewRoiHealthRequest) -> PreviewRoiHealthResp
         resolved_youtube_url = normalized_youtube_url
 
         if payload.source_type == "youtube" and normalized_youtube_url:
-            cached_video, _ = _get_or_prepare_cached_youtube_video(normalized_youtube_url, logger=lambda _: None)
+            prepared = _get_or_prepare_cached_youtube_video(normalized_youtube_url, logger=lambda _: None)
             resolved_source_type = "file"
-            resolved_file_path = str(cached_video)
+            resolved_file_path = str(prepared["video_path"])
             resolved_youtube_url = None
 
         analysis = analyze_roi_health_for_source(
@@ -427,15 +427,15 @@ def preview_source(payload: PreviewSourceRequest) -> PreviewSourceResponse:
         if payload.source_type == "youtube":
             normalized_youtube_url = _normalize_supported_youtube_url(payload.youtube_url or "")
             log_lines: List[str] = []
-            video_path, from_cache = _get_or_prepare_cached_youtube_video(
+            prepared = _get_or_prepare_cached_youtube_video(
                 normalized_youtube_url,
                 logger=lambda line: log_lines.append(str(line or "").strip()),
             )
-            video_url = _to_jobs_files_url(video_path)
+            video_url = _to_jobs_files_url(prepared["video_path"])
             return PreviewSourceResponse(
-                video_path=str(video_path),
+                video_path=str(prepared["video_path"]),
                 video_url=video_url,
-                from_cache=from_cache,
+                from_cache=bool(prepared["from_cache"]),
                 log_lines=[line for line in log_lines if line],
             )
 
@@ -788,10 +788,18 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
         resolved_youtube_url = normalized_youtube_url
 
         if payload.source_type == "youtube" and normalized_youtube_url:
-            cached_video, from_cache = _get_or_prepare_cached_youtube_video(normalized_youtube_url, logger=lambda msg: _append(job_id, msg))
-            _append(job_id, "job source cache hit: youtube preview cache reused" if from_cache else "job source cache miss: youtube downloaded and cached")
+            prepared = _get_or_prepare_cached_youtube_video(
+                normalized_youtube_url,
+                logger=lambda msg: _append(job_id, msg),
+            )
+            _append(
+                job_id,
+                "job source cache hit: youtube preview cache reused"
+                if prepared["from_cache"]
+                else "job source cache miss: youtube downloaded and cached",
+            )
             resolved_source_type = "file"
-            resolved_file_path = str(cached_video)
+            resolved_file_path = str(prepared["video_path"])
             resolved_youtube_url = None
 
         accel = get_runtime_acceleration(
@@ -926,7 +934,7 @@ def _run_source_prepare_job(job_id: str) -> None:
     )
 
     try:
-        video_path, from_cache = _get_or_prepare_cached_youtube_video(
+        prepared = _get_or_prepare_cached_youtube_video(
             job.youtube_url,
             logger=lambda msg: _append_source_prepare(job_id, msg),
             progress_callback=lambda update: _apply_source_prepare_progress(job_id, update),
@@ -940,9 +948,11 @@ def _run_source_prepare_job(job_id: str) -> None:
             message="validating final source",
         )
         result = {
-            "video_path": str(video_path),
-            "video_url": _to_jobs_files_url(video_path),
-            "from_cache": bool(from_cache),
+            "video_path": str(prepared["video_path"]),
+            "video_url": _to_jobs_files_url(prepared["video_path"]),
+            "from_cache": bool(prepared["from_cache"]),
+            "video_title": str(prepared.get("video_title") or ""),
+            "source_key": str(prepared.get("source_key") or job.youtube_url),
         }
         source_prepare_store.set_state(
             job_id,
@@ -1027,7 +1037,21 @@ def _preview_source_cache_workspace(youtube_url: str) -> Path:
     return cache_dir
 
 
-def _get_or_prepare_cached_youtube_video(youtube_url: str, *, logger, progress_callback=None) -> tuple[Path, bool]:
+def _read_cached_youtube_metadata(video_path: Path) -> Dict[str, str]:
+    metadata_path = video_path.parent / "source.json"
+    try:
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, ValueError, TypeError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        "source_key": str(payload.get("source_key") or "").strip(),
+        "video_title": str(payload.get("video_title") or "").strip(),
+    }
+
+
+def _get_or_prepare_cached_youtube_video(youtube_url: str, *, logger, progress_callback=None) -> Dict[str, object]:
     url = str(youtube_url or "").strip()
     if not url:
         raise ValueError("youtube_url is required when source_type is youtube")
@@ -1068,7 +1092,13 @@ def _get_or_prepare_cached_youtube_video(youtube_url: str, *, logger, progress_c
                         "message": "using cached youtube video",
                     }
                 )
-            return cached, True
+            cached_meta = _read_cached_youtube_metadata(cached)
+            return {
+                "video_path": cached,
+                "from_cache": True,
+                "video_title": cached_meta.get("video_title", ""),
+                "source_key": url,
+            }
 
     logger("youtube cache miss: downloading source")
     video_path = prepare_preview_source(
@@ -1079,7 +1109,13 @@ def _get_or_prepare_cached_youtube_video(youtube_url: str, *, logger, progress_c
         logger=logger,
         progress_callback=progress_callback,
     )
-    return video_path, False
+    metadata = _read_cached_youtube_metadata(video_path)
+    return {
+        "video_path": video_path,
+        "from_cache": False,
+        "video_title": metadata.get("video_title", ""),
+        "source_key": url,
+    }
 
 
 def _to_jobs_files_url(path: Path) -> str | None:
