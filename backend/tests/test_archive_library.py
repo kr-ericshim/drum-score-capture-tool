@@ -1,14 +1,67 @@
+import importlib
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from app import main
-from app.job_store import Job, JobStore
+from app.job_store import Job, JobStatus, JobStore
 from app.schemas import JobCreate
 
 
 class TestArchiveLibrary(unittest.TestCase):
+    def _import_main_with_stubbed_cv(self):
+        acceleration = types.ModuleType("app.pipeline.acceleration")
+        acceleration.get_runtime_acceleration = lambda *args, **kwargs: {}
+        acceleration.runtime_public_info = lambda *args, **kwargs: {}
+
+        extract = types.ModuleType("app.pipeline.extract")
+        extract.YOUTUBE_DOWNLOAD_STRATEGY_VERSION = "test"
+        extract.extract_frames = lambda *args, **kwargs: []
+        extract.extract_preview_frame = lambda *args, **kwargs: None
+        extract.prepare_preview_source = lambda *args, **kwargs: None
+
+        detect = types.ModuleType("app.pipeline.detect")
+        detect.detect_sheet_regions = lambda *args, **kwargs: []
+
+        roi_health = types.ModuleType("app.pipeline.roi_health")
+        roi_health.analyze_roi_health_for_source = lambda *args, **kwargs: {}
+
+        rectify = types.ModuleType("app.pipeline.rectify")
+        rectify.rectify_frames = lambda *args, **kwargs: []
+
+        stitch = types.ModuleType("app.pipeline.stitch")
+        stitch.select_review_candidates = lambda *args, **kwargs: []
+        stitch.stitch_pages = lambda *args, **kwargs: []
+
+        upscale = types.ModuleType("app.pipeline.upscale")
+        upscale.upscale_frames = lambda *args, **kwargs: []
+
+        export = types.ModuleType("app.pipeline.export")
+        export.export_frames = lambda *args, **kwargs: {}
+        export.export_selected_pages = lambda *args, **kwargs: {}
+
+        stubbed_modules = {
+            "cv2": types.ModuleType("cv2"),
+            "app.pipeline.acceleration": acceleration,
+            "app.pipeline.extract": extract,
+            "app.pipeline.detect": detect,
+            "app.pipeline.roi_health": roi_health,
+            "app.pipeline.rectify": rectify,
+            "app.pipeline.stitch": stitch,
+            "app.pipeline.upscale": upscale,
+            "app.pipeline.export": export,
+        }
+        previous_main = sys.modules.pop("app.main", None)
+        try:
+            with patch.dict(sys.modules, stubbed_modules):
+                return importlib.import_module("app.main")
+        finally:
+            sys.modules.pop("app.main", None)
+            if previous_main is not None:
+                sys.modules["app.main"] = previous_main
+
     def test_job_store_round_trip_preserves_source_identity_and_completed_at(self):
         with tempfile.TemporaryDirectory() as td:
             jobs_root = Path(td)
@@ -41,6 +94,7 @@ class TestArchiveLibrary(unittest.TestCase):
             self.assertEqual(loaded.completed_at, 1713526200.0)
 
     def test_create_job_persists_source_identity_from_live_jobs_path(self):
+        main = self._import_main_with_stubbed_cv()
         with tempfile.TemporaryDirectory() as td:
             jobs_root = Path(td) / "jobs"
             jobs_root.mkdir(parents=True, exist_ok=True)
@@ -88,6 +142,59 @@ class TestArchiveLibrary(unittest.TestCase):
                 },
             )
             self.assertEqual(len(submitted), 1)
+
+    def test_set_state_stamps_completed_at_when_job_becomes_done(self):
+        with tempfile.TemporaryDirectory() as td:
+            jobs_root = Path(td)
+            artifact_dir = jobs_root / "job-2"
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+
+            store = JobStore(jobs_root)
+            store.create(
+                Job(
+                    id="job-2",
+                    source_type="file",
+                    file_path="/tmp/source.mp4",
+                    youtube_url=None,
+                    options={},
+                    artifact_dir=str(artifact_dir),
+                    status=JobStatus.RUNNING,
+                )
+            )
+
+            with patch("app.job_store.time.time", return_value=1713526200.0):
+                store.set_state("job-2", JobStatus.DONE)
+
+            loaded = store.get("job-2")
+            self.assertIsNotNone(loaded)
+            self.assertEqual(loaded.completed_at, 1713526200.0)
+
+    def test_set_state_done_does_not_overwrite_existing_completed_at(self):
+        with tempfile.TemporaryDirectory() as td:
+            jobs_root = Path(td)
+            artifact_dir = jobs_root / "job-3"
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+
+            store = JobStore(jobs_root)
+            store.create(
+                Job(
+                    id="job-3",
+                    source_type="file",
+                    file_path="/tmp/source.mp4",
+                    youtube_url=None,
+                    options={},
+                    artifact_dir=str(artifact_dir),
+                    status=JobStatus.RUNNING,
+                    completed_at=1713526200.0,
+                )
+            )
+
+            with patch("app.job_store.time.time", return_value=1813526200.0):
+                store.set_state("job-3", JobStatus.DONE)
+
+            loaded = store.get("job-3")
+            self.assertIsNotNone(loaded)
+            self.assertEqual(loaded.completed_at, 1713526200.0)
 
 
 if __name__ == "__main__":
