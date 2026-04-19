@@ -501,6 +501,7 @@ def create_job(payload: JobCreate) -> JobCreateResponse:
         youtube_url=normalized_youtube_url,
         options=payload.options.model_dump(),
         artifact_dir=str(artifact_dir),
+        source_identity=payload.source_identity.model_dump() if payload.source_identity else {},
     )
     job_store.create(job)
     executor.submit(_run_job, job_id, payload)
