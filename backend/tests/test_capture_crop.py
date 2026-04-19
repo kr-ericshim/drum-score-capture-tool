@@ -55,6 +55,52 @@ class TestCaptureCrop(unittest.TestCase):
             self.assertEqual(error.exception.status_code, 409)
             self.assertEqual(error.exception.detail, "capture crop is unavailable after review export")
 
+    def test_capture_crop_rejects_original_capture_after_review_export(self):
+        with tempfile.TemporaryDirectory() as td:
+            jobs_root = Path(td)
+            artifact_dir = jobs_root / "job-1"
+            review_dir = artifact_dir / "review"
+            review_dir.mkdir(parents=True, exist_ok=True)
+
+            capture_path = review_dir / "capture_0001.png"
+            image = np.full((200, 300, 3), 255, dtype=np.uint8)
+            cv2.imwrite(str(capture_path), image)
+
+            store = JobStore(jobs_root)
+            store.create(
+                Job(
+                    id="job-1",
+                    source_type="file",
+                    file_path=str(jobs_root / "source.mp4"),
+                    youtube_url=None,
+                    options={"export": {"formats": ["pdf"]}},
+                    artifact_dir=str(artifact_dir),
+                    status=JobStatus.DONE,
+                    result={
+                        "review_candidates": [str(capture_path)],
+                        "review_export": {
+                            "kept_count": 1,
+                            "requested_count": 1,
+                            "selection_mode": "captures",
+                            "selected_captures": [str(capture_path)],
+                        },
+                    },
+                )
+            )
+
+            with patch("app.main.job_store", store):
+                with self.assertRaises(HTTPException) as error:
+                    crop_capture(
+                        "job-1",
+                        CaptureCropRequest(
+                            capture_path=str(capture_path),
+                            roi=[[10, 10], [120, 10], [120, 120], [10, 120]],
+                        ),
+                    )
+
+            self.assertEqual(error.exception.status_code, 409)
+            self.assertEqual(error.exception.detail, "capture crop is unavailable after review export")
+
 
 if __name__ == "__main__":
     unittest.main()

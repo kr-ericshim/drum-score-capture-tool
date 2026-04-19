@@ -73,7 +73,10 @@ assert(appShell.includes('id="stagePane"'), "renderer-v2 stage pane landmark is 
 assert(appShell.includes('id="contextLane"'), "renderer-v2 context lane landmark is missing.");
 assert(appShell.includes('id="statusBar"'), "renderer-v2 status bar landmark is missing.");
 
-assert(topBar.includes("PRECISION MEDIA WORKBENCH"), "renderer-v2 top bar Stitch identity is missing.");
+assert(
+  topBar.includes('t("topbar.brandTitle"') || topBar.includes('const BRAND_TITLE = "Drum Sheet Capture"'),
+  "renderer-v2 top bar brand identity is missing.",
+);
 assert(!topBar.includes("Core Workflow v2"), "renderer-v2 still exposes the old generic shell identity.");
 assert(processRail.includes("PIPELINE") || processRail.includes('t("rail.pipeline"'), "renderer-v2 process rail Stitch heading is missing.");
 assert(processRail.includes('data-action="open-step"'), "renderer-v2 process rail step action is missing.");

@@ -196,3 +196,27 @@ test("export screen keeps metadata inputs off the left stack until the modal ope
   assert.match(openMarkup, /data-action="update-export-metadata"/);
   assert.match(openMarkup, /PDF 첫 페이지 상단에만 반영됩니다\.|Applies only to the first PDF page\./);
 });
+
+test("export screen escapes dynamic filename, path, and status text before rendering", () => {
+  const state = createInitialSessionState();
+  state.ui.locale = "en";
+  state.source.filePath = "/tmp/practice.mp4";
+  state.source.displayName = '\"><svg/onload=alert(1)>';
+  state.roi.previewImage = "/tmp/frame.png";
+  state.roi.appliedRect = [
+    [0, 0],
+    [320, 0],
+    [320, 180],
+    [0, 180],
+  ];
+  state.exportConfig.outputDir = '<script>alert("dir")</script>';
+  state.exportConfig.message = '<img src=x onerror=alert(1)>';
+
+  const markup = renderExportScreen(state);
+
+  assert.doesNotMatch(markup, /<script>alert\("dir"\)<\/script>/);
+  assert.doesNotMatch(markup, /<img src=x onerror=alert\(1\)>/);
+  assert.match(markup, /&lt;script&gt;alert\(&quot;dir&quot;\)&lt;\/script&gt;/);
+  assert.match(markup, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.match(markup, /alt="&quot;&gt;&lt;svg\/onload=alert\(1\)&gt; representative frame"/);
+});

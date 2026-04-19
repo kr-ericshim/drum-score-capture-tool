@@ -1,11 +1,11 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 const BACKEND_PORT = process.env.DRUMSHEET_PORT || 8000;
 const desktopVersion = ipcRenderer.sendSync("get-app-version");
 const apiToken = ipcRenderer.sendSync("get-session-token") || "";
 
 contextBridge.exposeInMainWorld("drumSheetAPI", {
   selectVideoFile: () => ipcRenderer.invoke("select-video-file"),
-  getPathForFile: (file) => ipcRenderer.invoke("get-path-for-file", file?.path || ""),
+  getPathForFile: (file) => webUtils.getPathForFile(file),
   openPath: (targetPath) => ipcRenderer.invoke("open-path", targetPath),
   copyText: (text) => ipcRenderer.invoke("copy-text", text),
   setAlwaysOnTop: (enabled) => ipcRenderer.invoke("set-always-on-top", enabled),

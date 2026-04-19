@@ -1,4 +1,5 @@
 import { isPdfSelected, isRectValid } from "../../app/session/selectors.js";
+import { escapeAttr, escapeHtml } from "../../lib/html.js";
 import { t } from "../../lib/i18n.js";
 import { normalizeAssetPath } from "../../lib/paths.js";
 
@@ -125,12 +126,30 @@ export function buildExportScreenModel(state) {
 
 export function renderExportScreen(state) {
   const model = buildExportScreenModel(state);
+  const safeFileNameAttr = escapeAttr(model.fileName);
+  const safeDestinationLabel = escapeHtml(model.destinationLabel);
+  const safeDestinationValue = escapeHtml(model.destinationValue);
+  const safeStatusMessage = escapeHtml(model.statusMessage);
+  const safePreviewCaption = escapeHtml(model.previewCaption);
+  const safePreviewSource = escapeAttr(model.previewSource);
+  const safeError = state.exportConfig.error ? escapeHtml(state.exportConfig.error) : "";
+  const safeMetadataHelper = escapeHtml(model.metadata.helperText);
+  const safeMetadataTitle = escapeHtml(model.metadata.modalTitle);
+  const safeMetadataTitleValue = escapeAttr(model.metadata.draft.title);
+  const safeMetadataPerformerValue = escapeAttr(model.metadata.draft.performer);
+  const safeMetadataBpmValue = escapeAttr(model.metadata.draft.bpm);
+  const safeMetadataDateValue = escapeAttr(model.metadata.draft.date);
+  const safeMetadataMemoValue = escapeHtml(model.metadata.draft.memo);
+  const safeValidationSummary = escapeHtml(model.metadata.validationSummary);
+  const safeTitleError = escapeHtml(model.metadata.validation.title);
+  const safeBpmError = escapeHtml(model.metadata.validation.bpm);
+  const safeDiscardPrompt = escapeHtml(model.metadata.discardPrompt);
 
   return `
-    <section class="screen screen-export" data-screen="export">
+    <section class="screen screen-export" data-screen="export" aria-labelledby="exportScreenTitle">
       <header class="screen-headline screen-headline-export">
         <div>
-          <h1>${t("export.title", { locale: model.locale })}</h1>
+          <h1 id="exportScreenTitle" data-screen-heading tabindex="-1">${t("export.title", { locale: model.locale })}</h1>
           <p>${t("export.subtitle", { locale: model.locale })}</p>
         </div>
         <div class="screen-inline-actions">
@@ -154,7 +173,7 @@ export function renderExportScreen(state) {
                 <span>${t("export.pngMatrix", { locale: model.locale })}</span>
               </label>
             </div>
-            ${model.metadata.helperText ? `<p class="panel-note export-metadata-hint">${model.metadata.helperText}</p>` : ""}
+            ${model.metadata.helperText ? `<p class="panel-note export-metadata-hint">${safeMetadataHelper}</p>` : ""}
           </section>
           <section class="panel export-module">
             <div class="panel-heading">
@@ -173,19 +192,19 @@ export function renderExportScreen(state) {
           <section class="panel export-module">
             <div class="panel-heading">
               <h2>${t("export.outputDirectory", { locale: model.locale })}</h2>
-              <p>${model.destinationLabel}</p>
+              <p>${safeDestinationLabel}</p>
             </div>
             <div class="path-row path-row-static">
-              <div class="path-field path-field-wrap">${model.destinationValue}</div>
+              <div class="path-field path-field-wrap">${safeDestinationValue}</div>
             </div>
             ${model.hasFormats ? "" : `<p class="panel-note">${t("export.oneFormatRequired", { locale: model.locale })}</p>`}
-            ${state.exportConfig.error ? `<p class="inline-error" role="alert">${state.exportConfig.error}</p>` : ""}
+            ${safeError ? `<p class="inline-error" role="alert">${safeError}</p>` : ""}
           </section>
         </div>
         <section class="export-preview-workbench" data-stitch-region="export-preview">
           <div class="panel-heading export-preview-heading">
             <h2>${t("export.previewTitle", { locale: model.locale })}</h2>
-            <p>${model.previewCaption}</p>
+            <p>${safePreviewCaption}</p>
           </div>
           <div class="export-progress-strip" role="progressbar" aria-label="${t("export.progressAria", { locale: model.locale })}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${model.progress}">
             <span style="width:${model.progress}%"></span>
@@ -194,98 +213,98 @@ export function renderExportScreen(state) {
             ${model.previewSource
               ? model.hasCropPreview
                 ? `<div class="export-preview-figure export-preview-crop" style="--crop-x:${model.cropBounds.x}; --crop-y:${model.cropBounds.y}; --crop-w:${model.cropBounds.width}; --crop-h:${model.cropBounds.height}; --image-w:${model.sourceWidth}; --image-h:${model.sourceHeight};">
-                    <img src="${model.previewSource}" alt="${model.fileName} roi preview" loading="lazy" />
+                    <img src="${safePreviewSource}" alt="${safeFileNameAttr} roi preview" loading="lazy" />
                     <span class="export-preview-badge">${model.roiSummary}</span>
                   </div>`
                 : `<div class="export-preview-figure">
-                  <img src="${model.previewSource}" alt="${model.fileName} representative frame" loading="lazy" />
+                  <img src="${safePreviewSource}" alt="${safeFileNameAttr} representative frame" loading="lazy" />
                   <span class="export-preview-badge">${model.roiSummary}</span>
                 </div>`
               : `<div class="export-preview-empty"><p>${t("export.previewEmpty", { locale: model.locale })}</p></div>`}
           </div>
-          <p class="export-preview-note">${model.statusMessage}</p>
+          <p class="export-preview-note">${safeStatusMessage}</p>
         </section>
         ${model.metadata.isOpen ? `
           <div class="export-metadata-overlay">
             <section class="export-metadata-modal export-metadata-sheet" role="dialog" aria-modal="true" aria-labelledby="exportMetadataModalTitle">
               <div class="export-metadata-head">
                 <p class="export-metadata-kicker">${t("export.title", { locale: model.locale })}</p>
-                <h2 id="exportMetadataModalTitle">${model.metadata.modalTitle}</h2>
-                <p class="export-metadata-helper">${model.metadata.helperText}</p>
+                <h2 id="exportMetadataModalTitle">${safeMetadataTitle}</h2>
+                <p class="export-metadata-helper">${safeMetadataHelper}</p>
               </div>
               <div class="export-metadata-rule" aria-hidden="true"></div>
-              ${model.metadata.validationSummary ? `<p class="inline-error export-metadata-error" role="alert">${model.metadata.validationSummary}</p>` : ""}
+              ${model.metadata.validationSummary ? `<p class="inline-error export-metadata-error" role="alert">${safeValidationSummary}</p>` : ""}
               <div class="export-metadata-grid">
                 <div class="export-metadata-row">
                   <label class="export-metadata-field export-metadata-field-full">
-                    <span>${model.metadata.titleLabel}</span>
+                    <span>${escapeHtml(model.metadata.titleLabel)}</span>
                     <input
                       data-action="update-export-metadata"
                       data-field="title"
                       type="text"
-                      value="${model.metadata.draft.title}"
-                      placeholder="${model.metadata.titlePlaceholder}"
+                      value="${safeMetadataTitleValue}"
+                      placeholder="${escapeAttr(model.metadata.titlePlaceholder)}"
                       autocomplete="off"
                       ${model.metadata.validation.title ? 'aria-invalid="true"' : ""}
                     />
-                    ${model.metadata.validation.title ? `<small class="export-metadata-field-error">${model.metadata.validation.title}</small>` : ""}
+                    ${model.metadata.validation.title ? `<small class="export-metadata-field-error">${safeTitleError}</small>` : ""}
                   </label>
                 </div>
                 <div class="export-metadata-row export-metadata-row-split">
                   <label class="export-metadata-field">
-                    <span>${model.metadata.performerLabel}</span>
+                    <span>${escapeHtml(model.metadata.performerLabel)}</span>
                     <input
                       data-action="update-export-metadata"
                       data-field="performer"
                       type="text"
-                      value="${model.metadata.draft.performer}"
-                      placeholder="${model.metadata.performerPlaceholder}"
+                      value="${safeMetadataPerformerValue}"
+                      placeholder="${escapeAttr(model.metadata.performerPlaceholder)}"
                       autocomplete="off"
                     />
                   </label>
                   <label class="export-metadata-field">
-                    <span>${model.metadata.bpmLabel}</span>
+                    <span>${escapeHtml(model.metadata.bpmLabel)}</span>
                     <input
                       data-action="update-export-metadata"
                       data-field="bpm"
                       type="text"
-                      value="${model.metadata.draft.bpm}"
+                      value="${safeMetadataBpmValue}"
                       inputmode="numeric"
                       autocomplete="off"
                       ${model.metadata.validation.bpm ? 'aria-invalid="true"' : ""}
                     />
-                    ${model.metadata.validation.bpm ? `<small class="export-metadata-field-error">${model.metadata.validation.bpm}</small>` : ""}
+                    ${model.metadata.validation.bpm ? `<small class="export-metadata-field-error">${safeBpmError}</small>` : ""}
                   </label>
                 </div>
                 <div class="export-metadata-row export-metadata-row-split">
                   <label class="export-metadata-field">
-                    <span>${model.metadata.dateLabel}</span>
+                    <span>${escapeHtml(model.metadata.dateLabel)}</span>
                     <input
                       data-action="update-export-metadata"
                       data-field="date"
                       type="date"
-                      value="${model.metadata.draft.date}"
+                      value="${safeMetadataDateValue}"
                     />
                   </label>
                 </div>
                 <div class="export-metadata-row">
                   <label class="export-metadata-field export-metadata-field-full">
-                    <span>${model.metadata.memoLabel}</span>
+                    <span>${escapeHtml(model.metadata.memoLabel)}</span>
                     <textarea
                       data-action="update-export-metadata"
                       data-field="memo"
                       rows="2"
-                      placeholder="${model.metadata.memoPlaceholder}"
-                    >${model.metadata.draft.memo}</textarea>
+                      placeholder="${escapeAttr(model.metadata.memoPlaceholder)}"
+                    >${safeMetadataMemoValue}</textarea>
                   </label>
                 </div>
               </div>
               ${model.metadata.showDiscardConfirm ? `
                 <div class="export-metadata-discard" role="alert">
-                  <p>${model.metadata.discardPrompt}</p>
+                  <p>${safeDiscardPrompt}</p>
                   <div class="export-metadata-discard-actions">
-                    <button class="button button-secondary" data-action="discard-export-metadata">${model.metadata.discardConfirm}</button>
-                    <button class="button button-secondary" data-action="continue-export-metadata">${model.metadata.discardCancel}</button>
+                    <button class="button button-secondary" data-action="discard-export-metadata">${escapeHtml(model.metadata.discardConfirm)}</button>
+                    <button class="button button-secondary" data-action="continue-export-metadata">${escapeHtml(model.metadata.discardCancel)}</button>
                   </div>
                 </div>
               ` : ""}

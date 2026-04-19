@@ -54,8 +54,7 @@ test("preload fetches the backend session token from Electron IPC", async () => 
   assert.deepEqual(calls, ["get-app-version", "get-session-token"]);
 });
 
-test("preload exposes getPathForFile through Electron IPC", async () => {
-  const invokeCalls = [];
+test("preload exposes getPathForFile through Electron webUtils", async () => {
   let exposed = null;
   const originalLoad = Module._load;
 
@@ -77,12 +76,14 @@ test("preload exposes getPathForFile through Electron IPC", async () => {
             }
             throw new Error(`unexpected channel: ${channel}`);
           },
-          invoke(channel, payload) {
-            invokeCalls.push([channel, payload]);
-            return Promise.resolve(payload);
-          },
+          invoke() {},
           on() {},
           removeListener() {},
+        },
+        webUtils: {
+          getPathForFile(file) {
+            return file?.path || "";
+          },
         },
       };
     }
@@ -98,7 +99,6 @@ test("preload exposes getPathForFile through Electron IPC", async () => {
   }
 
   assert.ok(exposed, "preload should expose the bridge API");
-  const resolved = await exposed.value.getPathForFile({ path: "/tmp/drop-source.webm" });
+  const resolved = exposed.value.getPathForFile({ path: "/tmp/drop-source.webm" });
   assert.equal(resolved, "/tmp/drop-source.webm");
-  assert.deepEqual(invokeCalls, [["get-path-for-file", "/tmp/drop-source.webm"]]);
 });

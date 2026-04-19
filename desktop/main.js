@@ -4,6 +4,7 @@ const os = require("os");
 const crypto = require("crypto");
 const { app, BrowserWindow, clipboard, dialog, ipcMain, shell } = require("electron");
 const { spawn, spawnSync } = require("child_process");
+const { resolveRendererIndexPath } = require("./renderer-entry");
 
 const BACKEND_PORT = Number(process.env.DRUMSHEET_PORT || 8000);
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
@@ -400,7 +401,9 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
-  mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
+  const rendererIndexPath = resolveRendererIndexPath({ baseDir: __dirname });
+  console.log(`[renderer] loading ${path.relative(__dirname, rendererIndexPath) || rendererIndexPath}`);
+  mainWindow.loadFile(rendererIndexPath);
 
   mainWindow.webContents.on("did-finish-load", () => {
     emitBackendState();
@@ -643,14 +646,6 @@ ipcMain.handle("select-video-file", async () => {
       return "";
     }
     return result.filePaths[0];
-  });
-
-  ipcMain.handle("get-path-for-file", async (_, candidatePath) => {
-    const targetPath = String(candidatePath || "").trim();
-    if (!targetPath || !path.isAbsolute(targetPath)) {
-      return "";
-    }
-    return targetPath;
   });
 
   ipcMain.handle("open-path", async (_, targetPath) => {

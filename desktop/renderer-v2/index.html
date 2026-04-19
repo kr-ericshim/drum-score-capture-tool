@@ -4,11 +4,32 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Drum Sheet Capture</title>
+    <script>
+      (() => {
+        const localeKey = "drum-sheet-language";
+        const savedLocale = localStorage.getItem(localeKey);
+        const locale = savedLocale === "ko" || savedLocale === "en"
+          ? savedLocale
+          : ((navigator.language || "").toLowerCase().startsWith("ko") ? "ko" : "en");
+        document.documentElement.lang = locale;
+      })();
+    </script>
     <link rel="stylesheet" href="./src/styles/base.css" />
   </head>
   <body>
     <a class="skip-link" href="#stagePane">메인 작업 영역으로 건너뛰기</a>
+    <script>
+      (() => {
+        const skipLink = document.querySelector(".skip-link");
+        if (!skipLink) {
+          return;
+        }
+        skipLink.textContent = document.documentElement.lang === "ko"
+          ? "메인 작업 영역으로 건너뛰기"
+          : "Skip to main workspace";
+      })();
+    </script>
     <div id="app"></div>
     <script type="module" src="./src/main.js"></script>
   </body>
-  </html>
+</html>
