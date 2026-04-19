@@ -102,7 +102,8 @@ function getTransferFiles(dataTransfer) {
 async function getDroppedVideoPath(dataTransfer, runtimeBridge) {
   const files = getTransferFiles(dataTransfer);
   for (const file of files) {
-    const filePath = String(runtimeBridge.getPathForFile?.(file) || file?.path || "").trim();
+    const resolvedPath = runtimeBridge.getPathForFile ? await runtimeBridge.getPathForFile(file) : "";
+    const filePath = String(resolvedPath || file?.path || "").trim();
     if (isSupportedVideoPath(filePath)) {
       return filePath;
     }
@@ -498,6 +499,11 @@ export function createApp(root, dependencies = {}) {
     }
   }
 
+  function refreshCompletedLibraries() {
+    void refreshLocalMediaRegistry();
+    void refreshArchiveLibrary();
+  }
+
   async function loadSourceFromPath(filePath) {
     const targetPath = String(filePath || "").trim();
     if (!targetPath) {
@@ -600,7 +606,7 @@ export function createApp(root, dependencies = {}) {
       if (job.status === "done" || job.status === "error") {
         stopPolling();
         if (job.status === "done") {
-          void refreshLocalMediaRegistry();
+          refreshCompletedLibraries();
         }
         return;
       }
@@ -1109,7 +1115,7 @@ export function createApp(root, dependencies = {}) {
         return;
       }
       applyJobSnapshot(refreshed);
-      void refreshLocalMediaRegistry();
+      refreshCompletedLibraries();
       setInlineNotice(notice("review.applied", { locale: store.getState().ui.locale || "en" }));
     } catch (error) {
       setState((next) => {

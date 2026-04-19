@@ -1081,6 +1081,101 @@ test("review apply action is runtime-blocked until export finishes", async () =>
   assert.equal(reviewCalls, 0);
 });
 
+test("completed export refreshes both local registry and archive library", async () => {
+  installBrowserStubs({
+    getBackendState: async () => ({ ready: false, starting: false, running: false, error: "" }),
+    onBackendState: () => () => {},
+  });
+  let registryRefreshes = 0;
+  let archiveRefreshes = 0;
+  const root = createRoot();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, current_step: "done", message: "", result: {} }),
+      getLocalMediaRegistry: async () => {
+        registryRefreshes += 1;
+        return { items: [] };
+      },
+      getArchiveLibrary: async () => {
+        archiveRefreshes += 1;
+        return { items: [] };
+      },
+      reviewExport: async () => ({}),
+    },
+  });
+
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/export-source.mp4";
+    next.source.displayName = "export-source.mp4";
+    next.roi.appliedRect = ROI_RECT;
+    next.exportConfig.formats = ["png"];
+    next.ui.activeStep = "export";
+    return next;
+  });
+
+  await root.dispatchAction("run-export");
+  await flush();
+
+  assert.equal(registryRefreshes, 1);
+  assert.equal(archiveRefreshes, 1);
+});
+
+test("review apply completion refreshes both local registry and archive library", async () => {
+  installBrowserStubs({
+    getBackendState: async () => ({ ready: false, starting: false, running: false, error: "" }),
+    onBackendState: () => () => {},
+  });
+  let registryRefreshes = 0;
+  let archiveRefreshes = 0;
+  const root = createRoot();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+      createJob: async () => "job-1",
+      getJob: async () => ({
+        job_id: "job-1",
+        status: "done",
+        progress: 1,
+        current_step: "done",
+        message: "",
+        result: {
+          review_export: {
+            kept_count: 1,
+          },
+        },
+      }),
+      getLocalMediaRegistry: async () => {
+        registryRefreshes += 1;
+        return { items: [] };
+      },
+      getArchiveLibrary: async () => {
+        archiveRefreshes += 1;
+        return { items: [] };
+      },
+      reviewExport: async () => ({}),
+    },
+  });
+
+  app.debug.setState((next) => {
+    next.exportConfig.jobId = "job-1";
+    next.exportConfig.runStatus = "done";
+    next.review.pages = [{ id: "1", title: "페이지 1", capturePath: "/tmp/page-1.png", previewPath: "/tmp/page-1.png" }];
+    next.review.selectedPageIds = ["1"];
+    next.ui.activeStep = "review";
+    return next;
+  });
+
+  await root.dispatchAction("apply-review");
+  await flush();
+
+  assert.equal(registryRefreshes, 1);
+  assert.equal(archiveRefreshes, 1);
+});
+
 test("manual roi bounds input updates the draft rect", () => {
   installBrowserStubs();
   const root = createRoot();

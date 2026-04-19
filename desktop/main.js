@@ -645,6 +645,14 @@ ipcMain.handle("select-video-file", async () => {
     return result.filePaths[0];
   });
 
+  ipcMain.handle("get-path-for-file", async (_, candidatePath) => {
+    const targetPath = String(candidatePath || "").trim();
+    if (!targetPath || !path.isAbsolute(targetPath)) {
+      return "";
+    }
+    return targetPath;
+  });
+
   ipcMain.handle("open-path", async (_, targetPath) => {
     if (!targetPath) {
       return;

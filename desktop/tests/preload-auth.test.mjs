@@ -53,3 +53,52 @@ test("preload fetches the backend session token from Electron IPC", async () => 
   assert.equal(exposed.value.apiToken, "token-123");
   assert.deepEqual(calls, ["get-app-version", "get-session-token"]);
 });
+
+test("preload exposes getPathForFile through Electron IPC", async () => {
+  const invokeCalls = [];
+  let exposed = null;
+  const originalLoad = Module._load;
+
+  Module._load = function patchedLoad(request, parent, isMain) {
+    if (request === "electron") {
+      return {
+        contextBridge: {
+          exposeInMainWorld(name, value) {
+            exposed = { name, value };
+          },
+        },
+        ipcRenderer: {
+          sendSync(channel) {
+            if (channel === "get-app-version") {
+              return "0.1.27";
+            }
+            if (channel === "get-session-token") {
+              return "";
+            }
+            throw new Error(`unexpected channel: ${channel}`);
+          },
+          invoke(channel, payload) {
+            invokeCalls.push([channel, payload]);
+            return Promise.resolve(payload);
+          },
+          on() {},
+          removeListener() {},
+        },
+      };
+    }
+    return originalLoad(request, parent, isMain);
+  };
+
+  delete require.cache[preloadPath];
+  try {
+    require(preloadPath);
+  } finally {
+    Module._load = originalLoad;
+    delete require.cache[preloadPath];
+  }
+
+  assert.ok(exposed, "preload should expose the bridge API");
+  const resolved = await exposed.value.getPathForFile({ path: "/tmp/drop-source.webm" });
+  assert.equal(resolved, "/tmp/drop-source.webm");
+  assert.deepEqual(invokeCalls, [["get-path-for-file", "/tmp/drop-source.webm"]]);
+});
