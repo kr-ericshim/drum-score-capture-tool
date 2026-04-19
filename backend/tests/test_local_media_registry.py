@@ -116,6 +116,70 @@ class TestLocalMediaRegistry(unittest.TestCase):
             self.assertEqual(response.items[1].resolution_label, "1280x720")
             self.assertEqual(response.items[1].duration_label, "01:01")
 
+    def test_local_media_registry_upgrades_filename_only_job_name_from_prepare_title(self):
+        with tempfile.TemporaryDirectory() as td:
+            jobs_root = Path(td) / "jobs"
+            jobs_root.mkdir(parents=True, exist_ok=True)
+
+            shared_source = jobs_root / "_preview_source" / "yt-v3" / "abc123" / "downloads" / "abc123.mp4"
+            shared_source.parent.mkdir(parents=True, exist_ok=True)
+            shared_source.write_bytes(b"video")
+
+            export_dir = jobs_root / "job-1" / "export"
+            export_dir.mkdir(parents=True, exist_ok=True)
+            pdf_path = export_dir / "sheet_export.pdf"
+            pdf_path.write_bytes(b"%PDF")
+
+            job_store = JobStore(jobs_root)
+            job_store.create(
+                Job(
+                    id="job-1",
+                    source_type="file",
+                    file_path=str(shared_source),
+                    youtube_url=None,
+                    options={},
+                    artifact_dir=str(jobs_root / "job-1"),
+                    status=JobStatus.DONE,
+                    message="export finished",
+                    result={
+                        "output_dir": str(export_dir),
+                        "pdf": str(pdf_path),
+                    },
+                    created_at=10.0,
+                    updated_at=20.0,
+                )
+            )
+
+            prepare_store = SourcePrepareStore(jobs_root / "_preview_source_jobs")
+            prepare_store.create(
+                SourcePrepareJob(
+                    id="source-job-backed",
+                    youtube_url="https://youtu.be/job-backed",
+                    artifact_dir=str(prepare_store.root / "source-job-backed"),
+                    status=JobStatus.DONE,
+                    stage="done",
+                    message="youtube source ready",
+                    result={
+                        "video_path": str(shared_source),
+                        "video_title": "Autumn Leaves Drum Lesson",
+                    },
+                    created_at=5.0,
+                    updated_at=30.0,
+                )
+            )
+
+            with (
+                patch("app.main.job_store", job_store),
+                patch("app.main.source_prepare_store", prepare_store),
+                patch("app.main._probe_video_metadata", return_value=(1920, 1080, 252.0)),
+            ):
+                response = local_media_registry()
+
+            self.assertEqual(len(response.items), 1)
+            self.assertEqual(response.items[0].display_name, "Autumn Leaves Drum Lesson")
+            self.assertEqual(response.items[0].source_origin, "job")
+            self.assertEqual(response.items[0].pdf_path, str(pdf_path.resolve()))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -241,7 +241,14 @@ def local_media_registry() -> LocalMediaRegistryResponse:
             return
         if source_path in items_by_source:
             existing = items_by_source[source_path]
+            basename = Path(source_path).name
+            existing_display_name = str(existing.get("display_name") or "").strip()
+            incoming_display_name = str(entry.get("display_name") or "").strip()
             existing["updated_at"] = max(float(existing.get("updated_at") or 0), float(entry.get("updated_at") or 0))
+            if incoming_display_name and incoming_display_name != basename and (
+                not existing_display_name or existing_display_name == basename
+            ):
+                existing["display_name"] = incoming_display_name
             if not existing.get("pdf_path") and entry.get("pdf_path"):
                 existing["pdf_path"] = entry.get("pdf_path")
                 existing["output_dir"] = entry.get("output_dir")
