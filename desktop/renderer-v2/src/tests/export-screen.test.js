@@ -155,3 +155,39 @@ test("export screen uses a wrapping output directory field for long managed path
 
   assert.match(markup, /class="path-field path-field-wrap"/);
 });
+
+test("export screen keeps metadata inputs off the left stack until the modal opens", () => {
+  const state = createInitialSessionState();
+  state.ui.locale = "ko";
+  state.source.filePath = "/tmp/practice.mp4";
+  state.source.displayName = "practice.mp4";
+  state.roi.previewImage = "/tmp/frame.png";
+  state.roi.appliedRect = [
+    [0, 0],
+    [320, 0],
+    [320, 180],
+    [0, 180],
+  ];
+  state.exportConfig.formats = ["pdf"];
+
+  const closedMarkup = renderExportScreen(state);
+
+  assert.doesNotMatch(closedMarkup, /data-action="update-export-metadata"/);
+  assert.doesNotMatch(closedMarkup, /PDF 첫 페이지 상단에만 반영됩니다\.|Applies only to the first PDF page\./);
+
+  state.exportConfig.metadataModal.isOpen = true;
+  state.exportConfig.metadataModal.draft = {
+    title: "Take Five",
+    performer: "Dave Brubeck Quartet",
+    bpm: "174",
+    date: "2026-04-19",
+    memo: "",
+  };
+
+  const openMarkup = renderExportScreen(state);
+
+  assert.match(openMarkup, /class="export-preview-workbench"/);
+  assert.match(openMarkup, /class="export-metadata-overlay"/);
+  assert.match(openMarkup, /data-action="update-export-metadata"/);
+  assert.match(openMarkup, /PDF 첫 페이지 상단에만 반영됩니다\.|Applies only to the first PDF page\./);
+});
