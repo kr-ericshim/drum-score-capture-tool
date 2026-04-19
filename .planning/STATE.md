@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 01-02-PLAN.md
-last_updated: "2026-04-19T03:38:13.821Z"
+status: verifying
+stopped_at: Completed 01-03-PLAN.md
+last_updated: "2026-04-19T03:49:02.212Z"
 last_activity: 2026-04-19
 progress:
   total_phases: 5
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 3
-  completed_plans: 2
-  percent: 67
+  completed_plans: 3
+  percent: 100
 ---
 
 # Project State
@@ -27,7 +27,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-19)
 
 Phase: 01 (score-style-export-header-and-layout) — EXECUTING
 Plan: 3 of 3
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-04-19
 
 Progress: [░░░░░░░░░░] 0%
@@ -53,6 +53,7 @@ Progress: [░░░░░░░░░░] 0%
 
 | Phase 01 P01 | 9m | 2 tasks | 9 files |
 | Phase 01-score-style-export-header-and-layout P02 | 6m | 2 tasks | 2 files |
+| Phase 01 P03 | 16m | 2 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -71,6 +72,9 @@ Recent decisions affecting current work:
 - [Phase 01-score-style-export-header-and-layout]: Only the PDF path composes the score-style header; PNG/JPG exports and review previews stay raw finalized page images.
 - [Phase 01-score-style-export-header-and-layout]: Page diagnostics remain based on finalized score pages before header composition so the title band cannot create false suspicious-page warnings.
 - [Phase 01-score-style-export-header-and-layout]: Composed PDF pages carry score_header_band_height metadata so _prepare_pdf_image() preserves first-page music scale when the header makes the page taller.
+- [Phase 01]: PDF-selected exports now open exportConfig.metadataModal while PNG-only exports continue through the existing direct job flow.
+- [Phase 01]: exportConfig.documentHeader remains the only export payload source; modal draft state is discarded unless explicitly confirmed.
+- [Phase 01]: The document-info surface is rendered as an overlay inside the export workbench so the preview stage stays visually dominant behind the scrim.
 
 ### Pending Todos
 
@@ -92,6 +96,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-19T03:38:13.818Z
-Stopped at: Completed 01-02-PLAN.md
+Last session: 2026-04-19T03:49:02.209Z
+Stopped at: Completed 01-03-PLAN.md
 Resume file: None
