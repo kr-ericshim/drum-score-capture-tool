@@ -350,25 +350,32 @@ def archive_library() -> ArchiveLibraryResponse:
             continue
 
         source_identity = dict(job.source_identity or {})
-        source_key = str(source_identity.get("key") or "").strip()
+        source_key = _resolve_archive_source_key(job=job, source_identity=source_identity)
         if not source_key:
             continue
 
-        pdf_path = _existing_file_path(dict(job.result or {}).get("pdf"))
+        result = dict(job.result or {})
+        pdf_path = _existing_file_path(result.get("pdf"))
         if pdf_path is None:
             continue
 
-        output_dir = _existing_dir_path(dict(job.result or {}).get("output_dir"))
+        output_dir = _existing_dir_path(result.get("output_dir"))
         display_name = str(source_identity.get("display_name") or "").strip()
         if not display_name:
             file_path = str(job.file_path or "").strip()
-            display_name = Path(file_path).name if file_path else pdf_path.stem
+            youtube_url = str(job.youtube_url or "").strip()
+            if file_path:
+                display_name = Path(file_path).name
+            elif youtube_url:
+                display_name = youtube_url
+            else:
+                display_name = pdf_path.stem
 
         source_kind = str(source_identity.get("kind") or job.source_type or "file").strip().lower()
         if source_kind not in {"file", "youtube"}:
             source_kind = "file"
 
-        completed_at = float(job.completed_at if job.completed_at is not None else job.updated_at or 0.0)
+        completed_at = _archive_effective_timestamp(job=job, result=result)
         candidate = ArchiveLibraryItem(
             source_key=source_key,
             source_kind=source_kind,
@@ -1618,6 +1625,27 @@ def _existing_dir_path(raw_path: object) -> Path | None:
     if not path.exists() or not path.is_dir():
         return None
     return path.resolve()
+
+
+def _resolve_archive_source_key(*, job: Job, source_identity: Dict[str, Any]) -> str:
+    source_key = str(source_identity.get("key") or "").strip()
+    if source_key:
+        return source_key
+
+    if str(job.source_type or "").strip().lower() == "youtube":
+        return str(job.youtube_url or "").strip()
+
+    return str(job.file_path or "").strip()
+
+
+def _archive_effective_timestamp(*, job: Job, result: Dict[str, Any]) -> float:
+    completed_at = float(job.completed_at) if job.completed_at is not None else 0.0
+    updated_at = float(job.updated_at or 0.0)
+    if result.get("review_export"):
+        return max(completed_at, updated_at)
+    if completed_at > 0:
+        return completed_at
+    return updated_at
 
 
 def _format_duration_label(seconds: float) -> str:

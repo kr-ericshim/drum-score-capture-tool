@@ -242,14 +242,19 @@ class TestArchiveLibrary(unittest.TestCase):
         jobs_root: Path,
         *,
         job_id: str,
-        source_kind: str = "file",
+        source_type: str = "file",
+        source_kind: str | None = None,
         source_key: str | None = None,
         display_name: str = "",
+        file_path: str | None = "/tmp/nonexistent-source.mp4",
+        youtube_url: str | None = None,
         completed_at: float | None = None,
         updated_at: float | None = None,
         pdf_relative_path: str | None = None,
         create_pdf: bool = True,
         output_dir_relative_path: str | None = None,
+        review_export_applied: bool = False,
+        include_source_identity: bool = True,
     ) -> dict:
         pdf_path = None
         if pdf_relative_path is not None:
@@ -263,29 +268,42 @@ class TestArchiveLibrary(unittest.TestCase):
             output_dir = jobs_root / output_dir_relative_path
             output_dir.mkdir(parents=True, exist_ok=True)
 
-        source_identity = {"kind": source_kind}
-        if source_key is not None:
-            source_identity["key"] = source_key
-        if display_name:
-            source_identity["display_name"] = display_name
+        resolved_source_kind = source_kind or source_type
+        source_identity = {}
+        if include_source_identity:
+            source_identity["kind"] = resolved_source_kind
+            if source_key is not None:
+                source_identity["key"] = source_key
+            if display_name:
+                source_identity["display_name"] = display_name
+
+        result = {
+            "pdf": str(pdf_path) if pdf_path is not None else None,
+            "output_dir": str(output_dir) if output_dir is not None else None,
+        }
+        if review_export_applied:
+            result["review_export"] = {
+                "kept_count": 1,
+                "requested_count": 1,
+                "selection_mode": "pages",
+                "selected_captures": [],
+                "selected_pages": [],
+            }
 
         artifact_dir = jobs_root / job_id
         store.create(
             Job(
                 id=job_id,
-                source_type="file",
-                file_path="/tmp/nonexistent-source.mp4",
-                youtube_url=None,
+                source_type=source_type,
+                file_path=file_path,
+                youtube_url=youtube_url,
                 options={},
                 artifact_dir=str(artifact_dir),
                 source_identity=source_identity,
                 completed_at=completed_at,
                 updated_at=updated_at if updated_at is not None else float(completed_at or 0.0),
                 status=JobStatus.DONE,
-                result={
-                    "pdf": str(pdf_path) if pdf_path is not None else None,
-                    "output_dir": str(output_dir) if output_dir is not None else None,
-                },
+                result=result,
             )
         )
 
@@ -335,8 +353,11 @@ class TestArchiveLibrary(unittest.TestCase):
                 store,
                 jobs_root,
                 job_id="job-no-key",
+                source_type="file",
                 source_key=None,
                 display_name="Missing Source Key",
+                file_path=None,
+                include_source_identity=False,
                 completed_at=300.0,
                 pdf_relative_path="exports/job-no-key/sheet_export.pdf",
                 output_dir_relative_path="exports/job-no-key",
@@ -400,6 +421,39 @@ class TestArchiveLibrary(unittest.TestCase):
             self.assertEqual(response.items[0].pdf_path, older_valid["pdf_path"])
             self.assertEqual(response.items[0].completed_at, 100.0)
 
+    def test_archive_library_uses_file_path_fallback_when_source_identity_is_missing(self):
+        main = self._import_main_with_stubbed_cv()
+        with tempfile.TemporaryDirectory() as td:
+            jobs_root = Path(td) / "jobs"
+            jobs_root.mkdir(parents=True, exist_ok=True)
+            store = JobStore(jobs_root)
+
+            source_file = Path(td) / "recordings" / "fallback-source.mp4"
+            source_file.parent.mkdir(parents=True, exist_ok=True)
+            source_file.write_bytes(b"video")
+            created = self._create_done_job(
+                store,
+                jobs_root,
+                job_id="job-fallback-file",
+                source_type="file",
+                file_path=str(source_file.resolve()),
+                include_source_identity=False,
+                completed_at=120.0,
+                pdf_relative_path="exports/job-fallback-file/sheet_export.pdf",
+                output_dir_relative_path="exports/job-fallback-file",
+            )
+
+            with patch.object(main, "job_store", store):
+                response = main.archive_library()
+
+            self.assertEqual(len(response.items), 1)
+            item = response.items[0]
+            self.assertEqual(item.source_key, str(source_file.resolve()))
+            self.assertEqual(item.source_kind, "file")
+            self.assertEqual(item.display_name, "fallback-source.mp4")
+            self.assertEqual(item.pdf_path, created["pdf_path"])
+            self.assertEqual(item.output_dir, created["output_dir"])
+
     def test_archive_library_returns_latest_review_export_pdf_when_present(self):
         main = self._import_main_with_stubbed_cv()
         with tempfile.TemporaryDirectory() as td:
@@ -442,6 +496,55 @@ class TestArchiveLibrary(unittest.TestCase):
             self.assertEqual(item.pdf_path, review_export["pdf_path"])
             self.assertEqual(item.output_dir, review_export["output_dir"])
             self.assertNotEqual(item.pdf_path, initial_final["pdf_path"])
+
+    def test_archive_library_prefers_review_export_when_updated_after_newer_raw_export(self):
+        main = self._import_main_with_stubbed_cv()
+        with tempfile.TemporaryDirectory() as td:
+            jobs_root = Path(td) / "jobs"
+            jobs_root.mkdir(parents=True, exist_ok=True)
+            store = JobStore(jobs_root)
+
+            review_export = self._create_done_job(
+                store,
+                jobs_root,
+                job_id="job-reviewed",
+                source_kind="youtube",
+                source_type="youtube",
+                source_key="https://www.youtube.com/watch?v=abc123",
+                display_name="Take Five Drum Lesson",
+                file_path=None,
+                youtube_url="https://www.youtube.com/watch?v=abc123",
+                completed_at=180.0,
+                updated_at=260.0,
+                pdf_relative_path="exports/job-reviewed/review_export.pdf",
+                output_dir_relative_path="exports/job-reviewed",
+                review_export_applied=True,
+            )
+            newer_raw = self._create_done_job(
+                store,
+                jobs_root,
+                job_id="job-newer-raw",
+                source_kind="youtube",
+                source_type="youtube",
+                source_key="https://www.youtube.com/watch?v=abc123",
+                display_name="Take Five Drum Lesson Raw",
+                file_path=None,
+                youtube_url="https://www.youtube.com/watch?v=abc123",
+                completed_at=220.0,
+                updated_at=220.0,
+                pdf_relative_path="exports/job-newer-raw/sheet_export.pdf",
+                output_dir_relative_path="exports/job-newer-raw",
+            )
+
+            with patch.object(main, "job_store", store):
+                response = main.archive_library()
+
+            self.assertEqual(len(response.items), 1)
+            item = response.items[0]
+            self.assertEqual(item.pdf_path, review_export["pdf_path"])
+            self.assertEqual(item.output_dir, review_export["output_dir"])
+            self.assertEqual(item.completed_at, 260.0)
+            self.assertNotEqual(item.pdf_path, newer_raw["pdf_path"])
 
 
 if __name__ == "__main__":
