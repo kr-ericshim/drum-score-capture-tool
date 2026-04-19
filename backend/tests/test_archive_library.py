@@ -25,6 +25,9 @@ class TestArchiveLibrary(unittest.TestCase):
         detect = types.ModuleType("app.pipeline.detect")
         detect.detect_sheet_regions = lambda *args, **kwargs: []
 
+        layout_profiles = types.ModuleType("app.pipeline.layout_profiles")
+        layout_profiles.infer_layout_hint_from_roi = lambda *args, **kwargs: "full_scroll"
+
         roi_health = types.ModuleType("app.pipeline.roi_health")
         roi_health.analyze_roi_health_for_source = lambda *args, **kwargs: {}
 
@@ -47,6 +50,7 @@ class TestArchiveLibrary(unittest.TestCase):
             "app.pipeline.acceleration": acceleration,
             "app.pipeline.extract": extract,
             "app.pipeline.detect": detect,
+            "app.pipeline.layout_profiles": layout_profiles,
             "app.pipeline.roi_health": roi_health,
             "app.pipeline.rectify": rectify,
             "app.pipeline.stitch": stitch,
@@ -106,7 +110,7 @@ class TestArchiveLibrary(unittest.TestCase):
                 file_path=str(source_path),
                 source_identity={
                     "kind": "youtube",
-                    "key": "https://www.youtube.com/watch?v=abc123",
+                    "key": "https://youtu.be/abc12345678?si=demo",
                     "display_name": "Blue in Green Drum Cover",
                 },
                 options={
@@ -137,7 +141,7 @@ class TestArchiveLibrary(unittest.TestCase):
                 loaded.source_identity,
                 {
                     "kind": "youtube",
-                    "key": "https://www.youtube.com/watch?v=abc123",
+                    "key": "https://www.youtube.com/watch?v=abc12345678",
                     "display_name": "Blue in Green Drum Cover",
                 },
             )
@@ -208,7 +212,7 @@ class TestArchiveLibrary(unittest.TestCase):
             store.create(
                 SourcePrepareJob(
                     id="source-1",
-                    youtube_url="https://www.youtube.com/watch?v=abc123",
+                    youtube_url="https://youtu.be/abc12345678?si=demo",
                     artifact_dir=str(artifact_dir),
                 )
             )
@@ -222,7 +226,7 @@ class TestArchiveLibrary(unittest.TestCase):
                         "video_path": Path("/tmp/cache/abc123.mp4"),
                         "from_cache": True,
                         "video_title": "Take Five Drum Lesson",
-                        "source_key": "https://www.youtube.com/watch?v=abc123",
+                        "source_key": "https://youtu.be/abc12345678?si=demo",
                     },
                 ),
                 patch.object(main, "_to_jobs_files_url", return_value="/jobs-files/_preview/youtube.mp4"),
@@ -234,7 +238,7 @@ class TestArchiveLibrary(unittest.TestCase):
             self.assertEqual(job.status, JobStatus.DONE)
             result = job.result or {}
             self.assertEqual(result["video_title"], "Take Five Drum Lesson")
-            self.assertEqual(result["source_key"], "https://www.youtube.com/watch?v=abc123")
+            self.assertEqual(result["source_key"], "https://www.youtube.com/watch?v=abc12345678")
 
     def _create_done_job(
         self,
@@ -496,6 +500,53 @@ class TestArchiveLibrary(unittest.TestCase):
             self.assertEqual(item.pdf_path, review_export["pdf_path"])
             self.assertEqual(item.output_dir, review_export["output_dir"])
             self.assertNotEqual(item.pdf_path, initial_final["pdf_path"])
+
+    def test_archive_library_groups_equivalent_youtube_urls_under_one_canonical_key(self):
+        main = self._import_main_with_stubbed_cv()
+        with tempfile.TemporaryDirectory() as td:
+            jobs_root = Path(td) / "jobs"
+            jobs_root.mkdir(parents=True, exist_ok=True)
+            store = JobStore(jobs_root)
+
+            self._create_done_job(
+                store,
+                jobs_root,
+                job_id="job-short-url",
+                source_kind="youtube",
+                source_type="youtube",
+                source_key="https://youtu.be/abc12345678?si=short",
+                display_name="Take Five Drum Lesson",
+                file_path=None,
+                youtube_url="https://youtu.be/abc12345678?si=short",
+                completed_at=180.0,
+                pdf_relative_path="exports/job-short-url/sheet_export.pdf",
+                output_dir_relative_path="exports/job-short-url",
+            )
+            latest = self._create_done_job(
+                store,
+                jobs_root,
+                job_id="job-watch-url",
+                source_kind="youtube",
+                source_type="youtube",
+                source_key="https://www.youtube.com/watch?v=abc12345678&t=43",
+                display_name="Take Five Drum Lesson Latest",
+                file_path=None,
+                youtube_url="https://www.youtube.com/watch?v=abc12345678&t=43",
+                completed_at=260.0,
+                pdf_relative_path="exports/job-watch-url/review_export.pdf",
+                output_dir_relative_path="exports/job-watch-url",
+            )
+
+            with patch.object(main, "job_store", store):
+                response = main.archive_library()
+
+            self.assertEqual(len(response.items), 1)
+            item = response.items[0]
+            self.assertEqual(item.source_key, "https://www.youtube.com/watch?v=abc12345678")
+            self.assertEqual(item.pdf_path, latest["pdf_path"])
+            self.assertEqual(item.output_dir, latest["output_dir"])
+            self.assertEqual(item.display_name, "Take Five Drum Lesson Latest")
+            self.assertEqual(item.completed_at, 260.0)
 
     def test_archive_library_prefers_review_export_when_updated_after_newer_raw_export(self):
         main = self._import_main_with_stubbed_cv()

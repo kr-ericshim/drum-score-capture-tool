@@ -11,7 +11,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 import cv2
 from fastapi import FastAPI, HTTPException, Request
@@ -135,7 +135,48 @@ def _normalize_supported_youtube_url(raw: str) -> str:
     host = (parsed.hostname or "").lower()
     if host not in SUPPORTED_YOUTUBE_HOSTS:
         raise ValueError("youtube_url must point to a supported YouTube host")
-    return value
+    video_id = _extract_supported_youtube_video_id(parsed)
+    return f"https://www.youtube.com/watch?v={video_id}"
+
+
+def _extract_supported_youtube_video_id(parsed) -> str:
+    host = (parsed.hostname or "").lower()
+    path_parts = [unquote(part).strip() for part in parsed.path.split("/") if str(part or "").strip()]
+
+    video_id = ""
+    if host == "youtu.be":
+        video_id = path_parts[0] if path_parts else ""
+    elif path_parts:
+        head = path_parts[0].lower()
+        if head in {"embed", "shorts", "live", "v"} and len(path_parts) >= 2:
+            video_id = path_parts[1]
+
+    if not video_id:
+        video_id = next((value.strip() for value in parse_qs(parsed.query).get("v", []) if value.strip()), "")
+
+    if not video_id:
+        raise ValueError("youtube_url must include a video id")
+
+    return video_id
+
+
+def _best_effort_normalize_youtube_key(raw: str) -> str:
+    value = str(raw or "").strip()
+    if not value:
+        return ""
+    try:
+        return _normalize_supported_youtube_url(value)
+    except ValueError:
+        return value
+
+
+def _normalize_source_identity_payload(source_identity: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(source_identity or {})
+    kind = str(normalized.get("kind") or "").strip().lower()
+    key = str(normalized.get("key") or "").strip()
+    if kind == "youtube" and key:
+        normalized["key"] = _best_effort_normalize_youtube_key(key)
+    return normalized
 
 
 def _normalize_existing_file_path(raw: str) -> str:
@@ -557,6 +598,10 @@ def create_job(payload: JobCreate) -> JobCreateResponse:
 
     _apply_auto_layout_hints(payload)
 
+    normalized_source_identity = _normalize_source_identity_payload(
+        payload.source_identity.model_dump() if payload.source_identity else {}
+    )
+
     job_id = str(uuid.uuid4())
     artifact_dir = jobs_root / job_id
     artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -567,7 +612,7 @@ def create_job(payload: JobCreate) -> JobCreateResponse:
         youtube_url=normalized_youtube_url,
         options=payload.options.model_dump(),
         artifact_dir=str(artifact_dir),
-        source_identity=payload.source_identity.model_dump() if payload.source_identity else {},
+        source_identity=normalized_source_identity,
     )
     job_store.create(job)
     executor.submit(_run_job, job_id, payload)
@@ -1018,7 +1063,7 @@ def _run_source_prepare_job(job_id: str) -> None:
             "video_url": _to_jobs_files_url(prepared["video_path"]),
             "from_cache": bool(prepared["from_cache"]),
             "video_title": str(prepared.get("video_title") or ""),
-            "source_key": str(prepared.get("source_key") or job.youtube_url),
+            "source_key": _best_effort_normalize_youtube_key(prepared.get("source_key") or job.youtube_url),
         }
         source_prepare_store.set_state(
             job_id,
@@ -1097,7 +1142,8 @@ def _find_cached_video(workspace: Path) -> Path | None:
 
 
 def _preview_source_cache_workspace(youtube_url: str) -> Path:
-    cache_key = hashlib.sha1(youtube_url.encode("utf-8")).hexdigest()[:16]
+    normalized_url = _best_effort_normalize_youtube_key(youtube_url)
+    cache_key = hashlib.sha1(normalized_url.encode("utf-8")).hexdigest()[:16]
     cache_dir = jobs_root / "_preview_source" / PREVIEW_SOURCE_CACHE_NAMESPACE / cache_key
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
@@ -1112,13 +1158,13 @@ def _read_cached_youtube_metadata(video_path: Path) -> Dict[str, str]:
     if not isinstance(payload, dict):
         return {}
     return {
-        "source_key": str(payload.get("source_key") or "").strip(),
+        "source_key": _best_effort_normalize_youtube_key(payload.get("source_key") or ""),
         "video_title": str(payload.get("video_title") or "").strip(),
     }
 
 
 def _get_or_prepare_cached_youtube_video(youtube_url: str, *, logger, progress_callback=None) -> Dict[str, object]:
-    url = str(youtube_url or "").strip()
+    url = _best_effort_normalize_youtube_key(youtube_url)
     if not url:
         raise ValueError("youtube_url is required when source_type is youtube")
 
@@ -1163,7 +1209,7 @@ def _get_or_prepare_cached_youtube_video(youtube_url: str, *, logger, progress_c
                 "video_path": cached,
                 "from_cache": True,
                 "video_title": cached_meta.get("video_title", ""),
-                "source_key": cached_meta.get("source_key", "") or url,
+                "source_key": _best_effort_normalize_youtube_key(cached_meta.get("source_key", "") or url),
             }
 
     logger("youtube cache miss: downloading source")
@@ -1180,7 +1226,7 @@ def _get_or_prepare_cached_youtube_video(youtube_url: str, *, logger, progress_c
         "video_path": video_path,
         "from_cache": False,
         "video_title": metadata.get("video_title", ""),
-        "source_key": metadata.get("source_key", "") or url,
+        "source_key": _best_effort_normalize_youtube_key(metadata.get("source_key", "") or url),
     }
 
 
@@ -1628,12 +1674,18 @@ def _existing_dir_path(raw_path: object) -> Path | None:
 
 
 def _resolve_archive_source_key(*, job: Job, source_identity: Dict[str, Any]) -> str:
+    source_kind = str(source_identity.get("kind") or job.source_type or "").strip().lower()
     source_key = str(source_identity.get("key") or "").strip()
+    if source_kind == "youtube":
+        if source_key:
+            return _best_effort_normalize_youtube_key(source_key)
+        return _best_effort_normalize_youtube_key(job.youtube_url or "")
+
     if source_key:
         return source_key
 
     if str(job.source_type or "").strip().lower() == "youtube":
-        return str(job.youtube_url or "").strip()
+        return _best_effort_normalize_youtube_key(job.youtube_url or "")
 
     return str(job.file_path or "").strip()
 

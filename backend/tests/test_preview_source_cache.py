@@ -1,9 +1,62 @@
+import importlib
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from app import main
+
+def _import_main_with_stubs():
+    acceleration = types.ModuleType("app.pipeline.acceleration")
+    acceleration.get_runtime_acceleration = lambda *args, **kwargs: {}
+    acceleration.runtime_public_info = lambda *args, **kwargs: {}
+
+    detect = types.ModuleType("app.pipeline.detect")
+    detect.detect_sheet_regions = lambda *args, **kwargs: []
+
+    layout_profiles = types.ModuleType("app.pipeline.layout_profiles")
+    layout_profiles.infer_layout_hint_from_roi = lambda *args, **kwargs: "full_scroll"
+
+    roi_health = types.ModuleType("app.pipeline.roi_health")
+    roi_health.analyze_roi_health_for_source = lambda *args, **kwargs: {}
+
+    rectify = types.ModuleType("app.pipeline.rectify")
+    rectify.rectify_frames = lambda *args, **kwargs: []
+
+    stitch = types.ModuleType("app.pipeline.stitch")
+    stitch.select_review_candidates = lambda *args, **kwargs: []
+    stitch.stitch_pages = lambda *args, **kwargs: []
+
+    upscale = types.ModuleType("app.pipeline.upscale")
+    upscale.upscale_frames = lambda *args, **kwargs: []
+
+    export = types.ModuleType("app.pipeline.export")
+    export.export_frames = lambda *args, **kwargs: {}
+    export.export_selected_pages = lambda *args, **kwargs: {}
+
+    stubbed_modules = {
+        "cv2": types.ModuleType("cv2"),
+        "app.pipeline.acceleration": acceleration,
+        "app.pipeline.detect": detect,
+        "app.pipeline.layout_profiles": layout_profiles,
+        "app.pipeline.roi_health": roi_health,
+        "app.pipeline.rectify": rectify,
+        "app.pipeline.stitch": stitch,
+        "app.pipeline.upscale": upscale,
+        "app.pipeline.export": export,
+    }
+    previous_main = sys.modules.pop("app.main", None)
+    try:
+        with patch.dict(sys.modules, stubbed_modules):
+            return importlib.import_module("app.main")
+    finally:
+        sys.modules.pop("app.main", None)
+        if previous_main is not None:
+            sys.modules["app.main"] = previous_main
+
+
+main = _import_main_with_stubs()
 
 
 class TestPreviewSourceCache(unittest.TestCase):
@@ -17,6 +70,17 @@ class TestPreviewSourceCache(unittest.TestCase):
 
             self.assertEqual(cache_dir.parent.name, main.PREVIEW_SOURCE_CACHE_NAMESPACE)
             self.assertEqual(cache_dir.parent.parent, jobs_root / "_preview_source")
+
+    def test_cache_workspace_collapses_equivalent_youtube_urls(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            jobs_root = Path(tmp_dir) / "jobs"
+            jobs_root.mkdir(parents=True, exist_ok=True)
+
+            with patch.object(main, "jobs_root", jobs_root):
+                first = main._preview_source_cache_workspace("https://youtu.be/abc12345678?si=demo")
+                second = main._preview_source_cache_workspace("https://www.youtube.com/watch?v=abc12345678&t=43")
+
+            self.assertEqual(first, second)
 
     def test_cache_lookup_ignores_legacy_directory_and_redownloads(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -123,6 +187,27 @@ class TestPreviewSourceCache(unittest.TestCase):
             self.assertEqual(prepared["video_title"], "Take Five Drum Lesson")
             self.assertEqual(prepared["source_key"], "https://www.youtube.com/watch?v=abc123")
             prepare_source.assert_not_called()
+
+    def test_cache_hit_normalizes_legacy_source_key_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            jobs_root = Path(tmp_dir) / "jobs"
+            jobs_root.mkdir(parents=True, exist_ok=True)
+            url = "https://youtu.be/abc12345678"
+
+            with patch.object(main, "jobs_root", jobs_root):
+                cache_dir = main._preview_source_cache_workspace(url)
+                cached_video = cache_dir / "cached.mp4"
+                cached_video.write_bytes(b"cached-video")
+                (cache_dir / "source.json").write_text(
+                    '{"source_key":"https://youtu.be/abc12345678?si=legacy","video_title":"Take Five Drum Lesson"}',
+                    encoding="utf-8",
+                )
+
+                with patch.object(main, "_probe_video_resolution", return_value=(1920, 1080)):
+                    prepared = main._get_or_prepare_cached_youtube_video(url, logger=lambda *_: None)
+
+            self.assertTrue(prepared["from_cache"])
+            self.assertEqual(prepared["source_key"], "https://www.youtube.com/watch?v=abc12345678")
 
     def test_cache_hit_redownloads_low_resolution_video(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
