@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createApp } from "../app/App.js";
-import { getStepState } from "../app/session/selectors.js";
+import { createInitialSessionState, getStepState } from "../app/session/selectors.js";
 
 function deferred() {
   let resolve = () => {};
@@ -733,6 +733,18 @@ test("backend-ready app hydrates the persisted media registry and loads a stored
     exposeTestApi: true,
     readVideoMetadata: async () => ({ durationSec: 30, durationLabel: "00:30", resolutionLabel: "1920x1080" }),
     api: {
+      getArchiveLibrary: async () => ({
+        items: [
+          {
+            sourceKey: "/tmp/library-source.mkv",
+            sourceKind: "file",
+            displayName: "library-source",
+            completedAt: 1713526200,
+            pdfPath: "/tmp/library-source.pdf",
+            outputDir: "/tmp",
+          },
+        ],
+      }),
       getLocalMediaRegistry: async () => ({
         items: [
           {
@@ -753,6 +765,8 @@ test("backend-ready app hydrates the persisted media registry and loads a stored
   let state = app.debug.getState();
   assert.equal(state.source.registryItems.length, 1);
   assert.equal(state.source.registryItems[0].filePath, "/tmp/library-source.mkv");
+  assert.equal(state.archive.items.length, 1);
+  assert.equal(state.archive.items[0].sourceKey, "/tmp/library-source.mkv");
 
   await root.dispatchAction("load-registry-source", { filePath: "/tmp/library-source.mkv" });
   await flush();
@@ -1288,4 +1302,43 @@ test("export after prepared youtube submits a file-backed payload", async () => 
   assert.equal(seenPayload.source_type, "file");
   assert.equal(seenPayload.file_path, "/tmp/cache/youtube.mp4");
   assert.equal(seenPayload.options.extract.start_sec, 0);
+});
+
+test("buildJobPayload includes archive source identity for prepared youtube sources", () => {
+  installBrowserStubs();
+  const root = createRoot();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    api: {
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, current_step: "done", message: "", result: {} }),
+      reviewExport: async () => ({}),
+    },
+  });
+  const state = createInitialSessionState();
+  state.source.filePath = "/tmp/cache/abc123.mp4";
+  state.source.archiveSourceKind = "youtube";
+  state.source.archiveSourceKey = "https://www.youtube.com/watch?v=abc123";
+  state.source.archiveDisplayName = "Take Five Drum Lesson";
+  state.roi.appliedRect = ROI_RECT;
+
+  const payload = app.debug.buildJobPayload(state);
+
+  assert.deepEqual(payload.source_identity, {
+    kind: "youtube",
+    key: "https://www.youtube.com/watch?v=abc123",
+    display_name: "Take Five Drum Lesson",
+  });
+});
+
+test("archive state starts closed and empty", () => {
+  const state = createInitialSessionState();
+
+  assert.deepEqual(state.archive, {
+    isOpen: false,
+    status: "idle",
+    items: [],
+    error: "",
+    selectedSourceKey: "",
+  });
 });

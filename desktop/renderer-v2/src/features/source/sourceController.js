@@ -10,6 +10,10 @@ export function createSourceController({
 }) {
   let sourceRequestToken = 0;
 
+  function withoutExtension(value = "") {
+    return String(value || "").replace(/\.[^.]+$/, "");
+  }
+
   function bumpSourceToken() {
     sourceRequestToken += 1;
     return sourceRequestToken;
@@ -183,6 +187,9 @@ export function createSourceController({
       next.source.sourceType = "file";
       next.source.filePath = filePath;
       clearArchiveIdentity(next);
+      next.source.archiveSourceKind = "file";
+      next.source.archiveSourceKey = filePath;
+      next.source.archiveDisplayName = withoutExtension(baseName(filePath));
       next.source.displayName = baseName(filePath);
       next.source.metadata = metadata;
       next.source.status = "ready";

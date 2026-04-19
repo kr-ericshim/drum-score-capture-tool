@@ -133,6 +133,24 @@ export async function getLocalMediaRegistry() {
   };
 }
 
+export async function getArchiveLibrary() {
+  const response = await fetch(`${resolveApiBase()}/library/archive`, {
+    headers: headers(),
+  });
+  const data = await readJson(response, "보관함을 불러오지 못했습니다.");
+  return {
+    items: Array.isArray(data.items)
+      ? data.items.map((item) => ({
+        sourceKey: String(item.source_key || ""),
+        sourceKind: String(item.source_kind || "file"),
+        displayName: String(item.display_name || ""),
+        completedAt: Number(item.completed_at || 0),
+        pdfPath: String(item.pdf_path || ""),
+        outputDir: item.output_dir ? String(item.output_dir) : "",
+      }))
+      : [],
+  };
+}
 export async function createJob(payload) {
   const response = await fetch(`${resolveApiBase()}/jobs`, {
     method: "POST",
