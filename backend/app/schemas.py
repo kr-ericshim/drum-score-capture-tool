@@ -136,10 +136,17 @@ class JobOptions(BaseModel):
     export: ExportOptions = Field(default_factory=ExportOptions)
 
 
+class SourceIdentity(BaseModel):
+    kind: Literal["file", "youtube"]
+    key: str
+    display_name: str
+
+
 class JobCreate(BaseModel):
     source_type: Literal["file", "youtube"]
     file_path: Optional[str] = None
     youtube_url: Optional[str] = None
+    source_identity: Optional[SourceIdentity] = None
     options: JobOptions = Field(default_factory=JobOptions)
 
 
