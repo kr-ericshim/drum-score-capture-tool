@@ -10,6 +10,16 @@ export function createSourceController({
 }) {
   let sourceRequestToken = 0;
 
+  function withoutExtension(value = "") {
+    return String(value || "").replace(/\.[^.]+$/, "");
+  }
+
+  function clearArchiveIdentity(next) {
+    next.source.archiveSourceKind = "";
+    next.source.archiveSourceKey = "";
+    next.source.archiveDisplayName = "";
+  }
+
   function bumpSourceToken() {
     sourceRequestToken += 1;
     return sourceRequestToken;
@@ -46,6 +56,7 @@ export function createSourceController({
     store.setState((next) => {
       next.source.sourceType = "youtube";
       next.source.youtubeUrl = youtubeUrl;
+      clearArchiveIdentity(next);
       next.source.prepareStatus = "loading";
       next.source.prepareJobId = "";
       next.source.prepareStage = "queued";
@@ -119,8 +130,13 @@ export function createSourceController({
     }
 
     store.setState((next) => {
+      const archiveSourceKey = String(snapshot?.result?.sourceKey || next.source.youtubeUrl || "");
+      const archiveDisplayName = String(snapshot?.result?.videoTitle || "").trim() || baseName(preparedPath);
       next.source.filePath = preparedPath;
-      next.source.displayName = baseName(preparedPath);
+      next.source.archiveSourceKind = "youtube";
+      next.source.archiveSourceKey = archiveSourceKey;
+      next.source.archiveDisplayName = archiveDisplayName;
+      next.source.displayName = archiveDisplayName;
       next.source.metadata = metadata;
       next.source.status = "ready";
       next.source.preparedFromYouTube = true;
@@ -169,6 +185,10 @@ export function createSourceController({
     store.setState((next) => {
       next.source.sourceType = "file";
       next.source.filePath = filePath;
+      clearArchiveIdentity(next);
+      next.source.archiveSourceKind = "file";
+      next.source.archiveSourceKey = filePath;
+      next.source.archiveDisplayName = withoutExtension(baseName(filePath));
       next.source.displayName = baseName(filePath);
       next.source.metadata = metadata;
       next.source.status = "ready";
@@ -189,6 +209,7 @@ export function createSourceController({
       if (sourceType === "file") {
         next.source.preparedFromYouTube = false;
         next.source.preparedVideoPath = "";
+        clearArchiveIdentity(next);
         clearPrepareState(next);
       }
       return next;
@@ -202,6 +223,7 @@ export function createSourceController({
       next.source.youtubeUrl = youtubeUrl;
       next.source.preparedFromYouTube = false;
       next.source.preparedVideoPath = "";
+      clearArchiveIdentity(next);
       clearPrepareState(next);
       return next;
     });

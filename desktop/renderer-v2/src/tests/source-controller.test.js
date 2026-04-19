@@ -198,6 +198,9 @@ test("controller seeds three representative preview candidates after local file 
   await controller.selectLocalFile("/tmp/manual.mp4");
 
   const state = store.getState();
+  assert.equal(state.source.archiveSourceKind, "file");
+  assert.equal(state.source.archiveSourceKey, "/tmp/manual.mp4");
+  assert.equal(state.source.archiveDisplayName, "manual");
   assert.equal(state.ui.activeStep, "roi");
   assert.equal(state.roi.previewCandidates.length, 3);
   assert.deepEqual(

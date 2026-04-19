@@ -34,6 +34,7 @@ import { mountRoiEditor } from "../features/roi/roiEditor.js";
 import {
   createJob,
   createPreviewSourceJob,
+  getArchiveLibrary,
   getJob,
   getLocalMediaRegistry,
   getPreviewSourceJob,
@@ -199,12 +200,14 @@ export function createApp(root, dependencies = {}) {
   const readMetadata = dependencies.readVideoMetadata || readVideoMetadata;
   const runtimeApi = dependencies.api
     ? {
+      getArchiveLibrary: async () => ({ items: [] }),
       getLocalMediaRegistry: async () => ({ items: [] }),
       ...dependencies.api,
     }
     : {
       createJob,
       createPreviewSourceJob,
+      getArchiveLibrary,
       getJob,
       getLocalMediaRegistry,
       getPreviewSourceJob,
@@ -244,6 +247,7 @@ export function createApp(root, dependencies = {}) {
   let lastStatusMarkup = "";
   let lastBackendReady = false;
   let registryRefreshToken = 0;
+  let archiveRefreshToken = 0;
   let activeSourceDropZone = null;
   const runtimeGuards = createRuntimeGuards();
 
@@ -430,6 +434,7 @@ export function createApp(root, dependencies = {}) {
     });
     if (lastBackendReady) {
       void refreshLocalMediaRegistry();
+      void refreshArchiveLibrary();
     }
   }
 
@@ -452,6 +457,44 @@ export function createApp(root, dependencies = {}) {
       if (requestToken !== registryRefreshToken) {
         return;
       }
+    }
+  }
+
+  async function refreshArchiveLibrary() {
+    if (typeof runtimeApi.getArchiveLibrary !== "function") {
+      return;
+    }
+    const requestToken = ++archiveRefreshToken;
+    setState((next) => {
+      next.archive.status = "loading";
+      next.archive.error = "";
+      return next;
+    });
+    try {
+      const payload = await runtimeApi.getArchiveLibrary();
+      if (requestToken !== archiveRefreshToken) {
+        return;
+      }
+      const items = Array.isArray(payload?.items) ? payload.items : [];
+      setState((next) => {
+        next.archive.items = items;
+        next.archive.status = "ready";
+        next.archive.error = "";
+        if (!items.some((item) => item.sourceKey === next.archive.selectedSourceKey)) {
+          next.archive.selectedSourceKey = "";
+        }
+        return next;
+      });
+    } catch (error) {
+      if (requestToken !== archiveRefreshToken) {
+        return;
+      }
+      setState((next) => {
+        next.archive.status = "error";
+        next.archive.error = String(error?.message || error);
+        next.archive.selectedSourceKey = "";
+        return next;
+      });
     }
   }
 
@@ -826,9 +869,15 @@ export function createApp(root, dependencies = {}) {
     const layoutHint = inferLayoutHintFromRoi(roi);
     const fallbackDocumentHeader = createDocumentHeaderState(state.source.filePath);
     const documentHeader = normalizeDocumentHeader(state.exportConfig.documentHeader, fallbackDocumentHeader);
+    const sourceIdentity = {
+      kind: state.source.archiveSourceKind || "file",
+      key: state.source.archiveSourceKey || state.source.filePath,
+      display_name: state.source.archiveDisplayName || state.source.displayName || fallbackDocumentHeader.title,
+    };
     return {
       source_type: "file",
       file_path: state.source.filePath,
+      source_identity: sourceIdentity,
       options: {
         extract: {
           fps: 1.0,
@@ -1331,6 +1380,7 @@ export function createApp(root, dependencies = {}) {
     });
     if (becameReady) {
       void refreshLocalMediaRegistry();
+      void refreshArchiveLibrary();
     }
   });
 
@@ -1340,6 +1390,9 @@ export function createApp(root, dependencies = {}) {
   return {
     debug: dependencies.exposeTestApi
       ? {
+          buildJobPayload(state) {
+            return buildJobPayload(state);
+          },
           getState() {
             return store.getState();
           },

@@ -254,6 +254,9 @@ export function createInitialSessionState() {
       sourceType: "file",
       filePath: "",
       displayName: "",
+      archiveSourceKind: "",
+      archiveSourceKey: "",
+      archiveDisplayName: "",
       metadata: null,
       status: "idle",
       error: "",
@@ -296,6 +299,13 @@ export function createInitialSessionState() {
       keptCount: 0,
       outputDir: "",
       pdfPath: "",
+    },
+    archive: {
+      isOpen: false,
+      status: "idle",
+      items: [],
+      error: "",
+      selectedSourceKey: "",
     },
     ui: {
       locale: detectInitialLocale(),
