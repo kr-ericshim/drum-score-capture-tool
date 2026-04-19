@@ -10,6 +10,7 @@ from app.pipeline.export import (
     _compose_pdf_pages_with_document_header,
     _diagnose_page_image,
     _finalize_export_pages,
+    _prepare_pdf_image,
     export_selected_pages,
 )
 
@@ -142,6 +143,18 @@ class TestExportDocumentHeader(unittest.TestCase):
             png_image = cv2.imread(png_result["images"][0])
             self.assertIsNotNone(png_image)
             self.assertEqual(tuple(png_image.shape[:2]), tuple(finalized[0].shape[:2]))
+
+    def test_prepare_pdf_image_keeps_first_page_music_scale_when_header_band_makes_page_taller(self):
+        page = _make_score_page(label="Scale", top_staff_y=260)
+        page = cv2.resize(page, (1760, 2400), interpolation=cv2.INTER_LINEAR)
+
+        composed = _compose_pdf_pages_with_document_header([page], {"title": "Scale Guard"})
+        prepared = _prepare_pdf_image(composed[0])
+        self.addCleanup(composed[0].close)
+        self.addCleanup(prepared.close)
+
+        self.assertEqual(prepared.size[0], page.shape[1])
+        self.assertGreater(prepared.size[1], page.shape[0])
 
 
 if __name__ == "__main__":
