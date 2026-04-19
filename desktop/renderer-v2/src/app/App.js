@@ -1350,6 +1350,9 @@ export function createApp(root, dependencies = {}) {
       return;
     }
     if (target.dataset.action === "update-export-metadata") {
+      if (event.isComposing) {
+        return;
+      }
       updateExportMetadata(String(target.dataset.field || ""), target.value);
       return;
     }
