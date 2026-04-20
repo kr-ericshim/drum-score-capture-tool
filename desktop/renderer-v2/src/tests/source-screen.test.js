@@ -47,7 +47,8 @@ test("source screen keeps only the real file-pick action", () => {
   assert.match(markup, /data-action="select-source-file"/);
   assert.doesNotMatch(markup, /SCAN DIRECTORY|폴더 스캔/);
   assert.doesNotMatch(markup, /<button[^>]*>LOAD<\/button>/);
-  assert.match(markup, /현재 선택|Current/);
+  assert.match(markup, /현재 작업 중|In progress/);
+  assert.match(markup, /먼저 할 일|Start here/);
 });
 
 test("source registry reflects the actual selected file directory instead of a placeholder path", () => {
@@ -74,6 +75,8 @@ test("source registry renders persisted items with reload actions on inactive ro
       resolutionLabel: "1920x1080",
       durationLabel: "04:12",
       hasScore: true,
+      sourceOrigin: "prepared",
+      youtubeUrl: "https://www.youtube.com/watch?v=cache-a",
     },
   ];
 
@@ -81,7 +84,9 @@ test("source registry renders persisted items with reload actions on inactive ro
 
   assert.match(markup, /cache-a\.mkv/);
   assert.match(markup, /data-action="load-registry-source"/);
-  assert.match(markup, />Open</);
+  assert.match(markup, /data-source-origin="prepared"/);
+  assert.match(markup, /data-youtube-url="https:\/\/www\.youtube\.com\/watch\?v=cache-a"/);
+  assert.match(markup, />Reopen</);
   assert.match(markup, /1920x1080/);
   assert.match(markup, /04:12/);
 });
@@ -128,7 +133,7 @@ test("source registry exposes per-cell column labels for narrow-width restyling"
   assert.match(markup, /<tr class="registry-row is-selected"[^>]*data-selected="true"/);
   assert.match(markup, /<tr class="registry-row"[^>]*data-selected="false"/);
   assert.match(markup, /data-action="load-registry-source"/);
-  assert.match(markup, />Current</);
+  assert.match(markup, />In progress</);
 });
 
 test("source screen renders english helper copy when locale is en", () => {
@@ -137,7 +142,8 @@ test("source screen renders english helper copy when locale is en", () => {
 
   const markup = renderSourceScreen(state);
 
-  assert.match(markup, /Choose Video|Open Local Video|Local Media Registry/i);
+  assert.match(markup, /Choose Video|Choose one video|Reopen recent/i);
+  assert.match(markup, /Start here|Recent sources/);
   assert.doesNotMatch(markup, /현재 1차 플로우는|로컬 영상 불러오기/);
 });
 
@@ -262,4 +268,20 @@ test("source screen keeps youtube prepare disabled until a youtube link is enter
 
   assert.match(markup, /prepare-source-youtube\" disabled/);
   assert.match(markup, /Paste a valid YouTube link/i);
+});
+
+test("source screen accepts mobile and music youtube hosts for preparation", () => {
+  for (const youtubeUrl of [
+    "https://m.youtube.com/watch?v=demo",
+    "https://music.youtube.com/watch?v=demo",
+  ]) {
+    const state = createInitialSessionState();
+    state.ui.locale = "en";
+    state.source.youtubeUrl = youtubeUrl;
+
+    const model = buildSourceScreenModel(state);
+
+    assert.equal(model.youtubeUrlValid, true, youtubeUrl);
+    assert.equal(model.prepareDisabled, false, youtubeUrl);
+  }
 });

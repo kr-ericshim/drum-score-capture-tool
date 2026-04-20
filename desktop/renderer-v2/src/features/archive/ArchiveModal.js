@@ -18,6 +18,14 @@ function formatCompletedAt(timestamp, locale) {
   }
 }
 
+function pathBaseName(filePath = "") {
+  const normalized = String(filePath || "").replace(/\\/g, "/").trim();
+  if (!normalized) {
+    return "";
+  }
+  return normalized.split("/").pop() || normalized;
+}
+
 function renderArchiveList(items, locale) {
   if (!items.length) {
     return `<p class="archive-empty">${t("archive.empty", { locale })}</p>`;
@@ -28,7 +36,7 @@ function renderArchiveList(items, locale) {
       ${items.map((item) => {
         const completedAt = formatCompletedAt(item.completedAt, locale);
         return `
-          <button class="archive-row" type="button" role="listitem" data-action="select-archive-item" data-source-key="${escapeAttr(item.sourceKey)}">
+          <button class="archive-row" type="button" data-action="select-archive-item" data-source-key="${escapeAttr(item.sourceKey)}">
             <span class="archive-row-copy">
               <strong>${escapeHtml(item.displayName || item.sourceKey)}</strong>
               <span>${completedAt || t("archive.completedUnknown", { locale })}</span>
@@ -42,6 +50,7 @@ function renderArchiveList(items, locale) {
 
 function renderArchiveDetail(item, locale) {
   const completedAt = formatCompletedAt(item.completedAt, locale);
+  const canReopenSource = Boolean(String(item.sourcePath || "").trim());
 
   return `
     <div class="archive-detail">
@@ -50,7 +59,22 @@ function renderArchiveDetail(item, locale) {
         <p class="archive-detail-kicker">${t("archive.detailLabel", { locale })}</p>
         <h3>${escapeHtml(item.displayName || item.sourceKey)}</h3>
         <p class="archive-detail-meta">${completedAt || t("archive.completedUnknown", { locale })}</p>
+        <dl class="archive-detail-paths">
+          <div>
+            <dt>${escapeHtml(t("archive.pathLabel.pdf", { locale }))}</dt>
+            <dd>${escapeHtml(pathBaseName(item.pdfPath) || t("archive.completedUnknown", { locale }))}</dd>
+          </div>
+          <div>
+            <dt>${escapeHtml(t("archive.pathLabel.folder", { locale }))}</dt>
+            <dd>${escapeHtml(pathBaseName(item.outputDir) || t("archive.completedUnknown", { locale }))}</dd>
+          </div>
+          <div>
+            <dt>${escapeHtml(t("archive.pathLabel.source", { locale }))}</dt>
+            <dd>${escapeHtml(pathBaseName(item.sourcePath) || t("archive.completedUnknown", { locale }))}</dd>
+          </div>
+        </dl>
         <div class="archive-detail-actions">
+          <button class="button button-secondary" type="button" data-action="reopen-archive-source" data-source-key="${escapeAttr(item.sourceKey)}" data-file-path="${escapeAttr(item.sourcePath || "")}" data-source-kind="${escapeAttr(item.sourceKind || "file")}" data-display-name="${escapeAttr(item.displayName || "")}" data-youtube-url="${escapeAttr(item.youtubeUrl || "")}" ${canReopenSource ? "" : "disabled"}>${t("archive.reopenSource", { locale })}</button>
           <button class="button button-primary" type="button" data-action="open-archive-pdf" data-source-key="${escapeAttr(item.sourceKey)}" ${item.pdfPath ? "" : "disabled"}>${t("archive.openPdf", { locale })}</button>
           <button class="button button-secondary" type="button" data-action="open-archive-folder" data-source-key="${escapeAttr(item.sourceKey)}" ${item.outputDir ? "" : "disabled"}>${t("archive.openFolder", { locale })}</button>
         </div>

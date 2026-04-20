@@ -201,3 +201,23 @@ class DownloadYoutubeTests(unittest.TestCase):
         self.assertEqual(updates[-1]["stage"], "postprocess")
         self.assertEqual(updates[-1]["progress_mode"], "indeterminate")
         self.assertIn("merge", updates[-1]["message"].lower())
+
+    def test_progress_hooks_tolerate_missing_progress_callback(self):
+        progress_logs = []
+        postprocess_logs = []
+        progress_hook = extract._build_youtube_progress_hook(
+            progress_callback=None,
+            logger=progress_logs.append,
+        )
+        postprocess_hook = extract._build_youtube_postprocessor_hook(
+            progress_callback=None,
+            logger=postprocess_logs.append,
+        )
+
+        progress_hook({"status": "downloading", "downloaded_bytes": 42, "total_bytes": 100})
+        progress_hook({"status": "finished"})
+        postprocess_hook({"status": "started", "postprocessor": "FFmpegMergerPP"})
+        postprocess_hook({"status": "finished", "postprocessor": "FFmpegMergerPP"})
+
+        self.assertGreaterEqual(len(progress_logs), 2)
+        self.assertGreaterEqual(len(postprocess_logs), 2)

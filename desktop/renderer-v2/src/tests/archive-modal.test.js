@@ -45,8 +45,11 @@ test("archive modal renders detail actions from selected row", async () => {
   state.archive.items = [
     {
       sourceKey: "source-1",
+      sourceKind: "youtube",
       displayName: "Autumn Leaves",
       completedAt: 1713526200,
+      sourcePath: "/tmp/cache/autumn-leaves.mp4",
+      youtubeUrl: "https://www.youtube.com/watch?v=autumn",
       pdfPath: "/tmp/autumn-leaves.pdf",
       outputDir: "/tmp/autumn-leaves",
     },
@@ -56,8 +59,12 @@ test("archive modal renders detail actions from selected row", async () => {
 
   assert.match(markup, /Autumn Leaves/);
   assert.match(markup, /data-action="back-archive-detail"/);
+  assert.match(markup, /data-action="reopen-archive-source"/);
   assert.match(markup, /data-action="open-archive-pdf"/);
   assert.match(markup, /data-action="open-archive-folder"/);
+  assert.match(markup, /PDF file|PDF 파일/);
+  assert.match(markup, /autumn-leaves\.pdf/);
+  assert.doesNotMatch(markup, /role="listitem"/);
 });
 
 test("archive modal shows empty state and disables missing-path actions", async () => {

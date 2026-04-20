@@ -310,8 +310,10 @@ class ArchiveLibraryItem(BaseModel):
     source_kind: Literal["file", "youtube"]
     display_name: str
     completed_at: float = 0.0
+    source_path: str = ""
     pdf_path: str
     output_dir: Optional[str] = None
+    youtube_url: Optional[str] = None
 
 
 class ArchiveLibraryResponse(BaseModel):

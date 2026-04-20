@@ -230,6 +230,40 @@ class TestReviewExport(unittest.TestCase):
             self.assertEqual(error.exception.status_code, 409)
             self.assertEqual(error.exception.detail, "review export is already applied")
 
+    def test_review_export_rejects_empty_formats_instead_of_falling_back(self):
+        with tempfile.TemporaryDirectory() as td:
+            jobs_root = Path(td)
+            artifact_dir = jobs_root / "job-1"
+            export_dir = artifact_dir / "export" / "images"
+            export_dir.mkdir(parents=True, exist_ok=True)
+
+            page_one = export_dir / "page_0001.png"
+            page_one.write_bytes(b"page-1")
+
+            store = JobStore(jobs_root)
+            store.create(
+                Job(
+                    id="job-1",
+                    source_type="file",
+                    file_path=str(jobs_root / "source.mp4"),
+                    youtube_url=None,
+                    options={"export": {"formats": ["png", "pdf"], "page_fill_mode": "performance"}},
+                    artifact_dir=str(artifact_dir),
+                    status=JobStatus.DONE,
+                    result={"images": [str(page_one)]},
+                )
+            )
+
+            with patch("app.main.job_store", store):
+                with self.assertRaises(HTTPException) as error:
+                    review_export(
+                        "job-1",
+                        JobReviewExportRequest(keep_images=[str(page_one)], formats=[]),
+                    )
+
+            self.assertEqual(error.exception.status_code, 400)
+            self.assertEqual(error.exception.detail, "formats must include at least one export format")
+
     def test_review_export_failure_preserves_existing_outputs(self):
         with tempfile.TemporaryDirectory() as td:
             jobs_root = Path(td)

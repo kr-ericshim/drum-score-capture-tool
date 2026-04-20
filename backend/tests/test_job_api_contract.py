@@ -76,7 +76,7 @@ class TestJobApiContract(unittest.TestCase):
             with (
                 patch("app.main.job_store", store),
                 patch("app.main.jobs_root", jobs_root),
-                patch("app.main._enforce_roi_capture_gate", return_value={"summary": "ok"}),
+                patch("app.main._analyze_roi_health", return_value={"summary": "ok", "diagnostics": []}),
                 patch("app.main.get_runtime_acceleration", return_value={}),
                 patch("app.main.runtime_public_info", return_value={}),
                 patch("app.main._detect_source_resolution", return_value=(0, 0)),
@@ -103,6 +103,91 @@ class TestJobApiContract(unittest.TestCase):
             self.assertEqual(export_options.page_fill_mode, "balanced")
             self.assertEqual(export_options.document_header.model_dump(), stored_document_header)
             self.assertEqual(export_frames.call_args.kwargs["document_header"], stored_document_header)
+
+    def test_run_job_keeps_roi_health_diagnostics_without_aborting_export(self):
+        with tempfile.TemporaryDirectory() as td:
+            jobs_root = Path(td)
+            artifact_dir = jobs_root / "job-1"
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+
+            source_path = jobs_root / "source.mp4"
+            source_path.write_bytes(b"video")
+
+            rectified = artifact_dir / "rectified" / "capture_0001.png"
+            stitched = artifact_dir / "stitched" / "page_0001.png"
+            export_image = artifact_dir / "export" / "images" / "page_0001.png"
+
+            store = JobStore(jobs_root)
+            store.create(
+                Job(
+                    id="job-1",
+                    source_type="file",
+                    file_path=str(source_path),
+                    youtube_url=None,
+                    options={"export": {"formats": ["png"]}},
+                    artifact_dir=str(artifact_dir),
+                    status=JobStatus.QUEUED,
+                )
+            )
+
+            payload = JobCreate(
+                source_type="file",
+                file_path=str(source_path),
+                options={
+                    "detect": {
+                        "roi": [[0, 0], [320, 0], [320, 180], [0, 180]],
+                    },
+                    "export": {
+                        "formats": ["png"],
+                    },
+                },
+            )
+
+            roi_health = {
+                "risk_level": "critical",
+                "summary": "샘플 프레임 3개 기준으로 ROI를 점검했습니다.",
+                "diagnostics": [
+                    {
+                        "level": "critical",
+                        "code": "top_edge_busy",
+                        "title": "상단 잘림 위험",
+                        "detail": "샘플 프레임 3개에서 상단 경계가 악보 내용과 가깝습니다.",
+                    },
+                ],
+                "sampled_frames": 3,
+                "checked_seconds": [0.0, 0.8, 1.6],
+                "metrics": {},
+            }
+
+            with (
+                patch("app.main.job_store", store),
+                patch("app.main.jobs_root", jobs_root),
+                patch("app.main._analyze_roi_health", return_value=roi_health),
+                patch("app.main.get_runtime_acceleration", return_value={}),
+                patch("app.main.runtime_public_info", return_value={}),
+                patch("app.main._detect_source_resolution", return_value=(0, 0)),
+                patch("app.main.extract_frames", return_value=[artifact_dir / "frames" / "frame_0001.png"]),
+                patch("app.main.detect_sheet_regions", return_value=[{"id": "roi"}]),
+                patch("app.main.rectify_frames", return_value=[rectified]),
+                patch("app.main.select_review_candidates", return_value=[rectified], create=True),
+                patch("app.main.stitch_pages", return_value=[stitched]),
+                patch("app.main.upscale_frames", return_value=[stitched]),
+                patch(
+                    "app.main.export_frames",
+                    return_value={
+                        "images": [str(export_image)],
+                        "pdf": None,
+                        "raw_frames": [],
+                        "page_diagnostics": [],
+                    },
+                ),
+            ):
+                _run_job("job-1", payload)
+
+            job = store.get("job-1")
+            self.assertIsNotNone(job)
+            self.assertEqual(job.status, JobStatus.DONE)
+            self.assertEqual(job.result.get("roi_health"), roi_health)
 
     def test_review_export_rejects_capture_outside_current_review_candidates(self):
         with tempfile.TemporaryDirectory() as td:

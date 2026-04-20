@@ -11,6 +11,18 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
+function hasPendingRoiDraft(state) {
+  const draft = state?.roi?.draftRect;
+  const applied = state?.roi?.appliedRect;
+  if (!Array.isArray(draft) || draft.length !== 4) {
+    return false;
+  }
+  if (!Array.isArray(applied) || applied.length !== 4) {
+    return true;
+  }
+  return JSON.stringify(draft) !== JSON.stringify(applied);
+}
+
 function renderPageCard(page, selected, focused, locked, locale) {
   const pageId = escapeHtml(page.id);
   const pageTitle = escapeHtml(page.title);
@@ -51,9 +63,7 @@ export function renderReviewScreen(state) {
   const selectedSet = new Set(state.review.selectedPageIds);
   const summary = summarizeSelection(pages.map((page) => page.id), selectedSet);
   const reviewDone = state.review.status === "applied";
-  const selectedCount = reviewDone
-    ? Number(state.review.keptCount || summary.keptCount || 0)
-    : summary.keptCount;
+  const selectedCount = summary.keptCount;
   const reviewTitle = escapeHtml(t("review.title", { locale }));
   const reviewLabel = escapeHtml(state.source.displayName || t("review.fallbackLabel", { locale }));
   const reviewCountLabel = escapeHtml(reviewDone
@@ -63,6 +73,13 @@ export function renderReviewScreen(state) {
   const appliedNote = escapeHtml(t("review.appliedNote", { locale }));
   const applyLabel = escapeHtml(state.review.status === "running" ? t("review.applyBusy", { locale }) : t("review.apply", { locale }));
   const errorLabel = state.review.error ? escapeHtml(state.review.error) : "";
+  const hasFormats = Array.isArray(state.exportConfig.formats) && state.exportConfig.formats.length > 0;
+  const applyDisabled = summary.keptCount === 0
+    || !state.exportConfig.jobId
+    || state.review.status === "running"
+    || state.exportConfig.runStatus !== "done"
+    || !hasFormats
+    || hasPendingRoiDraft(state);
 
   return `
     <section class="screen screen-review" data-screen="review" aria-labelledby="reviewScreenTitle">
@@ -77,7 +94,7 @@ export function renderReviewScreen(state) {
           </div>
           ${reviewDone
             ? `<p class="panel-note review-status-note">${appliedNote}</p>`
-            : `<button class="button button-primary" data-action="apply-review" ${summary.keptCount === 0 || !state.exportConfig.jobId || state.review.status === "running" || state.exportConfig.runStatus !== "done" ? "disabled" : ""}>${applyLabel}</button>`}
+            : `<button class="button button-primary" data-action="apply-review" ${applyDisabled ? "disabled" : ""}>${applyLabel}</button>`}
         </div>
       </header>
       <section class="review-grid-shell" data-stitch-region="review-grid">

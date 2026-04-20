@@ -168,8 +168,10 @@ export async function getArchiveLibrary() {
         sourceKind: String(item.source_kind || "file"),
         displayName: String(item.display_name || ""),
         completedAt: Number(item.completed_at || 0),
+        sourcePath: String(item.source_path || ""),
         pdfPath: String(item.pdf_path || ""),
         outputDir: item.output_dir ? String(item.output_dir) : "",
+        youtubeUrl: item.youtube_url ? String(item.youtube_url) : "",
       }))
       : [],
   };
@@ -192,12 +194,13 @@ export async function getJob(jobId) {
   return readJson(response, "작업 조회에 실패했습니다.");
 }
 
-export async function reviewExport(jobId, keepCaptures, formats) {
+export async function reviewExport(jobId, { keepCaptures = [], keepImages = [], formats = [] } = {}) {
   const response = await fetch(`${resolveApiBase()}/jobs/${jobId}/review-export`, {
     method: "POST",
     headers: headers({ "Content-Type": "application/json" }),
     body: JSON.stringify({
       keep_captures: keepCaptures,
+      keep_images: keepImages,
       formats,
     }),
   });

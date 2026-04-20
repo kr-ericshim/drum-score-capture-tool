@@ -16,6 +16,18 @@ export const bridge = {
   copyText(text) {
     return window?.drumSheetAPI?.copyText?.(text) || Promise.resolve(false);
   },
+  restartBackend() {
+    return window?.drumSheetAPI?.restartBackend?.() || Promise.resolve("");
+  },
+  runGuidedSetup() {
+    return window?.drumSheetAPI?.runGuidedSetup?.() || Promise.resolve("");
+  },
+  getAlwaysOnTop() {
+    return window?.drumSheetAPI?.getAlwaysOnTop?.() || Promise.resolve(false);
+  },
+  setAlwaysOnTop(enabled) {
+    return window?.drumSheetAPI?.setAlwaysOnTop?.(enabled) || Promise.resolve(false);
+  },
   getBackendState() {
     return window?.drumSheetAPI?.getBackendState?.() || Promise.resolve({
       ready: false,
@@ -27,6 +39,18 @@ export const bridge = {
   onBackendState(handler) {
     if (typeof window?.drumSheetAPI?.onBackendState === "function") {
       return window.drumSheetAPI.onBackendState(handler);
+    }
+    return () => {};
+  },
+  onSetupLog(handler) {
+    if (typeof window?.drumSheetAPI?.onSetupLog === "function") {
+      return window.drumSheetAPI.onSetupLog(handler);
+    }
+    return () => {};
+  },
+  onSetupState(handler) {
+    if (typeof window?.drumSheetAPI?.onSetupState === "function") {
+      return window.drumSheetAPI.onSetupState(handler);
     }
     return () => {};
   },

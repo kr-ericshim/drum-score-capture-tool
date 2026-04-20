@@ -43,6 +43,41 @@ export function createSourceController({
     next.source.error = "";
   }
 
+  function resolveLocalSourceIdentity(filePath, sourceDetails = {}) {
+    const sourceOrigin = String(sourceDetails.sourceOrigin || "").trim();
+    const youtubeUrl = String(sourceDetails.youtubeUrl || "").trim();
+    const reopenedDisplayName = String(sourceDetails.displayName || "").trim();
+    const preparedFromYouTube = sourceOrigin === "prepared" && Boolean(youtubeUrl);
+    const fileLabel = baseName(filePath);
+    const displayName = reopenedDisplayName || fileLabel;
+
+    return {
+      sourceType: preparedFromYouTube ? "youtube" : "file",
+      youtubeUrl: preparedFromYouTube ? youtubeUrl : "",
+      archiveSourceKind: preparedFromYouTube ? "youtube" : "file",
+      archiveSourceKey: preparedFromYouTube ? youtubeUrl : filePath,
+      archiveDisplayName: preparedFromYouTube ? displayName : withoutExtension(fileLabel),
+      displayName,
+      preparedFromYouTube,
+      preparedVideoPath: preparedFromYouTube ? filePath : "",
+    };
+  }
+
+  function clearResolvedSourceState(next, { sourceType = next.source.sourceType || "file", youtubeUrl = next.source.youtubeUrl || "" } = {}) {
+    next.source.sourceType = sourceType;
+    next.source.filePath = "";
+    next.source.displayName = "";
+    next.source.metadata = null;
+    next.source.status = "idle";
+    next.source.youtubeUrl = youtubeUrl;
+    next.source.preparedFromYouTube = false;
+    next.source.preparedVideoPath = "";
+    clearArchiveIdentity(next);
+    clearPrepareState(next);
+    resetDownstream(next);
+    next.ui.activeStep = "source";
+  }
+
   function seedRepresentativeFrames(next, metadata) {
     const candidates = buildRepresentativeFrameCandidates(metadata?.durationSec);
     const defaultCandidate = candidates[1] || candidates[0] || null;
@@ -55,9 +90,11 @@ export function createSourceController({
   function startYoutubePrepare(youtubeUrl) {
     const requestToken = bumpSourceToken();
     store.setState((next) => {
-      next.source.sourceType = "youtube";
-      next.source.youtubeUrl = youtubeUrl;
-      clearArchiveIdentity(next);
+      clearResolvedSourceState(next, {
+        sourceType: "youtube",
+        youtubeUrl,
+      });
+      next.source.status = "loading";
       next.source.prepareStatus = "loading";
       next.source.prepareJobId = "";
       next.source.prepareStage = "queued";
@@ -66,8 +103,6 @@ export function createSourceController({
       next.source.prepareMessage = "";
       next.source.prepareFromCache = false;
       next.source.prepareLogs = [];
-      next.source.prepareErrorDetail = "";
-      next.source.error = "";
       return next;
     });
     return requestToken;
@@ -177,24 +212,33 @@ export function createSourceController({
     return true;
   }
 
-  async function selectLocalFile(filePath) {
+  async function selectLocalFile(filePath, sourceDetails = {}) {
+    const sourceIdentity = resolveLocalSourceIdentity(filePath, sourceDetails);
     const requestToken = bumpSourceToken();
+    store.setState((next) => {
+      clearResolvedSourceState(next, {
+        sourceType: sourceIdentity.sourceType,
+        youtubeUrl: sourceIdentity.youtubeUrl,
+      });
+      next.source.status = "loading";
+      return next;
+    });
     const metadata = await readMetadata(filePath);
     if (!isCurrentToken(requestToken)) {
       return;
     }
     store.setState((next) => {
-      next.source.sourceType = "file";
+      next.source.sourceType = sourceIdentity.sourceType;
       next.source.filePath = filePath;
-      clearArchiveIdentity(next);
-      next.source.archiveSourceKind = "file";
-      next.source.archiveSourceKey = filePath;
-      next.source.archiveDisplayName = withoutExtension(baseName(filePath));
-      next.source.displayName = baseName(filePath);
+      next.source.archiveSourceKind = sourceIdentity.archiveSourceKind;
+      next.source.archiveSourceKey = sourceIdentity.archiveSourceKey;
+      next.source.archiveDisplayName = sourceIdentity.archiveDisplayName;
+      next.source.displayName = sourceIdentity.displayName;
       next.source.metadata = metadata;
       next.source.status = "ready";
-      next.source.preparedFromYouTube = false;
-      next.source.preparedVideoPath = "";
+      next.source.youtubeUrl = sourceIdentity.youtubeUrl;
+      next.source.preparedFromYouTube = sourceIdentity.preparedFromYouTube;
+      next.source.preparedVideoPath = sourceIdentity.preparedVideoPath;
       clearPrepareState(next);
       resetDownstream(next);
       seedRepresentativeFrames(next, metadata);
@@ -206,12 +250,13 @@ export function createSourceController({
   function setSourceType(sourceType) {
     bumpSourceToken();
     store.setState((next) => {
-      next.source.sourceType = sourceType;
       if (sourceType === "file") {
-        next.source.preparedFromYouTube = false;
-        next.source.preparedVideoPath = "";
-        clearArchiveIdentity(next);
-        clearPrepareState(next);
+        clearResolvedSourceState(next, {
+          sourceType,
+          youtubeUrl: "",
+        });
+      } else {
+        next.source.sourceType = sourceType;
       }
       return next;
     });
@@ -220,12 +265,10 @@ export function createSourceController({
   function setYoutubeUrl(youtubeUrl) {
     bumpSourceToken();
     store.setState((next) => {
-      next.source.sourceType = "youtube";
-      next.source.youtubeUrl = youtubeUrl;
-      next.source.preparedFromYouTube = false;
-      next.source.preparedVideoPath = "";
-      clearArchiveIdentity(next);
-      clearPrepareState(next);
+      clearResolvedSourceState(next, {
+        sourceType: "youtube",
+        youtubeUrl,
+      });
       return next;
     });
   }

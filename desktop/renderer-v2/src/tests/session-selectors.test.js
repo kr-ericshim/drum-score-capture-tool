@@ -146,6 +146,18 @@ test("roi completion requires both a representative frame and an applied roi", (
   assert.equal(getStepState(state, "export").enabled, true);
 });
 
+test("dirty roi draft relocks export until the new roi is applied", () => {
+  const state = createInitialSessionState();
+  state.source.filePath = "/tmp/video.mp4";
+  state.roi.frameTime = 12.5;
+  state.roi.appliedRect = [[10, 10], [110, 10], [110, 90], [10, 90]];
+  state.roi.draftRect = [[12, 12], [112, 12], [112, 92], [12, 92]];
+
+  assert.equal(getStepState(state, "roi").complete, false);
+  assert.equal(getStepState(state, "export").enabled, false);
+  assert.match(getStepState(state, "roi").blockingReason, /ROI 변경사항|ROI changes/i);
+});
+
 test("deriveCapturePages prefers review candidates and keeps diagnostics aligned", () => {
   const pages = deriveCapturePages({
     review_candidates: ["/tmp/c1.png", "/tmp/c2.png"],
@@ -205,6 +217,19 @@ test("deriveCapturePages keeps capture previews even after review export is appl
   assert.equal(pages[0].previewPath, "file:///tmp/capture-1.png");
   assert.equal(pages[0].outputPreviewPath, "file:///tmp/review-preview-1.png");
   assert.equal(pages[0].previewKind, "capture");
+});
+
+test("deriveCapturePages switches to final pages when review export used page selection mode", () => {
+  const pages = deriveCapturePages({
+    review_candidates: ["/tmp/capture-1.png"],
+    images: ["/tmp/final-page-1.png"],
+    review_export: { kept_count: 1, requested_count: 1, selection_mode: "pages" },
+  });
+
+  assert.equal(pages.length, 1);
+  assert.equal(pages[0].capturePath, "/tmp/final-page-1.png");
+  assert.equal(pages[0].previewKind, "output");
+  assert.equal(pages[0].selectionMode, "pages");
 });
 
 test("deriveCapturePages drops page diagnostics when capture candidates and final pages do not align", () => {

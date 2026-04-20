@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app import main
-from app.job_store import JobStatus, ProgressMode, SourcePrepareJob, SourcePrepareStore
+from app.job_store import JobStatus, JobStore, ProgressMode, SourcePrepareJob, SourcePrepareStore
 from app.schemas import PreviewSourceJobCreateRequest
 
 
@@ -171,6 +171,97 @@ class TestSourcePrepareJobs(unittest.TestCase):
             self.assertAlmostEqual(job.progress, 1.0, places=3)
             self.assertEqual(job.result.get("video_path"), str(output))
             self.assertFalse(job.result.get("from_cache"))
+
+    def test_run_source_prepare_job_accepts_cache_miss_prepare_result_without_tuple_wrapper(self):
+        with tempfile.TemporaryDirectory() as td:
+            jobs_root = Path(td)
+            store = SourcePrepareStore(jobs_root / "_preview_source_jobs")
+            artifact_dir = store.root / "prepare-5"
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+            output = artifact_dir / "downloads" / "video.mp4"
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(b"video")
+
+            store.create(
+                SourcePrepareJob(
+                    id="prepare-5",
+                    youtube_url="https://youtu.be/demo",
+                    artifact_dir=str(artifact_dir),
+                )
+            )
+
+            def fake_prepare(youtube_url, *, logger, progress_callback):
+                logger("youtube cache miss: downloading source")
+                progress_callback(
+                    {
+                        "stage": "download",
+                        "progress": 0.42,
+                        "progress_mode": "determinate",
+                        "message": "downloading video 42%",
+                    }
+                )
+                return {
+                    "video_path": output,
+                    "from_cache": False,
+                    "video_title": "Take Five Drum Lesson",
+                    "source_key": "https://www.youtube.com/watch?v=demo",
+                }
+
+            with patch.object(main, "source_prepare_store", store), patch.object(
+                main,
+                "_get_or_prepare_cached_youtube_video",
+                side_effect=fake_prepare,
+            ), patch.object(
+                main,
+                "_to_jobs_files_url",
+                return_value="/jobs-files/_preview_source_jobs/prepare-5/downloads/video.mp4",
+            ):
+                main._run_source_prepare_job("prepare-5")
+
+            job = store.get("prepare-5")
+            self.assertIsNotNone(job)
+            self.assertEqual(job.status, JobStatus.DONE)
+            self.assertEqual(job.result.get("video_path"), str(output))
+            self.assertEqual(job.result.get("video_title"), "Take Five Drum Lesson")
+            self.assertEqual(job.result.get("source_key"), "https://www.youtube.com/watch?v=demo")
+
+    def test_clear_cache_blocks_running_source_prepare_jobs_and_clears_idle_store_state(self):
+        with tempfile.TemporaryDirectory() as td:
+            jobs_root = Path(td) / "jobs"
+            jobs_root.mkdir(parents=True, exist_ok=True)
+            job_store = JobStore(jobs_root)
+            prepare_store = SourcePrepareStore(jobs_root / "_preview_source_jobs")
+            artifact_dir = prepare_store.root / "prepare-running"
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+            prepare_store.create(
+                SourcePrepareJob(
+                    id="prepare-running",
+                    youtube_url="https://youtu.be/demo",
+                    artifact_dir=str(artifact_dir),
+                    status=JobStatus.RUNNING,
+                )
+            )
+
+            with (
+                patch.object(main, "jobs_root", jobs_root),
+                patch.object(main, "job_store", job_store),
+                patch.object(main, "source_prepare_store", prepare_store),
+            ):
+                with self.assertRaises(main.HTTPException) as blocked:
+                    main.clear_cache()
+
+            self.assertEqual(blocked.exception.status_code, 409)
+
+            prepare_store.set_state("prepare-running", JobStatus.DONE, stage="done", result={"video_path": "/tmp/demo.mp4"})
+            with (
+                patch.object(main, "jobs_root", jobs_root),
+                patch.object(main, "job_store", job_store),
+                patch.object(main, "source_prepare_store", prepare_store),
+            ):
+                response = main.clear_cache()
+
+            self.assertEqual(response.cleared_jobs, 1)
+            self.assertIsNone(prepare_store.get("prepare-running"))
 
 
 if __name__ == "__main__":

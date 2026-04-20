@@ -482,6 +482,65 @@ test("simplified ROI step remains usable from frame load through apply-roi", asy
   assert.equal(state.exportConfig.layoutHint, "full_scroll");
 });
 
+test("same-frame apply-roi relocks export and clears stale review outputs", async () => {
+  installBrowserStubs();
+  const root = createDynamicStageRoot();
+  const nextRect = [
+    [12, 12],
+    [332, 12],
+    [332, 192],
+    [12, 192],
+  ];
+  const app = createApp(root, {
+    exposeTestApi: true,
+    mountRoiEditor: () => ({
+      applyDraft() {
+        return nextRect;
+      },
+      setDraft() {},
+      destroy() {},
+    }),
+    api: {
+      requestPreviewFrame: async () => ({
+        imagePath: "/tmp/preview.png",
+        sourcePath: "/tmp/preview.png",
+        diagnostics: [],
+      }),
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+      reviewExport: async () => ({}),
+    },
+  });
+
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/source-a.mp4";
+    next.source.displayName = "source-a.mp4";
+    next.source.metadata = { durationSec: 120, width: 1920, height: 1080 };
+    next.ui.activeStep = "roi";
+    next.roi.frameTime = 10;
+    next.roi.frameTimeLabel = "00:10.0";
+    next.roi.previewImage = "/tmp/preview.png";
+    next.roi.draftRect = nextRect;
+    next.roi.appliedRect = ROI_RECT;
+    next.exportConfig.jobId = "job-stale";
+    next.exportConfig.runStatus = "done";
+    next.review.pages = [{ id: "1", title: "페이지 1", capturePath: "/tmp/page-1.png", previewPath: "file:///tmp/page-1.png" }];
+    next.review.selectedPageIds = ["1"];
+    return next;
+  });
+
+  await root.dispatchAction("apply-roi");
+
+  const state = app.debug.getState();
+  assert.equal(state.ui.activeStep, "export");
+  assert.deepEqual(state.roi.appliedRect, nextRect);
+  assert.equal(state.exportConfig.jobId, "");
+  assert.equal(state.exportConfig.runStatus, "idle");
+  assert.equal(state.review.pages.length, 0);
+  assert.equal(getStepState(state, "export").enabled, true);
+  assert.equal(getStepState(state, "review").enabled, false);
+});
+
 test("runExport does not create a job when zero formats are selected", async () => {
   installBrowserStubs();
   let createJobCalls = 0;
@@ -516,7 +575,7 @@ test("runExport does not create a job when zero formats are selected", async () 
   assert.match(app.debug.getState().exportConfig.error, /형식|format/i);
 });
 
-test("runExport blocks job creation when ROI health is critical", async () => {
+test("runExport skips the client-side ROI health preflight and creates a job immediately", async () => {
   installBrowserStubs();
   let createJobCalls = 0;
   let roiHealthCalls = 0;
@@ -563,24 +622,23 @@ test("runExport blocks job creation when ROI health is critical", async () => {
   await flush();
 
   const state = app.debug.getState();
-  assert.equal(roiHealthCalls, 1);
-  assert.equal(createJobCalls, 0);
-  assert.equal(state.exportConfig.runStatus, "idle");
-  assert.match(state.exportConfig.error, /unsafe/i);
-  assert.equal(state.exportConfig.jobId, "");
+  assert.equal(roiHealthCalls, 0);
+  assert.equal(createJobCalls, 1);
+  assert.equal(state.exportConfig.runStatus, "done");
+  assert.equal(state.exportConfig.jobId, "job-1");
   assert.equal(state.exportConfig.outputDir, "");
   assert.equal(state.exportConfig.pdfPath, "");
   assert.equal(state.review.pages.length, 0);
   assert.equal(state.review.outputDir, "");
   assert.equal(state.review.pdfPath, "");
-  assert.deepEqual(state.roi.diagnostics, [{ code: "roi_margin_tight", level: "critical" }]);
+  assert.deepEqual(state.roi.diagnostics, []);
 });
 
-test("runExport prevents duplicate jobs when re-entered before ROI health resolves", async () => {
+test("runExport prevents duplicate jobs when re-entered before job creation resolves", async () => {
   installBrowserStubs();
   let createJobCalls = 0;
   let roiHealthCalls = 0;
-  const roiHealth = deferred();
+  const pendingJob = deferred();
   const root = createRoot();
   const app = createApp(root, {
     exposeTestApi: true,
@@ -588,11 +646,15 @@ test("runExport prevents duplicate jobs when re-entered before ROI health resolv
       requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
       requestPreviewRoiHealth: async () => {
         roiHealthCalls += 1;
-        return roiHealth.promise;
+        return {
+          riskLevel: "info",
+          summary: "",
+          diagnostics: [],
+        };
       },
       createJob: async () => {
         createJobCalls += 1;
-        return `job-${createJobCalls}`;
+        return pendingJob.promise;
       },
       getJob: async (jobId) => ({ job_id: jobId, status: "done", progress: 1, result: {} }),
       reviewExport: async () => ({}),
@@ -613,17 +675,13 @@ test("runExport prevents duplicate jobs when re-entered before ROI health resolv
   const second = root.dispatchAction("run-export");
   await flush();
 
-  roiHealth.resolve({
-    riskLevel: "info",
-    summary: "",
-    diagnostics: [],
-  });
+  pendingJob.resolve("job-1");
 
   await first;
   await second;
   await flush();
 
-  assert.equal(roiHealthCalls, 1);
+  assert.equal(roiHealthCalls, 0);
   assert.equal(createJobCalls, 1);
   assert.equal(app.debug.getState().exportConfig.jobId, "job-1");
 });
@@ -931,6 +989,7 @@ test("backend-ready app hydrates the persisted media registry and loads a stored
     exposeTestApi: true,
     readVideoMetadata: async () => ({ durationSec: 30, durationLabel: "00:30", resolutionLabel: "1920x1080" }),
     api: {
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
       getArchiveLibrary: async () => ({
         items: [
           {
@@ -938,6 +997,7 @@ test("backend-ready app hydrates the persisted media registry and loads a stored
             sourceKind: "file",
             displayName: "library-source",
             completedAt: 1713526200,
+            sourcePath: "/tmp/library-source.mkv",
             pdfPath: "/tmp/library-source.pdf",
             outputDir: "/tmp",
           },
@@ -952,6 +1012,8 @@ test("backend-ready app hydrates the persisted media registry and loads a stored
             resolutionLabel: "1920x1080",
             durationLabel: "00:30",
             hasScore: true,
+            sourceOrigin: "prepared",
+            youtubeUrl: "https://www.youtube.com/watch?v=library-source",
           },
         ],
       }),
@@ -966,12 +1028,19 @@ test("backend-ready app hydrates the persisted media registry and loads a stored
   assert.equal(state.archive.items.length, 1);
   assert.equal(state.archive.items[0].sourceKey, "/tmp/library-source.mkv");
 
-  await root.dispatchAction("load-registry-source", { filePath: "/tmp/library-source.mkv" });
+  await root.dispatchAction("load-registry-source", {
+    filePath: "/tmp/library-source.mkv",
+    displayName: "Take Five Drum Lesson",
+    sourceOrigin: "prepared",
+    youtubeUrl: "https://www.youtube.com/watch?v=library-source",
+  });
   await flush();
 
   state = app.debug.getState();
   assert.equal(state.source.filePath, "/tmp/library-source.mkv");
-  assert.equal(state.source.displayName, "library-source.mkv");
+  assert.equal(state.source.displayName, "Take Five Drum Lesson");
+  assert.equal(state.source.archiveSourceKind, "youtube");
+  assert.equal(state.source.archiveSourceKey, "https://www.youtube.com/watch?v=library-source");
   assert.equal(state.ui.activeStep, "roi");
 });
 
@@ -1369,6 +1438,127 @@ test("youtube prepare success promotes the resolved path and enters roi", async 
   assert.equal(state.source.preparedFromYouTube, true);
 });
 
+test("starting a new youtube prepare clears stale export and review state immediately", async () => {
+  installBrowserStubs();
+  const root = createRoot();
+  const scheduled = [];
+  const previousSetTimeout = globalThis.setTimeout;
+  const previousClearTimeout = globalThis.clearTimeout;
+  globalThis.setTimeout = () => {
+    scheduled.push(true);
+    return 1;
+  };
+  globalThis.clearTimeout = () => {};
+
+  try {
+    const app = createApp(root, {
+      exposeTestApi: true,
+      api: {
+        createPreviewSourceJob: async () => "source-1",
+        getPreviewSourceJob: async () => ({
+          jobId: "source-1",
+          status: "running",
+          stage: "download",
+          progress: 0.42,
+          progressMode: "determinate",
+          message: "downloading video 42%",
+          logLines: ["yt-dlp: download 42%"],
+          result: {},
+        }),
+        requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+        createJob: async () => "job-1",
+        getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+        reviewExport: async () => ({}),
+      },
+      readVideoMetadata: async () => ({
+        durationSec: 60,
+        durationLabel: "01:00",
+        resolutionLabel: "1920x1080",
+      }),
+    });
+
+    app.debug.setState((next) => {
+      next.source.sourceType = "youtube";
+      next.source.youtubeUrl = "https://youtu.be/demo";
+      next.source.filePath = "/tmp/stale.mp4";
+      next.source.displayName = "stale.mp4";
+      next.source.metadata = { durationSec: 60 };
+      next.roi.previewImage = "/tmp/stale-preview.png";
+      next.roi.appliedRect = ROI_RECT;
+      next.exportConfig.jobId = "job-stale";
+      next.exportConfig.runStatus = "done";
+      next.review.pages = [{ id: "1", title: "페이지 1", capturePath: "/tmp/page-1.png", previewPath: "file:///tmp/page-1.png" }];
+      next.review.selectedPageIds = ["1"];
+      return next;
+    });
+
+    await root.dispatchAction("prepare-source-youtube");
+
+    const state = app.debug.getState();
+    assert.equal(state.ui.activeStep, "source");
+    assert.equal(state.source.filePath, "");
+    assert.equal(state.exportConfig.jobId, "");
+    assert.equal(state.review.pages.length, 0);
+    assert.equal(state.source.prepareStatus, "loading");
+  } finally {
+    globalThis.setTimeout = previousSetTimeout;
+    globalThis.clearTimeout = previousClearTimeout;
+  }
+});
+
+test("youtube prepare surfaces metadata hydration failure instead of leaving a false-ready state", async () => {
+  installBrowserStubs();
+  const root = createRoot();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    api: {
+      createPreviewSourceJob: async () => "source-1",
+      getPreviewSourceJob: async () => ({
+        jobId: "source-1",
+        status: "done",
+        stage: "done",
+        progress: 1,
+        progressMode: "determinate",
+        message: "youtube source ready",
+        logLines: ["youtube download saved: /tmp/cache/youtube.mp4"],
+        result: {
+          videoPath: "/tmp/cache/youtube.mp4",
+          fromCache: false,
+          videoUrl: "/jobs-files/_preview/youtube.mp4",
+        },
+      }),
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+      reviewExport: async () => ({}),
+    },
+    readVideoMetadata: async () => {
+      throw new Error("metadata probe failed");
+    },
+  });
+
+  app.debug.setState((next) => {
+    next.source.sourceType = "youtube";
+    next.source.youtubeUrl = "https://youtu.be/demo";
+    next.source.filePath = "/tmp/stale.mp4";
+    next.source.metadata = { durationSec: 60 };
+    next.roi.previewImage = "/tmp/stale-preview.png";
+    next.exportConfig.jobId = "job-stale";
+    return next;
+  });
+
+  await root.dispatchAction("prepare-source-youtube");
+
+  const state = app.debug.getState();
+  assert.equal(state.ui.activeStep, "source");
+  assert.equal(state.source.prepareStatus, "error");
+  assert.match(state.source.error, /metadata probe failed/);
+  assert.equal(state.source.filePath, "");
+  assert.equal(state.source.metadata, null);
+  assert.equal(state.roi.previewImage, "");
+  assert.equal(state.exportConfig.jobId, "");
+});
+
 test("youtube prepare polls live progress into the source screen, top bar, and process rail before completion", async () => {
   installBrowserStubs();
   const root = createRoot();
@@ -1670,4 +1860,101 @@ test("archive runtime wiring covers retry loading, selection, and open path acti
   await root.dispatchAction("close-archive");
   assert.equal(app.debug.getState().archive.isOpen, false);
   assert.equal(app.debug.getState().archive.selectedSourceKey, "");
+});
+
+test("status bar exposes backend recovery controls when backend is not ready", async () => {
+  let restartCalls = 0;
+  let setupCalls = 0;
+  installBrowserStubs({
+    getBackendState: async () => ({ ready: false, starting: false, running: false, error: "backend down" }),
+    onBackendState: () => () => {},
+    restartBackend: async () => {
+      restartCalls += 1;
+      return "";
+    },
+    runGuidedSetup: async () => {
+      setupCalls += 1;
+      return "";
+    },
+  });
+
+  const root = createRoot();
+  createApp(root, { exposeTestApi: true });
+  await flush();
+
+  assert.match(root.querySelector("#statusBar").innerHTML, /restart-backend/);
+  assert.match(root.querySelector("#statusBar").innerHTML, /run-guided-setup/);
+
+  await root.dispatchAction("restart-backend");
+  await root.dispatchAction("run-guided-setup");
+
+  assert.equal(restartCalls, 1);
+  assert.equal(setupCalls, 1);
+});
+
+test("late review apply result is ignored after a newer source is loaded", async () => {
+  installBrowserStubs();
+  const reviewExportRequest = deferred();
+  const refreshedJob = deferred();
+  const root = createRoot();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    readVideoMetadata: async () => ({ durationSec: 30, durationLabel: "00:30", resolutionLabel: "1920x1080" }),
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+      reviewExport: async () => {
+        await reviewExportRequest.promise;
+        return {};
+      },
+      getJob: async () => refreshedJob.promise,
+    },
+  });
+
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/old-source.mp4";
+    next.source.displayName = "old-source.mp4";
+    next.source.metadata = { durationSec: 120 };
+    next.ui.activeStep = "review";
+    next.roi.appliedRect = ROI_RECT;
+    next.roi.draftRect = ROI_RECT;
+    next.exportConfig.jobId = "job-1";
+    next.exportConfig.runStatus = "done";
+    next.exportConfig.formats = ["png"];
+    next.review.pages = [{ id: "1", title: "페이지 1", capturePath: "/tmp/capture-1.png", previewPath: "file:///tmp/capture-1.png", selectionMode: "captures" }];
+    next.review.selectedPageIds = ["1"];
+    return next;
+  });
+
+  const pendingApply = root.dispatchAction("apply-review");
+  await flush();
+  await root.dispatchAction("load-registry-source", {
+    filePath: "/tmp/new-source.mp4",
+    displayName: "new-source.mp4",
+    sourceOrigin: "job",
+    youtubeUrl: "",
+  });
+  await flush();
+
+  reviewExportRequest.resolve({});
+  refreshedJob.resolve({
+    job_id: "job-1",
+    status: "done",
+    progress: 1,
+    current_step: "done",
+    message: "",
+    result: {
+      images: ["/tmp/stale-page.png"],
+      output_dir: "/tmp/stale-export",
+      pdf: "/tmp/stale-export/result.pdf",
+      review_export: { kept_count: 1, requested_count: 1, selection_mode: "captures" },
+    },
+  });
+  await pendingApply;
+  await flush();
+
+  const state = app.debug.getState();
+  assert.equal(state.source.filePath, "/tmp/new-source.mp4");
+  assert.equal(state.exportConfig.jobId, "");
+  assert.equal(state.review.pages.length, 0);
+  assert.equal(state.ui.activeStep, "roi");
 });

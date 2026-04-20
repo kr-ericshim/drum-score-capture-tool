@@ -90,13 +90,27 @@ function packagedRuntimeExecutableName(platformName = process.platform) {
   return platformName === "win32" ? "drumsheet-backend.exe" : "drumsheet-backend";
 }
 
+function packagedToolExecutableName(toolName, platformName = process.platform) {
+  return platformName === "win32" ? `${toolName}.exe` : toolName;
+}
+
+function platformPath(platformName = process.platform) {
+  return platformName === "win32" ? path.win32 : path.posix;
+}
+
+function packagedBackendRoot(packagedBackendMainPath, platform = process.platform) {
+  const pathApi = platformPath(platform);
+  return pathApi.dirname(pathApi.dirname(packagedBackendMainPath));
+}
+
 function findPackagedRuntimeExecutable({
   distDir: candidateDistDir = distDir,
   packagedBackendMainPath,
   platform = process.platform,
 }) {
-  const backendRoot = path.dirname(path.dirname(packagedBackendMainPath));
-  return path.join(
+  const pathApi = platformPath(platform);
+  const backendRoot = packagedBackendRoot(packagedBackendMainPath, platform);
+  return pathApi.join(
     backendRoot,
     "runtime",
     "drumsheet-backend",
@@ -104,15 +118,59 @@ function findPackagedRuntimeExecutable({
   );
 }
 
+function findPackagedBackendToolExecutable({
+  packagedBackendMainPath,
+  toolName,
+  platform = process.platform,
+}) {
+  const pathApi = platformPath(platform);
+  return pathApi.join(
+    packagedBackendRoot(packagedBackendMainPath, platform),
+    "bin",
+    packagedToolExecutableName(toolName, platform),
+  );
+}
+
+function findPackagedRendererV2Index({
+  packagedBackendMainPath,
+  platform = process.platform,
+}) {
+  const pathApi = platformPath(platform);
+  const resourcesRoot = pathApi.dirname(packagedBackendRoot(packagedBackendMainPath, platform));
+  return pathApi.join(resourcesRoot, "renderer-v2", "index.html");
+}
+
 function findPackagedVenvPath(packagedBackendMainPath) {
   const backendRoot = path.dirname(path.dirname(packagedBackendMainPath));
   return path.join(backendRoot, ".venv");
+}
+
+function normalizeReleaseAction(actionName = "dist") {
+  const normalized = String(actionName || "dist").trim().toLowerCase();
+  assert(
+    normalized === "pack" || normalized === "dist",
+    `Unsupported packaged release validation action: ${actionName}. Expected pack or dist.`,
+  );
+  return normalized;
+}
+
+function describeValidationMode(actionName = "dist") {
+  const normalizedAction = normalizeReleaseAction(actionName);
+  return {
+    action: normalizedAction,
+    requiresInstallerArtifacts: normalizedAction === "dist",
+    requiresReleaseMetadata: normalizedAction === "dist",
+  };
 }
 
 function assertRuntimeContract({
   packagedBackendMainPath,
   runtimeExecutablePath,
   runtimeExecutableExists,
+  packagedFfmpegPath,
+  packagedFfmpegExists,
+  packagedFfprobePath,
+  packagedFfprobeExists,
   packagedVenvExists,
 }) {
   assert(
@@ -120,12 +178,31 @@ function assertRuntimeContract({
     `Packaged backend is missing the frozen backend runtime: ${runtimeExecutablePath}`,
   );
   assert(
+    packagedFfmpegExists,
+    `Packaged backend is missing bundled ffmpeg: ${packagedFfmpegPath}`,
+  );
+  assert(
+    packagedFfprobeExists,
+    `Packaged backend is missing bundled ffprobe: ${packagedFfprobePath}`,
+  );
+  assert(
     !packagedVenvExists,
     `Packaged backend unexpectedly includes a virtualenv payload next to ${packagedBackendMainPath}`,
   );
 }
 
-function validate() {
+function assertRendererContract({
+  rendererV2IndexPath,
+  rendererV2Exists,
+}) {
+  assert(
+    rendererV2Exists,
+    `Packaged release is missing renderer-v2/index.html: ${rendererV2IndexPath}`,
+  );
+}
+
+function validate(actionName = action) {
+  const validationMode = describeValidationMode(actionName);
   assert(fs.existsSync(desktopPackageJsonPath), `Missing ${desktopPackageJsonPath}`);
   assert(fs.existsSync(sourceBackendMainPath), `Missing ${sourceBackendMainPath}`);
   assert(fs.existsSync(sourceExtractPath), `Missing ${sourceExtractPath}`);
@@ -137,6 +214,15 @@ function validate() {
   const packagedExtractPath = path.join(path.dirname(packagedBackendMainPath), "pipeline", "extract.py");
   const runtimeExecutablePath = findPackagedRuntimeExecutable({ packagedBackendMainPath });
   const packagedVenvPath = findPackagedVenvPath(packagedBackendMainPath);
+  const rendererV2IndexPath = findPackagedRendererV2Index({ packagedBackendMainPath });
+  const packagedFfmpegPath = findPackagedBackendToolExecutable({
+    packagedBackendMainPath,
+    toolName: "ffmpeg",
+  });
+  const packagedFfprobePath = findPackagedBackendToolExecutable({
+    packagedBackendMainPath,
+    toolName: "ffprobe",
+  });
 
   assert(fs.existsSync(packagedExtractPath), `Missing packaged extract.py next to ${packagedBackendMainPath}`);
   assert(desktopVersion === sourceBackendVersion, `Desktop version ${desktopVersion} does not match backend source version ${sourceBackendVersion}`);
@@ -145,7 +231,15 @@ function validate() {
     packagedBackendMainPath,
     runtimeExecutablePath,
     runtimeExecutableExists: fs.existsSync(runtimeExecutablePath),
+    packagedFfmpegPath,
+    packagedFfmpegExists: fs.existsSync(packagedFfmpegPath),
+    packagedFfprobePath,
+    packagedFfprobeExists: fs.existsSync(packagedFfprobePath),
     packagedVenvExists: fs.existsSync(packagedVenvPath),
+  });
+  assertRendererContract({
+    rendererV2IndexPath,
+    rendererV2Exists: fs.existsSync(rendererV2IndexPath),
   });
 
   const packagedMainText = readText(packagedBackendMainPath);
@@ -157,27 +251,36 @@ function validate() {
   assert(!packagedExtractText.includes('"player_client"'), "Packaged backend still forces a stale YouTube player client override");
 
   const metadataPath = latestMetadataPath();
-  if (action === "dist" && metadataPath) {
+  if (validationMode.requiresReleaseMetadata && metadataPath) {
     assert(fs.existsSync(metadataPath), `Missing release metadata file ${metadataPath}`);
     const metadataVersion = parseYamlVersion(metadataPath);
     assert(metadataVersion === desktopVersion, `Release metadata version ${metadataVersion} does not match desktop version ${desktopVersion}`);
   }
 
   console.log("[validate-packaged-release] release artifacts look consistent");
+  console.log(`- validation mode: ${validationMode.action}`);
   console.log(`- desktop version: ${desktopVersion}`);
   console.log(`- backend source version: ${sourceBackendVersion}`);
   console.log(`- packaged backend version: ${packagedBackendVersion}`);
   console.log(`- packaged backend: ${relative(packagedBackendMainPath)}`);
-  if (action === "dist" && metadataPath && fs.existsSync(metadataPath)) {
+  if (validationMode.requiresReleaseMetadata && metadataPath && fs.existsSync(metadataPath)) {
     console.log(`- release metadata: ${relative(metadataPath)}`);
   }
   console.log(`- runtime executable: ${relative(runtimeExecutablePath)}`);
+  console.log(`- bundled ffmpeg: ${relative(packagedFfmpegPath)}`);
+  console.log(`- bundled ffprobe: ${relative(packagedFfprobePath)}`);
+  console.log(`- renderer-v2 entry: ${relative(rendererV2IndexPath)}`);
 }
 
 module.exports = {
+  assertRendererContract,
   assertRuntimeContract,
+  describeValidationMode,
+  findPackagedBackendToolExecutable,
+  findPackagedRendererV2Index,
   findPackagedRuntimeExecutable,
   findPackagedVenvPath,
+  normalizeReleaseAction,
   validate,
 };
 

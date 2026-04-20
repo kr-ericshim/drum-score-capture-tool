@@ -548,6 +548,59 @@ class TestArchiveLibrary(unittest.TestCase):
             self.assertEqual(item.display_name, "Take Five Drum Lesson Latest")
             self.assertEqual(item.completed_at, 260.0)
 
+    def test_archive_library_restores_direct_youtube_source_path_and_title_from_cache(self):
+        main = self._import_main_with_stubbed_cv()
+        with tempfile.TemporaryDirectory() as td:
+            jobs_root = Path(td) / "jobs"
+            jobs_root.mkdir(parents=True, exist_ok=True)
+            store = JobStore(jobs_root)
+
+            cache_source = jobs_root / "_preview_source" / "test" / "abc123" / "downloads" / "direct-youtube.mp4"
+            cache_source.parent.mkdir(parents=True, exist_ok=True)
+            cache_source.write_bytes(b"video")
+            (cache_source.parent / "source.json").write_text(
+                '{"source_key":"https://www.youtube.com/watch?v=abc123","video_title":"Direct YouTube Lesson"}',
+                encoding="utf-8",
+            )
+
+            export_dir = jobs_root / "job-youtube" / "export"
+            export_dir.mkdir(parents=True, exist_ok=True)
+            pdf_path = export_dir / "sheet_export.pdf"
+            pdf_path.write_bytes(b"%PDF-1.4\n% archive test pdf\n")
+
+            store.create(
+                Job(
+                    id="job-youtube",
+                    source_type="youtube",
+                    file_path=None,
+                    youtube_url="https://youtu.be/abc123",
+                    options={},
+                    artifact_dir=str(jobs_root / "job-youtube"),
+                    completed_at=1713526200.0,
+                    updated_at=1713526201.0,
+                    status=JobStatus.DONE,
+                    result={
+                        "source_video_path": str(cache_source),
+                        "pdf": str(pdf_path),
+                        "output_dir": str(export_dir),
+                    },
+                )
+            )
+
+            with (
+                patch.object(main, "jobs_root", jobs_root),
+                patch.object(main, "job_store", store),
+            ):
+                response = main.archive_library()
+
+            self.assertEqual(len(response.items), 1)
+            item = response.items[0]
+            self.assertEqual(item.source_key, "https://www.youtube.com/watch?v=abc123")
+            self.assertEqual(item.source_kind, "youtube")
+            self.assertEqual(item.display_name, "Direct YouTube Lesson")
+            self.assertEqual(item.source_path, str(cache_source.resolve()))
+            self.assertEqual(item.youtube_url, "https://www.youtube.com/watch?v=abc123")
+
     def test_archive_library_prefers_review_export_when_updated_after_newer_raw_export(self):
         main = self._import_main_with_stubbed_cv()
         with tempfile.TemporaryDirectory() as td:

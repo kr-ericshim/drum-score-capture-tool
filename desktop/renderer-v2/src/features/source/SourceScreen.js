@@ -28,7 +28,7 @@ function isLikelyYoutubeUrl(value = "") {
   if (!text) {
     return false;
   }
-  return /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\//i.test(text);
+  return /^(https?:\/\/)?(((www|m|music)\.)?youtube\.com|youtu\.be)\//i.test(text);
 }
 
 function preparePercent(progress = 0) {
@@ -48,6 +48,8 @@ function normalizeRegistryItem(item = {}) {
   if (!filePath) {
     return null;
   }
+  const sourceOrigin = String(item.sourceOrigin || "job").trim() || "job";
+  const youtubeUrl = String(item.youtubeUrl || "").trim();
   return {
     filePath,
     displayName: String(item.displayName || "").trim() || fileName(filePath),
@@ -55,6 +57,8 @@ function normalizeRegistryItem(item = {}) {
     resolutionLabel: String(item.resolutionLabel || "").trim(),
     durationLabel: String(item.durationLabel || "").trim(),
     hasScore: Boolean(item.hasScore),
+    sourceOrigin,
+    youtubeUrl,
   };
 }
 
@@ -74,6 +78,8 @@ function buildRegistryItems(state) {
     resolutionLabel: state.source.metadata?.resolutionLabel || "",
     durationLabel: state.source.metadata?.durationLabel || "",
     hasScore: items.find((item) => item.filePath === activePath)?.hasScore,
+    sourceOrigin: state.source.archiveSourceKind === "youtube" ? "prepared" : "job",
+    youtubeUrl: state.source.archiveSourceKind === "youtube" ? state.source.archiveSourceKey : "",
   });
 
   if (!activeItem) {
@@ -181,7 +187,7 @@ function renderRegistryRows(model) {
     const selected = item.filePath === model.currentFilePath;
     const actionMarkup = selected
       ? `<span class="registry-status">${escapeHtml(t("source.activeStatus", { locale: model.locale }))}</span>`
-      : `<button type="button" data-action="load-registry-source" data-file-path="${escapeHtml(item.filePath)}">${escapeHtml(t("source.registryLoad", { locale: model.locale }))}</button>`;
+      : `<button type="button" data-action="load-registry-source" data-file-path="${escapeHtml(item.filePath)}" data-display-name="${escapeHtml(item.displayName || "")}" data-source-origin="${escapeHtml(item.sourceOrigin || "job")}" data-youtube-url="${escapeHtml(item.youtubeUrl || "")}">${escapeHtml(t("source.registryLoad", { locale: model.locale }))}</button>`;
     const columns = getRegistryColumns(model.locale);
     return `
       <tr class="registry-row${selected ? " is-selected" : ""}" data-selected="${selected ? "true" : "false"}">
@@ -212,8 +218,11 @@ export function renderSourceScreen(state) {
       <div class="source-workbench">
         <section class="source-ingest panel" data-stitch-region="source-ingest" data-drop-zone="source-ingest">
           <div class="ingest-icon">+</div>
-          <h2>${escapeHtml(t("source.ingestTitle", { locale: model.locale }))}</h2>
-          <p>${escapeHtml(t("source.ingestBody", { locale: model.locale }))}</p>
+          <div class="panel-heading source-ingest-heading">
+            <span class="panel-kicker">${escapeHtml(t("source.ingestKicker", { locale: model.locale }))}</span>
+            <h2>${escapeHtml(t("source.ingestTitle", { locale: model.locale }))}</h2>
+            <p>${escapeHtml(t("source.ingestBody", { locale: model.locale }))}</p>
+          </div>
           <div class="source-actions">
             <button class="button button-primary" data-action="select-source-file">${escapeHtml(model.primaryAction.displayLabel)}</button>
           </div>
@@ -282,7 +291,9 @@ export function renderSourceScreen(state) {
         </section>
         <section class="source-registry panel" data-stitch-region="source-registry">
           <div class="panel-heading">
+            <span class="panel-kicker">${escapeHtml(t("source.registryKicker", { locale: model.locale }))}</span>
             <h2>${escapeHtml(t("source.registryTitle", { locale: model.locale }))}</h2>
+            <p>${escapeHtml(t("source.registryBody", { locale: model.locale }))}</p>
             <p>${escapeHtml(t("source.registryRegistered", { locale: model.locale, replacements: { count: model.registryItems.length } }))}</p>
           </div>
           <div class="registry-table-wrap">

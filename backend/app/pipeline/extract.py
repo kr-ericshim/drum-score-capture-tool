@@ -421,27 +421,29 @@ def _build_youtube_progress_hook(*, progress_callback, logger):
             if percent_text:
                 message = f"{message} {percent_text}"
 
-            progress_callback(
-                {
-                    "stage": "download",
-                    "progress": progress,
-                    "progress_mode": progress_mode,
-                    "message": message,
-                }
-            )
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "stage": "download",
+                        "progress": progress,
+                        "progress_mode": progress_mode,
+                        "message": message,
+                    }
+                )
             logger(f"yt-dlp progress: {message}")
             return
 
         if status == "finished":
             message = "youtube download finished"
-            progress_callback(
-                {
-                    "stage": "download",
-                    "progress": 1.0,
-                    "progress_mode": "determinate",
-                    "message": message,
-                }
-            )
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "stage": "download",
+                        "progress": 1.0,
+                        "progress_mode": "determinate",
+                        "message": message,
+                    }
+                )
             logger(f"yt-dlp progress: {message}")
 
     return _hook
@@ -463,14 +465,15 @@ def _build_youtube_postprocessor_hook(*, progress_callback, logger):
             progress = 1.0
             progress_mode = "determinate"
 
-        progress_callback(
-            {
-                "stage": "postprocess",
-                "progress": progress,
-                "progress_mode": progress_mode,
-                "message": message,
-            }
-        )
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "stage": "postprocess",
+                    "progress": progress,
+                    "progress_mode": progress_mode,
+                    "message": message,
+                }
+            )
         logger(f"yt-dlp postprocess: {message}")
 
     return _hook

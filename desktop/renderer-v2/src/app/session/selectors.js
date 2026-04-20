@@ -37,15 +37,19 @@ function hasOwnValue(target, key) {
   return Boolean(target) && Object.prototype.hasOwnProperty.call(target, key);
 }
 
+function normalizeUnicodeText(value) {
+  return String(value ?? "").normalize("NFC");
+}
+
 function normalizeOptionalText(value) {
-  return String(value ?? "").trim();
+  return normalizeUnicodeText(value).trim();
 }
 
 function compareableHeaderValue(value) {
   if (value === null || value === undefined) {
     return "";
   }
-  return String(value);
+  return normalizeUnicodeText(value);
 }
 
 function normalizeBpmValue(value) {
@@ -103,7 +107,7 @@ export function sanitizeDocumentHeaderDraftField(field, value) {
   if (field === "bpm") {
     return String(value ?? "").replace(/\D/g, "");
   }
-  return String(value ?? "");
+  return normalizeUnicodeText(value);
 }
 
 export function isPdfSelected(formats = []) {
@@ -348,10 +352,21 @@ export function inferLayoutHintFromRoi(points) {
   return "full_scroll";
 }
 
+function hasPendingRoiDraft(state) {
+  if (!isRectValid(state?.roi?.draftRect)) {
+    return false;
+  }
+  if (!isRectValid(state?.roi?.appliedRect)) {
+    return true;
+  }
+  return JSON.stringify(state.roi.draftRect) !== JSON.stringify(state.roi.appliedRect);
+}
+
 export function getStepState(state, step) {
   const locale = state.ui.locale || "en";
   const sourceReady = Boolean(state.source.filePath);
-  const roiReady = sourceReady && Number.isFinite(state.roi.frameTime) && isRectValid(state.roi.appliedRect);
+  const roiDirty = hasPendingRoiDraft(state);
+  const roiReady = sourceReady && Number.isFinite(state.roi.frameTime) && isRectValid(state.roi.appliedRect) && !roiDirty;
   const exportReady = Boolean(state.exportConfig.jobId) && state.exportConfig.runStatus === "done" && state.review.pages.length > 0;
   const reviewReady = state.exportConfig.runStatus === "done" && state.review.pages.length > 0;
 
@@ -366,7 +381,11 @@ export function getStepState(state, step) {
       return {
         enabled: sourceReady,
         complete: roiReady,
-        blockingReason: sourceReady ? "" : t("selector.blocking.sourceRequired", { locale }),
+        blockingReason: !sourceReady
+          ? t("selector.blocking.sourceRequired", { locale })
+          : roiDirty
+            ? t("selector.blocking.roiDirty", { locale })
+            : "",
       };
     case "export":
       return {
@@ -436,7 +455,13 @@ export function getPrimaryAction(state) {
     };
   }
   if (activeStep === "review") {
-    const reviewLocked = !state.exportConfig.jobId || state.review.status === "running" || state.review.status === "applied";
+    const hasFormats = Array.isArray(state.exportConfig.formats) && state.exportConfig.formats.length > 0;
+    const reviewLocked = !state.exportConfig.jobId
+      || state.exportConfig.runStatus !== "done"
+      || state.review.status === "running"
+      || state.review.status === "applied"
+      || !hasFormats
+      || hasPendingRoiDraft(state);
     return {
       id: "apply-review",
       label: state.review.status === "running"
@@ -466,18 +491,27 @@ export function deriveCapturePages(result = {}, locale = "en") {
   const previewImages = Array.isArray(result.preview_images) ? result.preview_images : [];
   const reviewCandidates = Array.isArray(result.review_candidates) ? result.review_candidates : [];
   const finalImages = Array.isArray(result.images) ? result.images : [];
+  const reviewSelectionMode = String(result.review_export?.selection_mode || "");
   const hasReviewExport = Boolean(result.review_export);
   let capturePaths = finalImages;
   let previewKind = "output";
-  if (reviewCandidates.length) {
+  let selectionMode = "pages";
+  if (reviewSelectionMode === "pages" && finalImages.length) {
+    capturePaths = finalImages;
+    previewKind = "output";
+    selectionMode = "pages";
+  } else if (reviewCandidates.length) {
     capturePaths = reviewCandidates;
     previewKind = "capture";
+    selectionMode = "captures";
   } else if (Array.isArray(result.upscaled_frames) && result.upscaled_frames.length) {
     capturePaths = result.upscaled_frames;
     previewKind = "capture";
+    selectionMode = "captures";
   } else if (Array.isArray(result.stitched_frames) && result.stitched_frames.length) {
     capturePaths = result.stitched_frames;
     previewKind = "capture";
+    selectionMode = "captures";
   } else if (previewImages.length) {
     capturePaths = previewImages;
   }
@@ -499,6 +533,7 @@ export function deriveCapturePages(result = {}, locale = "en") {
       previewPath: normalizeAssetPath(capturePath),
       outputPreviewPath: normalizeAssetPath(outputPreviewPath),
       previewKind,
+      selectionMode,
       exportLocked: hasReviewExport,
       suspicious: alignedDiagnostics.length > 0 ? Boolean(diagnostic?.suspicious) : false,
       warningReason,

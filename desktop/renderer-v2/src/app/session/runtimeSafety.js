@@ -85,6 +85,12 @@ export function createRuntimeGuards() {
         && activeJob.jobId === jobId
         && this.isCurrentExport(handle);
     },
+    captureSourceSession() {
+      return sourceSession;
+    },
+    isCurrentSourceSession(token) {
+      return Number.isFinite(token) && token === sourceSession;
+    },
   };
 }
 
@@ -131,6 +137,17 @@ export function invalidatePreviewFlow(state, {
 export function canRunExport(state) {
   return Boolean(state?.source?.filePath)
     && isRectValid(state?.roi?.appliedRect)
+    && !hasDirtyRoiDraft(state)
     && Array.isArray(state?.exportConfig?.formats)
     && state.exportConfig.formats.length > 0;
+}
+
+export function hasDirtyRoiDraft(state) {
+  if (!isRectValid(state?.roi?.draftRect)) {
+    return false;
+  }
+  if (!isRectValid(state?.roi?.appliedRect)) {
+    return true;
+  }
+  return JSON.stringify(state.roi.draftRect) !== JSON.stringify(state.roi.appliedRect);
 }

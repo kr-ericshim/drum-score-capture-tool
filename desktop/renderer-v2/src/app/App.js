@@ -19,7 +19,7 @@ import {
   sanitizeDocumentHeaderDraftField,
   validateExportMetadataDraft,
 } from "./session/selectors.js";
-import { canRunExport, createRuntimeGuards, invalidatePreviewFlow } from "./session/runtimeSafety.js";
+import { canRunExport, createRuntimeGuards, hasDirtyRoiDraft, invalidatePreviewFlow } from "./session/runtimeSafety.js";
 import { canOpenStep } from "./routes.js";
 import { mountShell } from "../ui/shell/AppShell.js";
 import { renderTopBar } from "../ui/shell/TopBar.js";
@@ -169,11 +169,18 @@ function syncDocumentChrome(locale) {
 
 function captureStageInputFocus() {
   const activeElement = globalThis?.document?.activeElement;
-  if (activeElement?.dataset?.action !== "update-export-metadata" || !activeElement.dataset.field) {
+  if (!activeElement?.dataset?.action) {
     return null;
   }
+  if (activeElement.dataset.action === "update-export-metadata" && activeElement.dataset.field) {
+    return {
+      selector: `[data-action="update-export-metadata"][data-field="${activeElement.dataset.field}"]`,
+      selectionStart: Number.isInteger(activeElement.selectionStart) ? activeElement.selectionStart : null,
+      selectionEnd: Number.isInteger(activeElement.selectionEnd) ? activeElement.selectionEnd : null,
+    };
+  }
   return {
-    selector: `[data-action="update-export-metadata"][data-field="${activeElement.dataset.field}"]`,
+    selector: `[data-action="${activeElement.dataset.action}"]`,
     selectionStart: Number.isInteger(activeElement.selectionStart) ? activeElement.selectionStart : null,
     selectionEnd: Number.isInteger(activeElement.selectionEnd) ? activeElement.selectionEnd : null,
   };
@@ -194,6 +201,86 @@ function restoreStageInputFocus(stagePane, snapshot) {
     && Number.isInteger(snapshot.selectionEnd)
   ) {
     nextField.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd);
+  }
+}
+
+function captureLiveExportMetadataDraft(stagePane, draft = {}) {
+  const nextDraft = {
+    ...draft,
+  };
+  const fields = ["title", "performer", "bpm", "date", "memo"];
+  fields.forEach((field) => {
+    const input = stagePane?.querySelector?.(`[data-action="update-export-metadata"][data-field="${field}"]`);
+    if (!input || typeof input.value !== "string") {
+      return;
+    }
+    nextDraft[field] = sanitizeDocumentHeaderDraftField(field, input.value);
+  });
+  return nextDraft;
+}
+
+function restoreLiveExportMetadataDraft(stagePane, draft = {}) {
+  const fields = ["title", "performer", "bpm", "date", "memo"];
+  fields.forEach((field) => {
+    const input = stagePane?.querySelector?.(`[data-action="update-export-metadata"][data-field="${field}"]`);
+    if (!input || typeof input.value !== "string") {
+      return;
+    }
+    input.value = sanitizeDocumentHeaderDraftField(field, draft[field] ?? "");
+  });
+}
+
+function captureLiveMetadataTextInputSnapshot() {
+  const activeElement = globalThis?.document?.activeElement;
+  if (activeElement?.dataset?.action !== "update-export-metadata" || !activeElement.dataset.field) {
+    return null;
+  }
+  const field = String(activeElement.dataset.field || "");
+  if (!field || field === "bpm" || field === "date" || typeof activeElement.value !== "string") {
+    return null;
+  }
+  return {
+    selector: `[data-action="update-export-metadata"][data-field="${field}"]`,
+    value: sanitizeDocumentHeaderDraftField(field, activeElement.value),
+  };
+}
+
+function restoreLiveMetadataTextInputSnapshot(stagePane, snapshot) {
+  if (!stagePane || !snapshot?.selector) {
+    return;
+  }
+  const nextField = stagePane.querySelector?.(snapshot.selector);
+  if (!nextField || typeof nextField.value !== "string") {
+    return;
+  }
+  nextField.value = snapshot.value;
+}
+
+function captureStageFocusRestoreSelector(activeElement) {
+  if (activeElement?.dataset?.action) {
+    return `[data-action="${activeElement.dataset.action}"]`;
+  }
+  return "[data-screen-heading]";
+}
+
+function focusMetadataTitleField(stagePane) {
+  const titleField = stagePane?.querySelector?.('[data-action="update-export-metadata"][data-field="title"]');
+  if (typeof titleField?.focus === "function") {
+    titleField.focus();
+  }
+}
+
+function focusExportRunButton(stagePane) {
+  const runButton = stagePane?.querySelector?.('[data-action="run-export"]');
+  if (typeof runButton?.focus === "function") {
+    runButton.focus();
+    return;
+  }
+  const heading = stagePane?.querySelector?.("[data-screen-heading]");
+  if (typeof heading?.focus === "function") {
+    heading.focus();
+  } else if (typeof stagePane?.focus === "function") {
+    stagePane.focus();
   }
 }
 
@@ -259,7 +346,9 @@ export function createApp(root, dependencies = {}) {
   let lastStatusMarkup = "";
   let lastBackendReady = false;
   let lastArchiveOpen = false;
+  let lastMetadataModalOpen = false;
   let archiveRestoreFocusTarget = null;
+  let metadataRestoreFocusSelector = '[data-action="run-export"]';
   let registryRefreshToken = 0;
   let archiveRefreshToken = 0;
   let activeSourceDropZone = null;
@@ -304,6 +393,43 @@ export function createApp(root, dependencies = {}) {
       outputDir: "",
       pdfPath: "",
     };
+  }
+
+  function resetReviewState(next) {
+    next.review = {
+      pages: [],
+      selectedPageIds: [],
+      focusedPageId: "",
+      status: "idle",
+      error: "",
+      keptCount: 0,
+      outputDir: "",
+      pdfPath: "",
+    };
+  }
+
+  function invalidateExportReviewState(next) {
+    const currentExportConfig = next.exportConfig || createInitialExportConfig(next.source.filePath);
+    const fallbackDocumentHeader = createDocumentHeaderState(next.source.filePath);
+    const documentHeader = normalizeDocumentHeader(currentExportConfig.documentHeader, fallbackDocumentHeader);
+    const nextExportConfig = createInitialExportConfig(next.source.filePath, new Date());
+    nextExportConfig.formats = Array.isArray(currentExportConfig.formats)
+      ? currentExportConfig.formats.slice()
+      : nextExportConfig.formats;
+    nextExportConfig.pageFillMode = currentExportConfig.pageFillMode || nextExportConfig.pageFillMode;
+    nextExportConfig.layoutHint = currentExportConfig.layoutHint || nextExportConfig.layoutHint;
+    nextExportConfig.documentHeader = documentHeader;
+    nextExportConfig.metadataModal = createExportMetadataModalState(next.source.filePath, new Date(), documentHeader);
+    next.exportConfig = nextExportConfig;
+    resetReviewState(next);
+  }
+
+  function resetCurrentSourceSession() {
+    stopPolling();
+    stopSourcePreparePolling();
+    activeJobHandle = null;
+    activeSourcePrepareHandle = null;
+    runtimeGuards.bumpSourceSession();
   }
 
   function stageMarkup(state) {
@@ -386,6 +512,11 @@ export function createApp(root, dependencies = {}) {
   function render() {
     const state = store.getState();
     const locale = state.ui.locale || "en";
+    const isMetadataModalOpen = Boolean(state.exportConfig?.metadataModal?.isOpen);
+    const metadataModalChanged = isMetadataModalOpen !== lastMetadataModalOpen;
+    if (isMetadataModalOpen && !lastMetadataModalOpen) {
+      metadataRestoreFocusSelector = captureStageFocusRestoreSelector(globalThis?.document?.activeElement);
+    }
     syncDocumentChrome(locale);
     const stepLabel = t(`topbar.step.${state.ui.activeStep}`, { locale });
     const topBarSummary = getTopBarSummary(state);
@@ -407,7 +538,14 @@ export function createApp(root, dependencies = {}) {
     const pagesStatus = escapeHtml(state.review.pages.length
       ? t("status.pagesCount", { locale, replacements: { count: state.review.pages.length } })
       : t("status.pagesEmpty", { locale }));
-    const localToolStatus = escapeHtml(t("status.localTool", { locale }));
+    const recoveryActions = state.ui.backend?.ready
+      ? ""
+      : `
+        <div class="status-bar-group">
+          <button class="button button-secondary" data-action="restart-backend">${escapeHtml(t("status.restartBackend", { locale }))}</button>
+          <button class="button button-secondary" data-action="run-guided-setup">${escapeHtml(t("status.runSetup", { locale }))}</button>
+        </div>
+      `;
     const statusMarkup = `
       <div class="status-bar-group">
         <span>${engineStatus}</span>
@@ -418,8 +556,8 @@ export function createApp(root, dependencies = {}) {
       </div>
       <div class="status-bar-group">
         <span>${pagesStatus}</span>
-        <span>${localToolStatus}</span>
       </div>
+      ${recoveryActions}
     `;
     if (shell.appShell) {
       shell.appShell.dataset.step = state.ui.activeStep;
@@ -442,8 +580,14 @@ export function createApp(root, dependencies = {}) {
     shell.contextLane.hidden = !laneMarkup.trim();
     if (stageMarkupValue !== lastStageMarkup) {
       const focusSnapshot = captureStageInputFocus();
+      const liveMetadataDraftSnapshot = isMetadataModalOpen
+        ? captureLiveExportMetadataDraft(shell.stagePane, state.exportConfig?.metadataModal?.draft)
+        : null;
+      const liveMetadataTextInputSnapshot = captureLiveMetadataTextInputSnapshot();
       shell.stagePane.innerHTML = stageMarkupValue;
       lastStageMarkup = stageMarkupValue;
+      restoreLiveExportMetadataDraft(shell.stagePane, liveMetadataDraftSnapshot);
+      restoreLiveMetadataTextInputSnapshot(shell.stagePane, liveMetadataTextInputSnapshot);
       restoreStageInputFocus(shell.stagePane, focusSnapshot);
     }
     if (archiveMarkupChanged) {
@@ -467,6 +611,19 @@ export function createApp(root, dependencies = {}) {
       nextFocusTarget?.focus?.();
     }
     lastArchiveOpen = isArchiveOpen;
+    if (metadataModalChanged) {
+      if (isMetadataModalOpen) {
+        focusMetadataTitleField(shell.stagePane);
+      } else {
+        const restoreTarget = shell.stagePane.querySelector?.(metadataRestoreFocusSelector);
+        if (typeof restoreTarget?.focus === "function") {
+          restoreTarget.focus();
+        } else {
+          focusExportRunButton(shell.stagePane);
+        }
+      }
+    }
+    lastMetadataModalOpen = isMetadataModalOpen;
     if (state.ui.activeStep !== lastRenderedStep) {
       lastRenderedStep = state.ui.activeStep;
       const heading = shell.stagePane.querySelector?.("[data-screen-heading]");
@@ -583,22 +740,18 @@ export function createApp(root, dependencies = {}) {
     void refreshArchiveLibrary();
   }
 
-  async function loadSourceFromPath(filePath) {
+  async function loadSourceFromPath(filePath, sourceDetails = {}) {
     const targetPath = String(filePath || "").trim();
     if (!targetPath) {
       return;
     }
-    stopPolling();
-    stopSourcePreparePolling();
-    activeJobHandle = null;
-    activeSourcePrepareHandle = null;
-    runtimeGuards.bumpSourceSession();
+    resetCurrentSourceSession();
     setState((next) => {
       next.source.error = "";
       next.source.status = "loading";
       return next;
     });
-    await sourceController.selectLocalFile(targetPath);
+    await sourceController.selectLocalFile(targetPath, sourceDetails);
     await loadSelectedPreviewCandidate();
   }
 
@@ -714,11 +867,23 @@ export function createApp(root, dependencies = {}) {
       sourceController.applyPrepareJobSnapshot(snapshot, requestToken);
       if (snapshot.status === "done") {
         stopSourcePreparePolling();
-        activeSourcePrepareHandle = null;
-        runtimeGuards.bumpSourceSession();
-        await sourceController.completeYoutubePrepare(snapshot, requestToken);
-        await loadSelectedPreviewCandidate();
-        void refreshLocalMediaRegistry();
+        try {
+          const completed = await sourceController.completeYoutubePrepare(snapshot, requestToken);
+          if (!completed) {
+            return;
+          }
+          activeSourcePrepareHandle = null;
+          runtimeGuards.bumpSourceSession();
+          await loadSelectedPreviewCandidate();
+          void refreshLocalMediaRegistry();
+        } catch (error) {
+          if (!runtimeGuards.isCurrentSourcePrepareJob(prepareHandle, jobId)) {
+            return;
+          }
+          activeSourcePrepareHandle = null;
+          runtimeGuards.invalidateSourcePrepare();
+          sourceController.failYoutubePrepare(error, requestToken);
+        }
         return;
       }
       if (snapshot.status === "error") {
@@ -743,8 +908,8 @@ export function createApp(root, dependencies = {}) {
 
   async function prepareYoutubeSource() {
     const youtubeUrl = store.getState().source.youtubeUrl;
+    resetCurrentSourceSession();
     const requestToken = sourceController.startYoutubePrepare(youtubeUrl);
-    stopSourcePreparePolling();
     const prepareToken = runtimeGuards.beginSourcePrepare();
 
     try {
@@ -941,7 +1106,11 @@ export function createApp(root, dependencies = {}) {
     if (!isRectValid(points)) {
       return;
     }
+    stopPolling();
+    activeJobHandle = null;
+    runtimeGuards.invalidateExport();
     setState((next) => {
+      invalidateExportReviewState(next);
       next.roi.appliedRect = points;
       next.exportConfig.layoutHint = inferLayoutHintFromRoi(points);
       next.ui.activeStep = "export";
@@ -952,6 +1121,7 @@ export function createApp(root, dependencies = {}) {
   function buildJobPayload(state) {
     const roi = state.roi.appliedRect;
     const layoutHint = inferLayoutHintFromRoi(roi);
+    const formats = Array.isArray(state.exportConfig.formats) ? state.exportConfig.formats : [];
     const fallbackDocumentHeader = createDocumentHeaderState(state.source.filePath);
     const documentHeader = normalizeDocumentHeader(state.exportConfig.documentHeader, fallbackDocumentHeader);
     const sourceIdentity = {
@@ -989,7 +1159,7 @@ export function createApp(root, dependencies = {}) {
           gpu_only: true,
         },
         export: {
-          formats: state.exportConfig.formats.slice(),
+          formats: formats.slice(),
           include_raw_frames: false,
           page_fill_mode: state.exportConfig.pageFillMode || "performance",
           document_header: documentHeader,
@@ -1040,8 +1210,15 @@ export function createApp(root, dependencies = {}) {
     if (!modal?.isOpen) {
       return;
     }
-    if (modal.dirty && !forceDiscard) {
+    if (state.exportConfig.runStatus === "running") {
+      return;
+    }
+    const liveDraft = captureLiveExportMetadataDraft(shell.stagePane, modal.draft);
+    const liveDirty = isExportMetadataDirty(liveDraft, state.exportConfig.documentHeader);
+    if (liveDirty && !forceDiscard) {
       setState((next) => {
+        next.exportConfig.metadataModal.draft = liveDraft;
+        next.exportConfig.metadataModal.dirty = true;
         next.exportConfig.metadataModal.showDiscardConfirm = true;
         return next;
       });
@@ -1060,7 +1237,7 @@ export function createApp(root, dependencies = {}) {
   function updateExportMetadata(field, value) {
     const state = store.getState();
     const modal = state.exportConfig.metadataModal;
-    if (!modal?.isOpen || !field) {
+    if (!modal?.isOpen || !field || state.exportConfig.runStatus === "running") {
       return;
     }
     const nextValue = sanitizeDocumentHeaderDraftField(field, value);
@@ -1073,6 +1250,7 @@ export function createApp(root, dependencies = {}) {
       currentModal.draft = draft;
       currentModal.dirty = isExportMetadataDirty(draft, next.exportConfig.documentHeader);
       currentModal.showDiscardConfirm = false;
+      next.exportConfig.error = "";
       if (field === "title") {
         currentModal.validation.title = "";
       }
@@ -1084,18 +1262,60 @@ export function createApp(root, dependencies = {}) {
     });
   }
 
-  async function startExportRun(state = store.getState()) {
-    if (state.exportConfig.runStatus === "running") {
+  function syncExportMetadataDraftFromDom(field = "") {
+    const state = store.getState();
+    const modal = state.exportConfig.metadataModal;
+    if (!modal?.isOpen || state.exportConfig.runStatus === "running") {
       return;
     }
-    if (!canRunExport(state)) {
-      if (state.source.filePath && isRectValid(state.roi.appliedRect) && state.exportConfig.formats.length === 0) {
-        setState((next) => {
-          next.exportConfig.error = t("export.formatsRequiredError", { locale: next.ui.locale });
-          return next;
-        });
+    const liveDraft = captureLiveExportMetadataDraft(shell.stagePane, modal.draft);
+    setState((next) => {
+      const currentModal = next.exportConfig.metadataModal || createExportMetadataModalState(next.source.filePath);
+      currentModal.draft = liveDraft;
+      currentModal.dirty = isExportMetadataDirty(liveDraft, next.exportConfig.documentHeader);
+      currentModal.showDiscardConfirm = false;
+      next.exportConfig.error = "";
+      if (!field || field === "title") {
+        currentModal.validation.title = "";
       }
-      return;
+      if (!field || field === "bpm") {
+        currentModal.validation.bpm = "";
+      }
+      next.exportConfig.metadataModal = currentModal;
+      return next;
+    });
+  }
+
+  function getExportStartBlockReason(state) {
+    const locale = state.ui.locale || "en";
+    const formats = Array.isArray(state.exportConfig.formats) ? state.exportConfig.formats : [];
+    if (!state.source.filePath) {
+      return t("selector.blocking.sourceRequired", { locale });
+    }
+    if (!isRectValid(state.roi.appliedRect)) {
+      return t("selector.blocking.roiRequired", { locale });
+    }
+    if (hasDirtyRoiDraft(state)) {
+      return t("selector.blocking.roiDirty", { locale });
+    }
+    if (formats.length === 0) {
+      return t("export.formatsRequiredError", { locale });
+    }
+    return t("export.startBlocked", { locale });
+  }
+
+  async function startExportRun(state = store.getState()) {
+    const formats = Array.isArray(state.exportConfig.formats) ? state.exportConfig.formats : [];
+    if (state.exportConfig.runStatus === "running") {
+      return false;
+    }
+    if (!canRunExport(state)) {
+      const blockReason = getExportStartBlockReason(state);
+      setState((next) => {
+        next.exportConfig.error = blockReason;
+        return next;
+      });
+      return false;
     }
     const exportRun = runtimeGuards.beginExportRun();
     activeJobHandle = null;
@@ -1103,59 +1323,45 @@ export function createApp(root, dependencies = {}) {
       return resetExportOutputs(next);
     });
     try {
-      const roiHealth = await runtimeApi.requestPreviewRoiHealth({
-        sourceType: "file",
-        filePath: state.source.filePath,
-        startSec: state.roi.frameTime || 0,
-        roi: state.roi.appliedRect,
-      });
-      if (!runtimeGuards.isCurrentExport(exportRun)) {
-        return;
-      }
-      if (roiHealth?.riskLevel === "critical") {
-        setState((next) => {
-          next.roi.diagnostics = Array.isArray(roiHealth.diagnostics) ? roiHealth.diagnostics : [];
-          next.exportConfig.runStatus = "idle";
-          next.exportConfig.currentStep = "";
-          next.exportConfig.message = "";
-          next.exportConfig.error = String(roiHealth.summary || "ROI is unsafe for capture");
-          return next;
-        });
-        return;
-      }
       const jobId = await runtimeApi.createJob(buildJobPayload(state));
       const jobHandle = runtimeGuards.attachJob(exportRun, jobId);
       if (!jobHandle) {
-        return;
+        return false;
       }
       activeJobHandle = jobHandle;
       setState((next) => {
         next.exportConfig.jobId = jobId;
         return next;
       });
-      await pollJob(jobId, jobHandle);
+      void pollJob(jobId, jobHandle);
+      return true;
     } catch (error) {
+      if (!runtimeGuards.isCurrentExport(exportRun)) {
+        return false;
+      }
       setState((next) => {
         next.exportConfig.runStatus = "error";
+        next.exportConfig.currentStep = "";
+        next.exportConfig.message = "";
         next.exportConfig.error = String(error?.message || error);
         return next;
       });
+      return false;
     }
   }
 
   async function confirmExportMetadata() {
     const state = store.getState();
     const modal = state.exportConfig.metadataModal;
-    if (!modal?.isOpen) {
+    if (!modal?.isOpen || state.exportConfig.runStatus === "running") {
       return;
     }
-    const sanitizedDraft = {
-      ...modal.draft,
-      bpm: sanitizeDocumentHeaderDraftField("bpm", modal.draft?.bpm),
-    };
+    const sanitizedDraft = captureLiveExportMetadataDraft(shell.stagePane, modal.draft);
     const validation = validateExportMetadataDraft(sanitizedDraft, state.ui.locale || "en");
     if (validation.title || validation.bpm) {
       setState((next) => {
+        next.exportConfig.error = "";
+        next.exportConfig.metadataModal.draft = sanitizedDraft;
         next.exportConfig.metadataModal.validation = validation;
         next.exportConfig.metadataModal.showDiscardConfirm = false;
         return next;
@@ -1166,23 +1372,45 @@ export function createApp(root, dependencies = {}) {
     const documentHeader = normalizeDocumentHeader(sanitizedDraft, fallbackDocumentHeader);
     setState((next) => {
       next.exportConfig.documentHeader = documentHeader;
+      const currentModal = next.exportConfig.metadataModal || createExportMetadataModalState(next.source.filePath, new Date(), documentHeader);
+      currentModal.isOpen = true;
+      currentModal.draft = { ...documentHeader };
+      currentModal.dirty = false;
+      currentModal.validation = { title: "", bpm: "" };
+      currentModal.showDiscardConfirm = false;
+      next.exportConfig.metadataModal = currentModal;
+      return next;
+    });
+    const started = await startExportRun(store.getState());
+    if (!started) {
+      if (!store.getState().exportConfig.error) {
+        setState((next) => {
+          next.exportConfig.error = t("export.startBlocked", { locale: next.ui.locale });
+          return next;
+        });
+      }
+      return;
+    }
+    setState((next) => {
       next.exportConfig.metadataModal = createExportMetadataModalState(
         next.source.filePath,
         new Date(),
-        documentHeader,
+        next.exportConfig.documentHeader,
       );
       return next;
     });
-    await startExportRun(store.getState());
   }
 
   async function runExport() {
     const state = store.getState();
+    if (state.exportConfig.metadataModal?.isOpen) {
+      return;
+    }
     if (!canRunExport(state)) {
       await startExportRun(state);
       return;
     }
-    if (isPdfSelected(state.exportConfig.formats)) {
+    if (isPdfSelected(Array.isArray(state.exportConfig.formats) ? state.exportConfig.formats : [])) {
       openExportMetadataModal();
       return;
     }
@@ -1191,6 +1419,7 @@ export function createApp(root, dependencies = {}) {
 
   async function applyReviewSelection() {
     const state = store.getState();
+    const formats = Array.isArray(state.exportConfig.formats) ? state.exportConfig.formats : [];
     if (
       !state.exportConfig.jobId
       || state.exportConfig.runStatus !== "done"
@@ -1199,20 +1428,38 @@ export function createApp(root, dependencies = {}) {
     ) {
       return;
     }
-    const selected = state.review.pages
-      .filter((page) => state.review.selectedPageIds.includes(page.id))
-      .map((page) => page.capturePath);
-    if (!selected.length) {
+    if (!formats.length) {
+      setState((next) => {
+        next.review.error = t("export.formatsRequiredError", { locale: next.ui.locale });
+        return next;
+      });
       return;
     }
+    const sourceSessionToken = runtimeGuards.captureSourceSession();
+    const selectedPages = state.review.pages.filter((page) => state.review.selectedPageIds.includes(page.id));
+    if (!selectedPages.length) {
+      return;
+    }
+    const usePageSelection = selectedPages.every((page) => page.selectionMode === "pages");
+    const selected = selectedPages.map((page) => page.capturePath);
     setState((next) => {
       next.review.status = "running";
       next.review.error = "";
       return next;
     });
     try {
-      await runtimeApi.reviewExport(state.exportConfig.jobId, selected, state.exportConfig.formats);
+      await runtimeApi.reviewExport(state.exportConfig.jobId, {
+        keepCaptures: usePageSelection ? [] : selected,
+        keepImages: usePageSelection ? selected : [],
+        formats,
+      });
+      if (!runtimeGuards.isCurrentSourceSession(sourceSessionToken)) {
+        return;
+      }
       const refreshed = await runtimeApi.getJob(state.exportConfig.jobId);
+      if (!runtimeGuards.isCurrentSourceSession(sourceSessionToken)) {
+        return;
+      }
       if (activeJobHandle && !runtimeGuards.isCurrentJob(activeJobHandle, state.exportConfig.jobId)) {
         return;
       }
@@ -1220,6 +1467,9 @@ export function createApp(root, dependencies = {}) {
       refreshCompletedLibraries();
       setInlineNotice(notice("review.applied", { locale: store.getState().ui.locale || "en" }));
     } catch (error) {
+      if (!runtimeGuards.isCurrentSourceSession(sourceSessionToken)) {
+        return;
+      }
       setState((next) => {
         next.review.status = "error";
         next.review.error = String(error?.message || error);
@@ -1284,7 +1534,11 @@ export function createApp(root, dependencies = {}) {
     }
     if (action === "load-registry-source") {
       try {
-        await loadSourceFromPath(target.dataset.filePath);
+        await loadSourceFromPath(target.dataset.filePath, {
+          sourceOrigin: target.dataset.sourceOrigin,
+          youtubeUrl: target.dataset.youtubeUrl,
+          displayName: target.dataset.displayName,
+        });
       } catch (error) {
         setState((next) => {
           next.source.status = "error";
@@ -1307,6 +1561,24 @@ export function createApp(root, dependencies = {}) {
     }
     if (action === "open-archive") {
       openArchive();
+      return;
+    }
+    if (action === "restart-backend") {
+      try {
+        await runtimeBridge.restartBackend();
+        setInlineNotice(t("status.restartTriggered", { locale: store.getState().ui.locale || "en" }));
+      } catch (error) {
+        setInlineNotice(String(error?.message || error));
+      }
+      return;
+    }
+    if (action === "run-guided-setup") {
+      try {
+        await runtimeBridge.runGuidedSetup();
+        setInlineNotice(t("status.setupTriggered", { locale: store.getState().ui.locale || "en" }));
+      } catch (error) {
+        setInlineNotice(String(error?.message || error));
+      }
       return;
     }
     if (action === "close-archive") {
@@ -1332,6 +1604,9 @@ export function createApp(root, dependencies = {}) {
       return;
     }
     if (action === "open-step") {
+      if (store.getState().exportConfig.metadataModal?.isOpen) {
+        return;
+      }
       const { step } = target.dataset;
       if (canOpenStep(store.getState(), step)) {
         setState((next) => {
@@ -1415,15 +1690,31 @@ export function createApp(root, dependencies = {}) {
       const locale = store.getState().ui.locale || "en";
       const item = getArchiveItem(target.dataset.sourceKey);
       await handleOpenPath(item?.outputDir, t("archive.pathLabel.folder", { locale }));
+      return;
+    }
+    if (action === "reopen-archive-source") {
+      try {
+        await loadSourceFromPath(target.dataset.filePath, {
+          sourceOrigin: target.dataset.sourceKind === "youtube" ? "prepared" : "job",
+          youtubeUrl: target.dataset.youtubeUrl,
+          displayName: target.dataset.displayName,
+        });
+        closeArchive();
+      } catch (error) {
+        setState((next) => {
+          next.source.status = "error";
+          next.source.error = String(error?.message || error);
+          return next;
+        });
+      }
+      return;
     }
   };
 
   const handleInput = (event) => {
     const target = event.target;
     if (target.dataset.action === "youtube-url-input") {
-      stopSourcePreparePolling();
-      activeSourcePrepareHandle = null;
-      runtimeGuards.invalidateSourcePrepare();
+      resetCurrentSourceSession();
       sourceController.setYoutubeUrl(String(target.value || ""));
       return;
     }
@@ -1450,6 +1741,9 @@ export function createApp(root, dependencies = {}) {
     }
     if (target.dataset.action === "toggle-format") {
       const format = target.dataset.format;
+      stopPolling();
+      activeJobHandle = null;
+      runtimeGuards.invalidateExport();
       setState((next) => {
         const nextFormats = new Set(next.exportConfig.formats);
         if (target.checked) {
@@ -1457,16 +1751,19 @@ export function createApp(root, dependencies = {}) {
         } else {
           nextFormats.delete(format);
         }
+        invalidateExportReviewState(next);
         next.exportConfig.formats = Array.from(nextFormats);
+        next.ui.activeStep = "export";
         return next;
       });
       return;
     }
     if (target.dataset.action === "update-export-metadata") {
-      if (event.isComposing) {
-        return;
+      const field = String(target.dataset.field || "");
+      const sanitizedValue = sanitizeDocumentHeaderDraftField(field, target.value);
+      if (target.value !== sanitizedValue) {
+        target.value = sanitizedValue;
       }
-      updateExportMetadata(String(target.dataset.field || ""), target.value);
       return;
     }
     if (target.dataset.action === "toggle-review-page") {
@@ -1512,15 +1809,47 @@ export function createApp(root, dependencies = {}) {
     }
   };
 
+  const handleCompositionEnd = (event) => {
+    const target = event.target;
+    if (target?.dataset?.action !== "update-export-metadata") {
+      return;
+    }
+    const field = String(target.dataset.field || "");
+    const sanitizedValue = sanitizeDocumentHeaderDraftField(field, target.value);
+    if (target.value !== sanitizedValue) {
+      target.value = sanitizedValue;
+    }
+  };
+
+  const handleChange = (event) => {
+    const target = event.target;
+    if (target?.dataset?.action !== "update-export-metadata") {
+      return;
+    }
+    const field = String(target.dataset.field || "");
+    const sanitizedValue = sanitizeDocumentHeaderDraftField(field, target.value);
+    if (target.value !== sanitizedValue) {
+      target.value = sanitizedValue;
+    }
+    syncExportMetadataDraftFromDom(field);
+  };
+
   const handleKeyDown = (event) => {
     if (event.key === "Escape" && store.getState().archive.isOpen) {
       event.preventDefault?.();
       closeArchive();
+      return;
+    }
+    if (event.key === "Escape" && store.getState().exportConfig.metadataModal?.isOpen) {
+      event.preventDefault?.();
+      closeExportMetadataModal(false);
     }
   };
 
   root.addEventListener("click", handleClick);
   root.addEventListener("input", handleInput);
+  root.addEventListener("compositionend", handleCompositionEnd);
+  root.addEventListener("change", handleChange);
   root.addEventListener("keydown", handleKeyDown);
   root.addEventListener("dragenter", handleDragEnter);
   root.addEventListener("dragover", handleDragOver);
@@ -1538,6 +1867,18 @@ export function createApp(root, dependencies = {}) {
     if (becameReady) {
       void refreshLocalMediaRegistry();
       void refreshArchiveLibrary();
+    }
+  });
+  const unsubscribeSetupState = runtimeBridge.onSetupState((payload) => {
+    const message = String(payload?.message || payload?.state || "").trim();
+    if (message) {
+      setInlineNotice(message);
+    }
+  });
+  const unsubscribeSetupLog = runtimeBridge.onSetupLog((payload) => {
+    const message = String(payload?.message || payload || "").trim();
+    if (message) {
+      setInlineNotice(message);
     }
   });
 
@@ -1564,9 +1905,13 @@ export function createApp(root, dependencies = {}) {
       destroyRoiEditor();
       unsubscribeStore?.();
       unsubscribeBackend?.();
+      unsubscribeSetupState?.();
+      unsubscribeSetupLog?.();
       if (typeof root.removeEventListener === "function") {
         root.removeEventListener("click", handleClick);
         root.removeEventListener("input", handleInput);
+        root.removeEventListener("compositionend", handleCompositionEnd);
+        root.removeEventListener("change", handleChange);
         root.removeEventListener("keydown", handleKeyDown);
         root.removeEventListener("dragenter", handleDragEnter);
         root.removeEventListener("dragover", handleDragOver);

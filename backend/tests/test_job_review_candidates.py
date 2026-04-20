@@ -50,7 +50,7 @@ class TestJobReviewCandidates(unittest.TestCase):
             with (
                 patch("app.main.job_store", store),
                 patch("app.main.jobs_root", jobs_root),
-                patch("app.main._enforce_roi_capture_gate", return_value={"summary": "ok"}),
+                patch("app.main._analyze_roi_health", return_value={"summary": "ok", "diagnostics": []}),
                 patch("app.main.get_runtime_acceleration", return_value={}),
                 patch("app.main.runtime_public_info", return_value={}),
                 patch("app.main._detect_source_resolution", return_value=(0, 0)),

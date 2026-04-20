@@ -5,7 +5,6 @@ from unittest.mock import Mock, patch
 
 import cv2
 import numpy as np
-from fastapi import HTTPException
 
 from app import main
 from app.job_store import JobStore
@@ -30,7 +29,7 @@ class TestCaptureQualityPipeline(unittest.TestCase):
             },
         )
 
-    def test_create_job_rejects_critical_roi_before_queueing(self):
+    def test_create_job_queues_even_when_roi_health_would_be_critical(self):
         with tempfile.TemporaryDirectory() as td:
             jobs_root = Path(td) / "jobs"
             jobs_root.mkdir(parents=True, exist_ok=True)
@@ -55,13 +54,11 @@ class TestCaptureQualityPipeline(unittest.TestCase):
                     },
                 ),
             ):
-                with self.assertRaises(HTTPException) as error:
-                    main.create_job(self.make_job_payload(str(source_path)))
+                response = main.create_job(self.make_job_payload(str(source_path)))
 
-            self.assertEqual(error.exception.status_code, 400)
-            self.assertIn("ROI", str(error.exception.detail))
-            executor.submit.assert_not_called()
-            self.assertEqual(len(list(jobs_root.glob("*/job.json"))), 0)
+            self.assertTrue(response.job_id)
+            executor.submit.assert_called_once()
+            self.assertEqual(len(list(jobs_root.glob("*/job.json"))), 1)
 
     def test_detect_sheet_regions_attaches_padded_safe_roi(self):
         with tempfile.TemporaryDirectory() as td:

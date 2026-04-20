@@ -303,7 +303,8 @@ def read_job_file(file_path: str) -> FileResponse:
 @app.post("/maintenance/clear-cache", response_model=CacheClearResponse)
 def clear_cache() -> CacheClearResponse:
     active_jobs = job_store.active_job_ids()
-    if active_jobs:
+    active_prepare_jobs = source_prepare_store.active_job_ids()
+    if active_jobs or active_prepare_jobs:
         raise HTTPException(status_code=409, detail="cache clear is blocked while jobs are running")
 
     reclaimed_bytes = 0
@@ -318,7 +319,7 @@ def clear_cache() -> CacheClearResponse:
         except OSError as exc:
             skipped_paths.append(f"{child.name}: {exc}")
 
-    cleared_jobs = job_store.clear_all()
+    cleared_jobs = job_store.clear_all() + source_prepare_store.clear_all()
     return CacheClearResponse(
         cleared_paths=cleared_paths,
         cleared_jobs=cleared_jobs,
@@ -383,20 +384,40 @@ def local_media_registry() -> LocalMediaRegistryResponse:
             continue
         if job.status != JobStatus.DONE:
             continue
+        source_identity = dict(job.source_identity or {})
+        cached_youtube_entry = _resolve_cached_youtube_source_entry(
+            youtube_url=str(job.youtube_url or ""),
+            source_key=str(source_identity.get("key") or ""),
+        )
         source_path = _existing_file_path(job.file_path)
         if source_path is None:
+            source_path = _existing_file_path(dict(job.result or {}).get("source_video_path"))
+        if source_path is None:
+            source_path = _existing_file_path(cached_youtube_entry.get("source_path"))
+        if source_path is None:
             continue
+        source_metadata = _read_cached_youtube_metadata(source_path)
         result = dict(job.result or {})
         pdf_path = _existing_file_path(result.get("pdf"))
         output_dir = _existing_dir_path(result.get("output_dir"))
         completed_jobs.append(
             {
                 "source_path": str(source_path),
-                "display_name": str((job.source_identity or {}).get("display_name") or "").strip() or source_path.name,
+                "display_name": (
+                    str(source_identity.get("display_name") or "").strip()
+                    or str(cached_youtube_entry.get("video_title") or "").strip()
+                    or str(source_metadata.get("video_title") or "").strip()
+                    or source_path.name
+                ),
                 "pdf_path": str(pdf_path) if pdf_path else None,
                 "output_dir": str(output_dir) if output_dir else None,
                 "source_origin": "job",
-                "youtube_url": job.youtube_url,
+                "youtube_url": (
+                    str(cached_youtube_entry.get("youtube_url") or "").strip()
+                    or str(source_metadata.get("source_key") or "").strip()
+                    or str(job.youtube_url or "").strip()
+                    or None
+                ),
                 "updated_at": float(job.updated_at),
             }
         )
@@ -455,7 +476,13 @@ def archive_library() -> ArchiveLibraryResponse:
             continue
 
         source_identity = dict(job.source_identity or {})
+        cached_youtube_entry = _resolve_cached_youtube_source_entry(
+            youtube_url=str(job.youtube_url or ""),
+            source_key=str(source_identity.get("key") or ""),
+        )
         source_key = _resolve_archive_source_key(job=job, source_identity=source_identity)
+        if not source_key:
+            source_key = str(cached_youtube_entry.get("source_key") or "").strip()
         if not source_key:
             continue
 
@@ -465,7 +492,17 @@ def archive_library() -> ArchiveLibraryResponse:
             continue
 
         output_dir = _existing_dir_path(result.get("output_dir"))
+        source_path = _existing_file_path(job.file_path)
+        if source_path is None:
+            source_path = _existing_file_path(result.get("source_video_path"))
+        if source_path is None:
+            source_path = _existing_file_path(cached_youtube_entry.get("source_path"))
+        source_metadata = _read_cached_youtube_metadata(source_path) if source_path else {}
         display_name = str(source_identity.get("display_name") or "").strip()
+        if not display_name:
+            display_name = str(cached_youtube_entry.get("video_title") or "").strip()
+        if not display_name:
+            display_name = str(source_metadata.get("video_title") or "").strip()
         if not display_name:
             file_path = str(job.file_path or "").strip()
             youtube_url = str(job.youtube_url or "").strip()
@@ -486,8 +523,15 @@ def archive_library() -> ArchiveLibraryResponse:
             source_kind=source_kind,
             display_name=display_name,
             completed_at=completed_at,
+            source_path=str(source_path) if source_path else "",
             pdf_path=str(pdf_path),
             output_dir=str(output_dir) if output_dir else None,
+            youtube_url=(
+                str(cached_youtube_entry.get("youtube_url") or "").strip()
+                or str(source_metadata.get("source_key") or "").strip()
+                or str(job.youtube_url or "").strip()
+                or None
+            ),
         )
         existing = latest_by_source.get(source_key)
         if existing is None or candidate.completed_at > existing.completed_at:
@@ -506,7 +550,9 @@ def preview_frame(payload: PreviewFrameRequest) -> PreviewFrameResponse:
             youtube_url=payload.youtube_url,
         )
 
-        preview_workspace = jobs_root / "_preview" / str(uuid.uuid4())
+        preview_root = jobs_root / "_preview"
+        _prune_preview_workspaces(preview_root, keep=2)
+        preview_workspace = preview_root / str(uuid.uuid4())
         preview_workspace.mkdir(parents=True, exist_ok=True)
         resolved_source_type = payload.source_type
         resolved_file_path = normalized_file_path
@@ -547,6 +593,7 @@ def preview_frame(payload: PreviewFrameRequest) -> PreviewFrameResponse:
 
 @app.post("/preview/roi-health", response_model=PreviewRoiHealthResponse)
 def preview_roi_health(payload: PreviewRoiHealthRequest) -> PreviewRoiHealthResponse:
+    preview_workspace: Path | None = None
     try:
         normalized_file_path, normalized_youtube_url = _normalize_source_inputs(
             source_type=payload.source_type,
@@ -554,7 +601,9 @@ def preview_roi_health(payload: PreviewRoiHealthRequest) -> PreviewRoiHealthResp
             youtube_url=payload.youtube_url,
         )
 
-        preview_workspace = jobs_root / "_preview_health" / str(uuid.uuid4())
+        preview_root = jobs_root / "_preview_health"
+        _prune_preview_workspaces(preview_root, keep=0)
+        preview_workspace = preview_root / str(uuid.uuid4())
         preview_workspace.mkdir(parents=True, exist_ok=True)
         analysis = _analyze_roi_health(
             source_type=payload.source_type,
@@ -579,6 +628,9 @@ def preview_roi_health(payload: PreviewRoiHealthRequest) -> PreviewRoiHealthResp
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"preview roi health failed: {exc}")
+    finally:
+        if preview_workspace is not None:
+            shutil.rmtree(preview_workspace, ignore_errors=True)
 
 
 @app.post("/preview/source", response_model=PreviewSourceResponse)
@@ -659,19 +711,6 @@ def create_job(payload: JobCreate) -> JobCreateResponse:
     _apply_auto_layout_hints(payload)
     detect_opts = payload.options.detect
 
-    try:
-        _enforce_roi_capture_gate(
-            source_type=payload.source_type,
-            file_path=normalized_file_path,
-            youtube_url=normalized_youtube_url,
-            start_sec=payload.options.extract.start_sec,
-            roi=detect_opts.roi,
-            workspace=jobs_root / "_preview_health" / str(uuid.uuid4()),
-            logger=lambda _: None,
-        )
-    except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
     normalized_source_identity = _normalize_source_identity_payload(
         payload.source_identity.model_dump() if payload.source_identity else {}
     )
@@ -728,6 +767,17 @@ def _resolve_job_export_options(job: Job, fallback: Optional[ExportOptions] = No
     return ExportOptions()
 
 
+def _normalize_requested_export_formats(formats: List[str]) -> List[str]:
+    normalized: List[str] = []
+    for raw in formats:
+        token = str(raw or "").strip().lower()
+        if token == "jpeg":
+            token = "jpg"
+        if token in {"png", "jpg", "pdf"} and token not in normalized:
+            normalized.append(token)
+    return normalized
+
+
 @app.post("/jobs/{job_id}/review-export", response_model=JobReviewExportResponse)
 def review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExportResponse:
     job = job_store.get(job_id)
@@ -777,6 +827,9 @@ def review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExpo
             stitch_options_payload = stitch_opts
 
     requested_formats = payload.formats if payload.formats is not None else configured_formats
+    normalized_requested_formats = _normalize_requested_export_formats(requested_formats)
+    if not normalized_requested_formats:
+        raise HTTPException(status_code=400, detail="formats must include at least one export format")
     export_workspace = Path(job.artifact_dir) / "export"
     staged_export_workspace = _create_staged_export_workspace(target_workspace=export_workspace)
 
@@ -796,7 +849,7 @@ def review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExpo
                 raise RuntimeError("no pages available after stitching selected captures")
         export_result = export_selected_pages(
             page_paths=page_paths,
-            formats=[str(value) for value in requested_formats],
+            formats=normalized_requested_formats,
             page_fill_mode=configured_page_fill_mode,
             document_header=configured_document_header,
             workspace=staged_export_workspace,
@@ -986,8 +1039,10 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
             resolved_source_type = "file"
             resolved_file_path = str(prepared["video_path"])
             resolved_youtube_url = None
+        if resolved_file_path:
+            result["source_video_path"] = str(resolved_file_path)
 
-        result["roi_health"] = _enforce_roi_capture_gate(
+        result["roi_health"] = _analyze_roi_health(
             source_type=resolved_source_type,
             file_path=resolved_file_path,
             youtube_url=resolved_youtube_url,
@@ -996,6 +1051,15 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
             workspace=artifact_dir / "roi-health",
             logger=lambda msg: _append(job_id, msg),
         )
+        roi_health = result["roi_health"] if isinstance(result["roi_health"], dict) else {}
+        for diagnostic in roi_health.get("diagnostics", []):
+            level = str(diagnostic.get("level") or "info").strip().lower() or "info"
+            title = str(diagnostic.get("title") or diagnostic.get("code") or "roi-diagnostic").strip()
+            detail = str(diagnostic.get("detail") or "").strip()
+            if detail:
+                _append(job_id, f"roi health [{level}] {title}: {detail}")
+            else:
+                _append(job_id, f"roi health [{level}] {title}")
 
         accel = get_runtime_acceleration(
             logger=lambda msg: _append(job_id, msg),
@@ -1014,6 +1078,8 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
         result["extracted_frames"] = [str(frame_path) for frame_path in frames]
         result["runtime"] = runtime_public_info(accel, ffmpeg_mode=runtime_capture.get("ffmpeg_mode"))
         source_video_path = runtime_capture.get("source_video")
+        if source_video_path:
+            result["source_video_path"] = str(source_video_path)
         src_w, src_h = _detect_source_resolution(source_video_path=source_video_path, extracted_frames=frames)
         if src_w > 0 and src_h > 0:
             result["source_resolution"] = {"width": int(src_w), "height": int(src_h)}
@@ -1228,11 +1294,12 @@ def _find_cached_video(workspace: Path) -> Path | None:
     return candidates[0]
 
 
-def _preview_source_cache_workspace(youtube_url: str) -> Path:
+def _preview_source_cache_workspace(youtube_url: str, *, create: bool = True) -> Path:
     normalized_url = _best_effort_normalize_youtube_key(youtube_url)
     cache_key = hashlib.sha1(normalized_url.encode("utf-8")).hexdigest()[:16]
     cache_dir = jobs_root / "_preview_source" / PREVIEW_SOURCE_CACHE_NAMESPACE / cache_key
-    cache_dir.mkdir(parents=True, exist_ok=True)
+    if create:
+        cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
 
 
@@ -1276,6 +1343,42 @@ def _coerce_prepared_youtube_source(prepared: object, *, fallback_url: str) -> D
         "from_cache": bool(from_cache),
         "video_title": metadata.get("video_title", ""),
         "source_key": _best_effort_normalize_youtube_key(metadata.get("source_key", "") or default_source_key),
+    }
+
+
+def _prune_preview_workspaces(root: Path, *, keep: int = 2) -> None:
+    if keep < 0 or not root.exists():
+        return
+    try:
+        candidates = [path for path in root.iterdir() if path.is_dir()]
+    except OSError:
+        return
+    candidates.sort(key=lambda path: path.stat().st_mtime if path.exists() else 0, reverse=True)
+    for stale in candidates[keep:]:
+        try:
+            _remove_path(stale)
+        except OSError:
+            continue
+
+
+def _resolve_cached_youtube_source_entry(*, youtube_url: str, source_key: str = "") -> Dict[str, object]:
+    normalized_key = _best_effort_normalize_youtube_key(source_key or youtube_url)
+    if not normalized_key:
+        return {}
+    cache_dir = _preview_source_cache_workspace(normalized_key, create=False)
+    cached_video = _find_cached_video(cache_dir)
+    if cached_video is None:
+        return {
+            "source_key": normalized_key,
+            "youtube_url": normalized_key,
+        }
+    metadata = _read_cached_youtube_metadata(cached_video)
+    resolved_source_key = _best_effort_normalize_youtube_key(metadata.get("source_key") or normalized_key)
+    return {
+        "source_path": str(cached_video.resolve()),
+        "source_key": resolved_source_key,
+        "youtube_url": resolved_source_key,
+        "video_title": str(metadata.get("video_title") or "").strip(),
     }
 
 

@@ -49,6 +49,14 @@ function createController(overrides = {}) {
 
 test("controller marks youtube prepare as loading and records the prepare job id", () => {
   const { store, controller } = createController();
+  store.setState((next) => {
+    next.source.filePath = "/tmp/previous.mp4";
+    next.source.metadata = { durationSec: 90 };
+    next.roi.previewImage = "/tmp/preview.png";
+    next.exportConfig.jobId = "job-1";
+    next.review.pages = [{ id: "1" }];
+    return next;
+  });
   const requestToken = controller.startYoutubePrepare("https://youtu.be/demo");
 
   controller.applyPrepareJobStarted("source-1", requestToken);
@@ -58,6 +66,10 @@ test("controller marks youtube prepare as loading and records the prepare job id
   assert.equal(state.source.prepareJobId, "source-1");
   assert.equal(state.source.prepareStage, "queued");
   assert.equal(state.source.filePath, "");
+  assert.equal(state.source.metadata, null);
+  assert.equal(state.roi.previewImage, "");
+  assert.equal(state.exportConfig.jobId, "");
+  assert.deepEqual(state.review.pages, []);
 });
 
 test("controller applies a running prepare snapshot without promoting file state", () => {
@@ -179,6 +191,8 @@ test("editing the youtube url clears stale prepare errors and cached youtube sta
   const { store, controller } = createController();
 
   store.setState((next) => {
+    next.source.filePath = "/tmp/current.mp4";
+    next.source.metadata = { durationSec: 120 };
     next.source.displayName = "Take Five Drum Lesson";
     next.source.archiveSourceKind = "youtube";
     next.source.archiveSourceKey = "https://www.youtube.com/watch?v=abc123";
@@ -202,6 +216,8 @@ test("editing the youtube url clears stale prepare errors and cached youtube sta
 
   const state = store.getState();
   assert.equal(state.source.youtubeUrl, "https://youtu.be/new");
+  assert.equal(state.source.filePath, "");
+  assert.equal(state.source.metadata, null);
   assert.equal(state.source.displayName, "");
   assert.equal(state.source.archiveSourceKind, "");
   assert.equal(state.source.archiveSourceKey, "");
@@ -218,6 +234,60 @@ test("editing the youtube url clears stale prepare errors and cached youtube sta
   assert.equal(state.source.prepareErrorDetail, "");
   assert.equal(state.source.preparedFromYouTube, false);
   assert.equal(state.source.preparedVideoPath, "");
+});
+
+test("controller clears stale source truth before local file metadata resolves", async () => {
+  const metadataGate = deferred();
+  const { store, controller } = createController({
+    readMetadata: async () => metadataGate.promise,
+  });
+
+  store.setState((next) => {
+    next.source.filePath = "/tmp/old.mp4";
+    next.source.displayName = "old.mp4";
+    next.source.metadata = { durationSec: 30 };
+    next.roi.previewImage = "/tmp/preview.png";
+    next.exportConfig.jobId = "job-1";
+    next.review.pages = [{ id: "1" }];
+    return next;
+  });
+
+  const pending = controller.selectLocalFile("/tmp/new.mp4");
+  const intermediate = store.getState();
+
+  assert.equal(intermediate.source.status, "loading");
+  assert.equal(intermediate.source.filePath, "");
+  assert.equal(intermediate.source.metadata, null);
+  assert.equal(intermediate.roi.previewImage, "");
+  assert.equal(intermediate.exportConfig.jobId, "");
+  assert.deepEqual(intermediate.review.pages, []);
+
+  metadataGate.resolve({
+    durationSec: 60,
+    durationLabel: "01:00",
+    resolutionLabel: "1920x1080",
+  });
+  await pending;
+});
+
+test("controller preserves youtube identity when reopening a prepared source from the registry", async () => {
+  const { store, controller } = createController();
+
+  await controller.selectLocalFile("/tmp/cache/demo.mp4", {
+    sourceOrigin: "prepared",
+    youtubeUrl: "https://www.youtube.com/watch?v=demo",
+    displayName: "Take Five Drum Lesson",
+  });
+
+  const state = store.getState();
+  assert.equal(state.source.sourceType, "youtube");
+  assert.equal(state.source.youtubeUrl, "https://www.youtube.com/watch?v=demo");
+  assert.equal(state.source.archiveSourceKind, "youtube");
+  assert.equal(state.source.archiveSourceKey, "https://www.youtube.com/watch?v=demo");
+  assert.equal(state.source.archiveDisplayName, "Take Five Drum Lesson");
+  assert.equal(state.source.displayName, "Take Five Drum Lesson");
+  assert.equal(state.source.preparedFromYouTube, true);
+  assert.equal(state.source.preparedVideoPath, "/tmp/cache/demo.mp4");
 });
 
 test("controller seeds three representative preview candidates after local file selection", async () => {
