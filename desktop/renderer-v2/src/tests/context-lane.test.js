@@ -33,6 +33,16 @@ test("context lane renders english review preview labels when locale is en", () 
   const markup = renderContextLane(state);
 
   assert.match(markup, /Result Page 1/);
-  assert.match(markup, /Output summary|Next step/);
+  assert.match(markup, /Review summary|Next step/);
   assert.doesNotMatch(markup, /결과 요약|다음 작업/);
+});
+
+test("context lane stays hidden for roi and export when there is no selection-specific inspector", () => {
+  const state = createInitialSessionState();
+
+  state.ui.activeStep = "roi";
+  assert.equal(renderContextLane(state), "");
+
+  state.ui.activeStep = "export";
+  assert.equal(renderContextLane(state), "");
 });

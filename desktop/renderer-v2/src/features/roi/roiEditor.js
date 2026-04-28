@@ -54,6 +54,16 @@ export function mountRoiEditor({ image, canvas, input, initialPoints = null, onD
   let dragOffset = null;
   let keyboardMode = "move";
 
+  function readToken(name, fallback) {
+    const root = canvas.ownerDocument?.documentElement;
+    const view = canvas.ownerDocument?.defaultView;
+    if (!root || typeof view?.getComputedStyle !== "function") {
+      return fallback;
+    }
+    const value = view.getComputedStyle(root).getPropertyValue(name).trim();
+    return value || fallback;
+  }
+
   function getCanvasPoint(clientX, clientY) {
     const bounds = canvas.getBoundingClientRect();
     if (!bounds.width || !bounds.height) {
@@ -153,12 +163,12 @@ export function mountRoiEditor({ image, canvas, input, initialPoints = null, onD
     const normalized = normalize(rect, canvas.width, canvas.height);
     const handleSize = getHandleSize();
     rect = normalized;
-    ctx.strokeStyle = "#d0a95e";
+    ctx.strokeStyle = readToken("--roi-stroke", "teal");
     ctx.lineWidth = 3;
-    ctx.fillStyle = "rgba(208, 169, 94, 0.18)";
+    ctx.fillStyle = readToken("--roi-fill", "transparent");
     ctx.strokeRect(normalized.x1 + 0.5, normalized.y1 + 0.5, normalized.x2 - normalized.x1, normalized.y2 - normalized.y1);
     ctx.fillRect(normalized.x1, normalized.y1, normalized.x2 - normalized.x1, normalized.y2 - normalized.y1);
-    ctx.fillStyle = "#d0a95e";
+    ctx.fillStyle = readToken("--roi-handle", "teal");
     for (const [handle, point] of Object.entries(handlesFor(normalized))) {
       ctx.fillRect(point.x - handleSize / 2, point.y - handleSize / 2, handleSize, handleSize);
       if (keyboardMode === handle) {

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 import cv2
 import numpy as np
@@ -58,6 +59,7 @@ def export_frames(
     finalized_pages = _finalize_export_pages(
         source_images,
         page_fill_mode=page_fill_mode,
+        source_paths=frame_paths,
     )
 
     if not finalized_pages:
@@ -151,6 +153,7 @@ def export_selected_pages(
     finalized_pages = _finalize_export_pages(
         source_images,
         page_fill_mode=page_fill_mode,
+        source_paths=page_paths,
     )
 
     if not finalized_pages:
@@ -221,16 +224,47 @@ def _finalize_export_pages(
     images: List[np.ndarray],
     *,
     page_fill_mode: PageFillMode,
+    source_paths: Optional[Sequence[Path]] = None,
 ) -> List[np.ndarray]:
     finalized_pages: List[np.ndarray] = []
-    for image in images:
-        pages = finalize_sheet_pages(image, page_fill_mode=page_fill_mode, normalize_tone=False)
+    for index, image in enumerate(images):
+        protected_split_boundaries: List[int] = []
+        if source_paths is not None and index < len(source_paths):
+            protected_split_boundaries = _load_protected_split_boundaries(Path(source_paths[index]))
+        pages = finalize_sheet_pages(
+            image,
+            page_fill_mode=page_fill_mode,
+            normalize_tone=False,
+            protected_split_boundaries=protected_split_boundaries,
+        )
         if pages:
             finalized_pages.extend(pages)
             continue
         if image is not None and image.size > 0:
             finalized_pages.append(image)
     return finalized_pages
+
+
+def _load_protected_split_boundaries(page_path: Path) -> List[int]:
+    metadata_path = page_path.with_suffix(".seams.json")
+    if not metadata_path.exists():
+        return []
+    try:
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    raw_boundaries = payload.get("protected_split_boundaries") if isinstance(payload, dict) else None
+    if not isinstance(raw_boundaries, list):
+        return []
+    boundaries: List[int] = []
+    for raw in raw_boundaries:
+        try:
+            boundary = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if boundary > 0 and boundary not in boundaries:
+            boundaries.append(boundary)
+    return sorted(boundaries)
 
 
 def _normalize_formats(formats: List[str]) -> List[str]:

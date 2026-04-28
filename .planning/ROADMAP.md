@@ -12,11 +12,12 @@
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Score-Style Export Header And Layout** - export를 단순 이미지 묶음이 아니라 문서형 악보 출력으로 바꾼다
+- [x] **Phase 1: Score-Style Export Header And Layout** - export를 단순 이미지 묶음이 아니라 문서형 악보 출력으로 바꾼다
 - [ ] **Phase 2: Capture Truth Alignment And Diagnostics** - 자동 캡쳐 결과를 더 정확하고 설명 가능하게 만든다
 - [ ] **Phase 3: Review Confidence Workspace** - review 단계에서 잘못 잡힌 페이지를 빠르고 자신 있게 걸러내게 만든다
 - [ ] **Phase 4: Guided Workflow And Job Resilience** - source부터 export까지의 기본 흐름을 더 명확하고 안정적으로 만든다
 - [ ] **Phase 5: Packaged Release Hardening** - 개발환경 의존 없이 설치 가능한 릴리즈 품질을 마감한다
+- [ ] **Phase 6: Reference-backed Anti-AI Renderer-v2 Visual Language Redesign** - renderer-v2를 task-first score capture desktop tool처럼 다시 읽히게 만든다
 
 ## Phase Details
 
@@ -102,12 +103,30 @@ Plans:
 - [ ] 05-01: Tighten packaged runtime contract, build profiles, and installer expectations
 - [ ] 05-02: Add release-grade verification for renderer-v2 and packaged source-to-export smoke paths
 
+### Phase 6: Reference-backed Anti-AI Renderer-v2 Visual Language Redesign
+**Goal**: renderer-v2를 chrome-first monotone workbench에서 벗어나게 하고, reference-backed task-first score capture desktop tool로 재정의한다.
+**Depends on**: Phase 5
+**Requirements**: REL-02, REL-03, SRC-01, SRC-02, CAP-01, REV-01, REV-02
+**UI hint**: yes
+**Success Criteria** (what must be TRUE):
+  1. Source, ROI, Export, Review 각 화면은 shell chrome보다 현재 작업면이 먼저 읽힌다.
+  2. top bar, process rail, context lane, status bar는 generic tool chrome이 아니라 보조 구조로 동작한다.
+  3. renderer-v2의 공용 color/type/copy tone은 monotone amber workbench가 아니라 calm한 score capture desktop tool처럼 읽힌다.
+  4. anti-AI visual drift를 막는 automated checks와 manual reference-fit 검증 기준이 추가된다.
+**Plans**: 4/4 plans executed
+
+Plans:
+- [x] 06-01: Reset shared visual language tokens, typography tone, and task-first copy baseline
+- [x] 06-02: Rebalance shell hierarchy across top bar, process rail, context lane, and status bar
+- [x] 06-03: Refocus Source, ROI, Export, and Review around dominant task surfaces
+- [x] 06-04: Harden anti-AI regression coverage and manual reference-fit verification
 ## Progress
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Score-Style Export Header And Layout | 0/3 | Not started | - |
+| 1. Score-Style Export Header And Layout | 3/3 | Complete | 2026-04-19 |
 | 2. Capture Truth Alignment And Diagnostics | 0/3 | Not started | - |
 | 3. Review Confidence Workspace | 0/3 | Not started | - |
 | 4. Guided Workflow And Job Resilience | 0/3 | Not started | - |
 | 5. Packaged Release Hardening | 0/2 | Not started | - |
+| 6. Reference-backed Anti-AI Renderer-v2 Visual Language Redesign | 4/4 | Needs Review | - |

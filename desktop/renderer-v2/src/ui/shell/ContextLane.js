@@ -2,11 +2,11 @@ import { escapeAttr, escapeHtml } from "../../lib/html.js";
 import { normalizeAssetPath } from "../../lib/paths.js";
 import { t } from "../../lib/i18n.js";
 
-const SOURCE_SUMMARY = "Source summary";
-const INGEST_STATUS = "Source status";
-const INSPECTION_VIEW = "Preview";
-const OUTPUT_SUMMARY = "Output summary";
-const NEXT_ACTION = "Next step";
+const SOURCE_SUMMARY = "Source facts";
+const INGEST_STATUS = "Ready to load";
+const INSPECTION_VIEW = "Selected result";
+const OUTPUT_SUMMARY = "Review summary";
+const NEXT_ACTION = "Next action";
 
 function renderSourceLane(state) {
   const locale = state.ui.locale || "ko";

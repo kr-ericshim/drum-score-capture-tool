@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 const routes = await import("../renderer-v2/src/app/routes.js");
 const selectors = await import("../renderer-v2/src/app/session/selectors.js");
+const shell = await import("../renderer-v2/src/ui/shell/ContextLane.js");
 
 test("export remains locked until source and applied roi are both ready", () => {
   const state = selectors.createInitialSessionState();
@@ -42,4 +43,14 @@ test("review remains locked until generated pages exist", () => {
   state.review.pages = [{ id: "1", title: "페이지 1" }];
 
   assert.equal(routes.canOpenStep(state, "review"), true);
+});
+
+test("roi and export keep the context lane empty until a step needs a true inspector", () => {
+  const state = selectors.createInitialSessionState();
+
+  state.ui.activeStep = "roi";
+  assert.equal(shell.renderContextLane(state), "");
+
+  state.ui.activeStep = "export";
+  assert.equal(shell.renderContextLane(state), "");
 });

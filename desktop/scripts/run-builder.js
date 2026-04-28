@@ -21,6 +21,15 @@ if (!SUPPORTED_BUILD_PROFILES.has(requestedProfile)) {
   process.exit(1);
 }
 
+function logBuildArtifactContract(currentAction) {
+  if (currentAction === "pack") {
+    console.log("[run-builder] pack validates the unpacked packaged app only.");
+    console.log("[run-builder] pack does not generate installers or latest*.yml metadata; use dist when release artifacts are required.");
+    return;
+  }
+  console.log("[run-builder] dist generates installer artifacts and release metadata.");
+}
+
 const localBuilder = process.platform === "win32"
   ? path.join(__dirname, "..", "node_modules", ".bin", "electron-builder.cmd")
   : path.join(__dirname, "..", "node_modules", ".bin", "electron-builder");
@@ -124,6 +133,7 @@ function ensureFrozenBackendRuntime() {
 
 stageRuntimeFfmpeg();
 ensureFrozenBackendRuntime();
+logBuildArtifactContract(action);
 
 const result = spawnSync(command, args, {
   cwd: path.join(__dirname, ".."),

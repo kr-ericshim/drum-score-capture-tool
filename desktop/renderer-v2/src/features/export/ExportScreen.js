@@ -4,7 +4,12 @@ import { t } from "../../lib/i18n.js";
 import { normalizeAssetPath } from "../../lib/paths.js";
 
 function checked(formats, value) {
-  return formats.includes(value) ? "checked" : "";
+  return Array.isArray(formats) && formats.includes(value) ? "checked" : "";
+}
+
+function clampPercent(progress = 0) {
+  const value = Math.round(Number(progress || 0) * 100);
+  return Math.max(0, Math.min(100, value));
 }
 
 function buildProfileRows(state) {
@@ -33,13 +38,15 @@ function rectToBounds(points) {
 export function buildExportScreenModel(state) {
   const locale = state.ui.locale || "en";
   const running = state.exportConfig.runStatus === "running";
-  const progress = Math.round((Number(state.exportConfig.progress || 0)) * 100);
+  const formats = Array.isArray(state.exportConfig.formats) ? state.exportConfig.formats : [];
+  const progress = clampPercent(state.exportConfig.progress);
   const fileName = state.source.displayName || t("export.fileNameEmpty", { locale });
-  const roiSummary = state.roi.appliedRect ? t("export.roiReady", { locale }) : t("export.roiPending", { locale });
-  const hasFormats = Array.isArray(state.exportConfig.formats) && state.exportConfig.formats.length > 0;
-  const pdfSelected = isPdfSelected(state.exportConfig.formats);
-  const formatsLabel = hasFormats ? state.exportConfig.formats.join(", ").toUpperCase() : t("export.formatsRequired", { locale });
-  const canRun = Boolean(state.source.filePath) && Boolean(state.roi.appliedRect) && hasFormats && !running;
+  const hasValidRoi = isRectValid(state.roi.appliedRect);
+  const roiSummary = hasValidRoi ? t("export.roiReady", { locale }) : t("export.roiPending", { locale });
+  const hasFormats = formats.length > 0;
+  const pdfSelected = isPdfSelected(formats);
+  const formatsLabel = hasFormats ? formats.join(", ").toUpperCase() : t("export.formatsRequired", { locale });
+  const canRun = Boolean(state.source.filePath) && hasValidRoi && hasFormats && !running;
   const previewSource = state.roi.previewImage ? normalizeAssetPath(state.roi.previewImage) : "";
   const cropBounds = rectToBounds(state.roi.appliedRect);
   const sourceWidth = Number(state.source.metadata?.width || state.roi.imageWidth || 0);
@@ -63,6 +70,7 @@ export function buildExportScreenModel(state) {
     running,
     locale,
     hasFormats,
+    formats,
     canRun,
     progress,
     fileName,
@@ -98,11 +106,14 @@ export function buildExportScreenModel(state) {
       performerPlaceholder: t("export.metadata.placeholder.performer", { locale }),
       memoPlaceholder: t("export.metadata.placeholder.memo", { locale }),
       modalTitle: t("export.metadata.title", { locale }),
-      confirmLabel: t("export.metadata.confirm", { locale }),
+      confirmLabel: running ? t("export.metadata.confirmBusy", { locale }) : t("export.metadata.confirm", { locale }),
       closeLabel: t("export.metadata.close", { locale }),
+      pendingText: running ? t("export.metadata.pending", { locale }) : "",
       discardPrompt: t("export.metadata.discardPrompt", { locale }),
       discardConfirm: t("export.metadata.discardConfirm", { locale }),
       discardCancel: t("export.metadata.discardCancel", { locale }),
+      controlsDisabled: running,
+      submitError: metadataModal.isOpen ? String(state.exportConfig.error || "") : "",
       validationSummary:
         metadataModal.validation?.title || metadataModal.validation?.bpm
           ? t("export.metadata.validation.summary", { locale })
@@ -126,13 +137,14 @@ export function buildExportScreenModel(state) {
 
 export function renderExportScreen(state) {
   const model = buildExportScreenModel(state);
+  const formatInputsDisabled = model.running || model.metadata.isOpen;
   const safeFileNameAttr = escapeAttr(model.fileName);
   const safeDestinationLabel = escapeHtml(model.destinationLabel);
   const safeDestinationValue = escapeHtml(model.destinationValue);
   const safeStatusMessage = escapeHtml(model.statusMessage);
   const safePreviewCaption = escapeHtml(model.previewCaption);
   const safePreviewSource = escapeAttr(model.previewSource);
-  const safeError = state.exportConfig.error ? escapeHtml(state.exportConfig.error) : "";
+  const safeError = state.exportConfig.error && !model.metadata.isOpen ? escapeHtml(state.exportConfig.error) : "";
   const safeMetadataHelper = escapeHtml(model.metadata.helperText);
   const safeMetadataTitle = escapeHtml(model.metadata.modalTitle);
   const safeMetadataTitleValue = escapeAttr(model.metadata.draft.title);
@@ -141,6 +153,7 @@ export function renderExportScreen(state) {
   const safeMetadataDateValue = escapeAttr(model.metadata.draft.date);
   const safeMetadataMemoValue = escapeHtml(model.metadata.draft.memo);
   const safeValidationSummary = escapeHtml(model.metadata.validationSummary);
+  const safeMetadataSubmitError = escapeHtml(model.metadata.submitError);
   const safeTitleError = escapeHtml(model.metadata.validation.title);
   const safeBpmError = escapeHtml(model.metadata.validation.bpm);
   const safeDiscardPrompt = escapeHtml(model.metadata.discardPrompt);
@@ -164,12 +177,12 @@ export function renderExportScreen(state) {
               <p>${t("export.outputFormat", { locale: model.locale })}</p>
             </div>
             <div class="segmented-row">
-              <label class="segment ${checked(state.exportConfig.formats, "pdf") ? "is-active" : ""}">
-                <input data-action="toggle-format" data-format="pdf" type="checkbox" ${checked(state.exportConfig.formats, "pdf")} />
+              <label class="segment ${checked(model.formats, "pdf") ? "is-active" : ""}">
+                <input data-action="toggle-format" data-format="pdf" type="checkbox" ${checked(model.formats, "pdf")} ${formatInputsDisabled ? "disabled" : ""} />
                 <span>${t("export.pdfDocument", { locale: model.locale })}</span>
               </label>
-              <label class="segment ${checked(state.exportConfig.formats, "png") ? "is-active" : ""}">
-                <input data-action="toggle-format" data-format="png" type="checkbox" ${checked(state.exportConfig.formats, "png")} />
+              <label class="segment ${checked(model.formats, "png") ? "is-active" : ""}">
+                <input data-action="toggle-format" data-format="png" type="checkbox" ${checked(model.formats, "png")} ${formatInputsDisabled ? "disabled" : ""} />
                 <span>${t("export.pngMatrix", { locale: model.locale })}</span>
               </label>
             </div>
@@ -203,6 +216,7 @@ export function renderExportScreen(state) {
         </div>
         <section class="export-preview-workbench" data-stitch-region="export-preview">
           <div class="panel-heading export-preview-heading">
+            <span class="panel-kicker">${t("export.previewKicker", { locale: model.locale })}</span>
             <h2>${t("export.previewTitle", { locale: model.locale })}</h2>
             <p>${safePreviewCaption}</p>
           </div>
@@ -233,6 +247,8 @@ export function renderExportScreen(state) {
                 <p class="export-metadata-helper">${safeMetadataHelper}</p>
               </div>
               <div class="export-metadata-rule" aria-hidden="true"></div>
+              ${model.metadata.pendingText ? `<p class="export-metadata-pending" role="status">${escapeHtml(model.metadata.pendingText)}</p>` : ""}
+              ${model.metadata.submitError ? `<p class="inline-error export-metadata-submit-error" role="alert">${safeMetadataSubmitError}</p>` : ""}
               ${model.metadata.validationSummary ? `<p class="inline-error export-metadata-error" role="alert">${safeValidationSummary}</p>` : ""}
               <div class="export-metadata-grid">
                 <div class="export-metadata-row">
@@ -303,14 +319,14 @@ export function renderExportScreen(state) {
                 <div class="export-metadata-discard" role="alert">
                   <p>${safeDiscardPrompt}</p>
                   <div class="export-metadata-discard-actions">
-                    <button class="button button-secondary" data-action="discard-export-metadata">${escapeHtml(model.metadata.discardConfirm)}</button>
-                    <button class="button button-secondary" data-action="continue-export-metadata">${escapeHtml(model.metadata.discardCancel)}</button>
+                    <button class="button button-secondary" data-action="discard-export-metadata" ${model.metadata.controlsDisabled ? "disabled" : ""}>${escapeHtml(model.metadata.discardConfirm)}</button>
+                    <button class="button button-secondary" data-action="continue-export-metadata" ${model.metadata.controlsDisabled ? "disabled" : ""}>${escapeHtml(model.metadata.discardCancel)}</button>
                   </div>
                 </div>
               ` : ""}
               <div class="export-metadata-actions">
-                <button class="button button-primary" data-action="confirm-export-metadata">${model.metadata.confirmLabel}</button>
-                <button class="button button-secondary" data-action="close-export-metadata">${model.metadata.closeLabel}</button>
+                <button class="button button-primary" data-action="confirm-export-metadata" ${model.metadata.controlsDisabled ? "disabled" : ""}>${model.metadata.confirmLabel}</button>
+                <button class="button button-secondary" data-action="close-export-metadata" ${model.metadata.controlsDisabled ? "disabled" : ""}>${model.metadata.closeLabel}</button>
               </div>
             </section>
           </div>

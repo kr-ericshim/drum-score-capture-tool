@@ -14,11 +14,12 @@ export function isYoutubePrepareQualityIssue(detail) {
 
 export function youtubePrepareError(errorOrDetail, locale = "en") {
   const detail = youtubePrepareDetail(errorOrDetail);
+  const isKorean = String(locale || "").trim().toLowerCase().startsWith("ko");
   if (!detail) {
-    return locale === "ko" ? "유튜브 영상을 준비하지 못했습니다." : "Could not prepare the YouTube video.";
+    return isKorean ? "유튜브 영상을 준비하지 못했습니다." : "Could not prepare the YouTube video.";
   }
   if (isYoutubePrepareQualityIssue(detail)) {
-    return locale === "ko"
+    return isKorean
       ? `저화질 영상으로 감지되어 준비를 중단했습니다: ${detail}`
       : `YouTube preparation stopped because only a low-resolution video was available: ${detail}`;
   }

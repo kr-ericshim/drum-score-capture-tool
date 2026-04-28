@@ -2,7 +2,6 @@ import { escapeAttr, escapeHtml } from "../../lib/html.js";
 import { t } from "../../lib/i18n.js";
 
 const BRAND_TITLE = "Drum Sheet Capture";
-const BRAND_SUBTITLE = "Local score capture workflow";
 
 function renderArchiveButton(locale) {
   return `<button class="topbar-archive" type="button" data-action="open-archive">${escapeHtml(t("topbar.archive", { locale }))}</button>`;
@@ -26,7 +25,6 @@ export function renderTopBar(state, summary) {
   const stepLabel = escapeHtml(t(`topbar.step.${state.ui.activeStep}`, { locale }));
   const sourceLabel = escapeHtml(summary.sourceLabel);
   const brandTitle = escapeHtml(t("topbar.brandTitle", { locale }) || BRAND_TITLE);
-  const brandSubtitle = escapeHtml(t("topbar.brandSubtitle", { locale }) || BRAND_SUBTITLE);
   const engineLabel = escapeHtml(backendReady ? t("topbar.engine.ready", { locale }) : t("topbar.engine.waiting", { locale }));
 
   if (state.ui.activeStep === "roi") {
@@ -50,7 +48,6 @@ export function renderTopBar(state, summary) {
       <span class="topbar-mark" aria-hidden="true"></span>
       <div class="topbar-copy">
         <strong>${brandTitle}</strong>
-        <span>${brandSubtitle}</span>
       </div>
     </div>
     <div class="topbar-center">

@@ -78,9 +78,13 @@ assert(
   "renderer-v2 top bar brand identity is missing.",
 );
 assert(!topBar.includes("Core Workflow v2"), "renderer-v2 still exposes the old generic shell identity.");
-assert(processRail.includes("PIPELINE") || processRail.includes('t("rail.pipeline"'), "renderer-v2 process rail Stitch heading is missing.");
+assert(!topBar.includes("Local score capture workflow"), "renderer-v2 top bar still hardcodes the old subtitle framing.");
+assert(processRail.includes('t("rail.pipeline"') || processRail.includes('const PIPELINE = "Steps"'), "renderer-v2 process rail step heading is missing.");
 assert(processRail.includes('data-action="open-step"'), "renderer-v2 process rail step action is missing.");
-assert(contextLane.includes("SOURCE SUMMARY") || contextLane.includes('t("lane.sourceSummary"'), "renderer-v2 context lane source summary is missing.");
+assert(contextLane.includes('t("lane.sourceSummary"') || contextLane.includes('const SOURCE_SUMMARY = "Source facts"'), "renderer-v2 context lane source summary is missing.");
+assert(!processRail.includes("Workflow"), "renderer-v2 process rail still hardcodes generic workflow copy.");
+assert(!processRail.includes("System status"), "renderer-v2 process rail still hardcodes generic system-status copy.");
+assert(!contextLane.includes("Inspection view"), "renderer-v2 context lane still hardcodes generic inspection-view copy.");
 assert(!contextLane.includes("Target Framerate"), "renderer-v2 still exposes fabricated ingest metadata.");
 
 assert(sourceScreen.includes('data-screen="source"'), "source screen marker is missing.");

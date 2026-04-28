@@ -3,8 +3,8 @@ const fs = require("fs");
 const path = require("path");
 
 const projectRoot = path.resolve(__dirname, "..");
-const indexHtml = fs.readFileSync(path.join(projectRoot, "renderer", "index.html"), "utf8");
-const i18nModule = fs.readFileSync(path.join(projectRoot, "renderer", "modules", "i18n.js"), "utf8");
+const indexHtml = fs.readFileSync(path.join(projectRoot, "renderer-v2", "index.html"), "utf8");
+const i18nModule = fs.readFileSync(path.join(projectRoot, "renderer-v2", "src", "lib", "i18n.js"), "utf8");
 
 function assertMatch(label, source, pattern) {
   if (!pattern.test(source)) {
@@ -31,17 +31,17 @@ assertMatch(
 assertMatch(
   "i18n storage precedence",
   i18nModule,
-  /const stored = window\.localStorage\.getItem\(LOCALE_STORAGE_KEY\);[\s\S]*if \(stored\) \{[\s\S]*return normalizeLocale\(stored\);/,
+  /const savedLocale = storageValue \?\? globalThis\?\.localStorage\?\.getItem\?\.\(LOCALE_STORAGE_KEY\);[\s\S]*if \(savedLocale\) \{[\s\S]*return normalizeLocale\(savedLocale\);/,
 );
 assertMatch(
   "i18n ko normalization",
   i18nModule,
-  /if \(value\.startsWith\("ko"\)\) \{[\s\S]*return "ko";[\s\S]*\}[\s\S]*return "en";/,
+  /const normalized = String\(locale \|\| ""\)\.trim\(\)\.toLowerCase\(\);[\s\S]*return normalized\.startsWith\("ko"\) \? "ko" : "en";/,
 );
 assertMatch(
   "i18n navigator fallback",
   i18nModule,
-  /return normalizeLocale\(navigator\.language \|\| navigator\.userLanguage \|\| "en"\);/,
+  /const browserLocale = navigatorLanguage \?\? globalThis\?\.navigator\?\.language;[\s\S]*return normalizeLocale\(browserLocale\);/,
 );
 
-console.log("[check-locale-init] locale bootstrap and renderer policy are aligned");
+console.log("[check-locale-init] renderer-v2 locale bootstrap and translation policy are aligned");

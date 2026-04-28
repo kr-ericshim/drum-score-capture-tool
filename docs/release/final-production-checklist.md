@@ -17,11 +17,13 @@ Use this checklist immediately before cutting a public release for Drum Sheet Ca
 - [ ] `backend/.venv/bin/pip install -r backend/requirements-build.txt`
 - [ ] `cd desktop && npm ci`
 - [ ] `cd desktop && node --test tests/*.test.mjs`
+- [ ] `cd desktop && npm run test:packaged-release`
 - [ ] `cd desktop && npm run check:renderer-syntax`
 - [ ] `cd desktop && npm run check:locale-init`
-- [ ] `cd desktop && npm run pack:release`
-- [ ] If GitHub release assets will be generated locally, also run `cd desktop && npm run dist:release`
-- [ ] Confirm packaged artifact validation passes at the end of the build logs, including frozen backend runtime detection.
+- [ ] Optional preflight only: `cd desktop && npm run pack:release`
+- [ ] Required for any public installer build: `cd desktop && npm run dist:release`
+- [ ] Treat `pack:release` as unpacked-app validation only; it does not prove DMG/installer generation or `latest*.yml` output.
+- [ ] Confirm packaged artifact validation passes at the end of the build logs, including frozen backend runtime plus bundled `ffmpeg`/`ffprobe` detection.
 
 ## Manual Smoke Test
 
@@ -45,10 +47,11 @@ Use this checklist immediately before cutting a public release for Drum Sheet Ca
 ## Packaging Review
 
 - [ ] Artifact names contain the intended version.
-- [ ] macOS artifact exists in `dist/` as a DMG.
-- [ ] Windows artifact exists in `dist/` as an installer.
-- [ ] `dist/latest-mac.yml` or `dist/latest.yml` exists when using `dist:release`.
-- [ ] Packaged app includes `backend/runtime/drumsheet-backend/...` and does not include a packaged `.venv`.
+- [ ] If `pack:release` was used as preflight, only expect unpacked packaged-app output (for example `.app` or `win-unpacked`).
+- [ ] macOS installer artifact exists in `dist/` as a DMG after `dist:release`.
+- [ ] Windows installer artifact exists in `dist/` as an installer after `dist:release`.
+- [ ] `dist/latest-mac.yml` or `dist/latest.yml` exists after `dist:release` when release metadata is expected.
+- [ ] Packaged app includes `backend/runtime/drumsheet-backend/...` plus bundled `backend/bin/ffmpeg` and `backend/bin/ffprobe`, and does not include a packaged `.venv`.
 - [ ] Packaged backend version matches source version.
 - [ ] Packaged backend still includes the expected YouTube download strategy and ffmpeg handoff checks.
 

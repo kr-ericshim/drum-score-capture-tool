@@ -2,7 +2,7 @@
   position: relative;
   min-height: 100vh;
   display: grid;
-  grid-template-rows: 48px minmax(0, 1fr) 30px;
+  grid-template-rows: 56px minmax(0, 1fr) 26px;
 }
 
 .shell-modal-layer {
@@ -17,7 +17,7 @@
 
 .workspace-shell {
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr) 292px;
+  grid-template-columns: 204px minmax(0, 1fr) 248px;
   min-height: 0;
   overflow: hidden;
 }
@@ -32,7 +32,7 @@
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--line-iron);
-  background: var(--bg-shell);
+  background: var(--bg-toolbar);
   overflow-y: auto;
 }
 
@@ -42,11 +42,12 @@
   position: relative;
   min-width: 0;
   overflow: hidden;
+  background: var(--bg-pane);
 }
 
 .context-lane {
   border-left: 1px solid var(--line-iron);
-  background: var(--bg-shell-alt);
+  background: var(--bg-toolbar);
   overflow-x: hidden;
   overflow-y: auto;
 }
@@ -56,11 +57,11 @@
 }
 
 .app-shell[data-step="export"] .workspace-shell {
-  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-columns: 204px minmax(0, 1fr);
 }
 
 .app-shell[data-step="roi"] .workspace-shell {
-  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-columns: 204px minmax(0, 1fr);
 }
 
 .screen {
@@ -81,15 +82,16 @@
   justify-content: space-between;
   align-items: end;
   gap: 16px;
-  padding: 22px 24px 16px;
+  padding: 14px 20px 12px;
   border-bottom: 1px solid var(--line-soft);
-  background: var(--surface-shell-overlay);
+  background: var(--bg-toolbar);
 }
 
 .screen-headline h1 {
+  display: inline-block;
   margin: 0;
-  font-size: 24px;
-  letter-spacing: -0.03em;
+  font-size: 21px;
+  letter-spacing: 0;
 }
 
 .screen-headline p {
@@ -106,9 +108,9 @@
 
 .source-workbench {
   display: grid;
-  grid-template-rows: minmax(280px, 1fr) minmax(240px, 1fr);
-  gap: 16px;
-  padding: 14px 20px 20px;
+  grid-template-rows: minmax(260px, auto) minmax(180px, 1fr);
+  gap: 0;
+  padding: 0;
   min-height: 0;
   overflow-y: auto;
 }
@@ -117,21 +119,21 @@
   display: grid;
   grid-template-rows: 56px auto minmax(0, 1fr) auto;
   min-height: 100%;
-  background: var(--bg-stage-strong);
+  background: var(--bg-stage);
 }
 
 .export-workbench {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
-  gap: 24px;
-  padding: 22px 24px 24px;
+  grid-template-columns: minmax(268px, 340px) minmax(0, 1fr);
+  gap: 0;
+  padding: 0;
   min-height: 0;
   overflow-y: auto;
 }
 
 .review-grid-shell {
-  padding: 20px 24px 16px;
+  padding: 18px 20px 16px;
   min-height: 0;
   overflow-y: auto;
 }
@@ -175,21 +177,21 @@
 
 @media (max-width: 1320px) {
   .workspace-shell {
-    grid-template-columns: 212px minmax(0, 1fr) 248px;
+    grid-template-columns: 190px minmax(0, 1fr) 228px;
   }
 
   .app-shell[data-step="export"] .workspace-shell {
-    grid-template-columns: 212px minmax(0, 1fr);
+    grid-template-columns: 190px minmax(0, 1fr);
   }
 
   .app-shell[data-step="roi"] .workspace-shell {
-    grid-template-columns: 212px minmax(0, 1fr);
+    grid-template-columns: 190px minmax(0, 1fr);
   }
 }
 
 @media (max-width: 1180px) {
   .workspace-shell {
-    grid-template-columns: 196px minmax(0, 1fr);
+    grid-template-columns: 184px minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) minmax(220px, auto);
   }
 
@@ -211,23 +213,27 @@
   }
 
   .app-shell[data-step="export"] .workspace-shell {
-    grid-template-columns: 196px minmax(0, 1fr);
+    grid-template-columns: 184px minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
   }
 
   .app-shell[data-step="roi"] .workspace-shell {
-    grid-template-columns: 196px minmax(0, 1fr);
+    grid-template-columns: 184px minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
   }
 }
 
 @media (max-width: 1100px) {
   .screen-headline,
-  .source-workbench,
-  .export-workbench,
   .review-grid-shell {
     padding-left: 18px;
     padding-right: 18px;
+  }
+
+  .source-workbench,
+  .export-workbench {
+    padding-left: 0;
+    padding-right: 0;
   }
 
   .export-workbench {
@@ -319,13 +325,6 @@
 }
 
 @media (max-width: 720px) {
-  .source-workbench,
-  .review-grid-shell,
-  .export-workbench {
-    padding-left: 14px;
-    padding-right: 14px;
-  }
-
   .source-workbench {
     grid-template-rows: auto auto;
   }

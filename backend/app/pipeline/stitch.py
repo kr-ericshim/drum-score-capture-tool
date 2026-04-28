@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections import deque
 from pathlib import Path
 from typing import Deque, List, Optional, Tuple
@@ -8,7 +9,7 @@ import cv2
 import numpy as np
 
 from app.pipeline.layout_profiles import LAYOUT_BOTTOM_BAR, LAYOUT_FULL_SCROLL, LAYOUT_PAGE_TURN, resolve_layout_hint
-from app.pipeline.sheet_finalize import finalize_sheet_sequence
+from app.pipeline.sheet_finalize import _estimate_vertical_overlap, _merge_vertical_sheet
 from app.schemas import StitchOptions
 
 
@@ -103,19 +104,25 @@ def stitch_pages(
 
     grouped_frames.append(current_group)
     for frame_group in grouped_frames:
-        merged_image = _merge_scroll_group_frames(frame_group)
+        merged_image, split_boundaries = _merge_scroll_group_frames_with_boundaries(frame_group)
         if merged_image is None:
             continue
         out_path = workspace / f"page_{len(merged_paths):04d}.png"
         cv2.imwrite(str(out_path), merged_image)
+        _write_split_boundary_metadata(out_path, split_boundaries=split_boundaries, height=int(merged_image.shape[0]))
         merged_paths.append(out_path)
     logger(f"stitched pages generated: {len(merged_paths)}")
     return merged_paths
 
 
 def _merge_scroll_group_frames(frame_group: List[Path]) -> Optional[np.ndarray]:
+    merged, _split_boundaries = _merge_scroll_group_frames_with_boundaries(frame_group)
+    return merged
+
+
+def _merge_scroll_group_frames_with_boundaries(frame_group: List[Path]) -> Tuple[Optional[np.ndarray], List[int]]:
     if not frame_group:
-        return None
+        return None, []
 
     images: List[np.ndarray] = []
     for path in frame_group:
@@ -124,18 +131,34 @@ def _merge_scroll_group_frames(frame_group: List[Path]) -> Optional[np.ndarray]:
             images.append(image)
 
     if not images:
-        return None
+        return None, []
     if len(images) == 1:
-        return images[0]
+        return images[0], []
 
-    _pages, merged, _used_count = finalize_sheet_sequence(
-        images,
-        normalize_inputs=False,
-        dedupe_near_same=False,
-    )
+    split_boundaries: List[int] = []
+    merged = images[0]
+    for image in images[1:]:
+        overlap = _estimate_vertical_overlap(merged, image)
+        if overlap <= 0:
+            split_boundaries.append(int(merged.shape[0]))
+        else:
+            split_boundaries.append(max(1, int(merged.shape[0]) - int(overlap)))
+        merged = _merge_vertical_sheet(merged, image)
+
     if merged is None or merged.size == 0:
-        return images[0]
-    return merged
+        return images[0], []
+    return merged, split_boundaries
+
+
+def _write_split_boundary_metadata(page_path: Path, *, split_boundaries: List[int], height: int) -> None:
+    boundaries = sorted({int(boundary) for boundary in split_boundaries if 0 < int(boundary) < height})
+    if not boundaries:
+        return
+    metadata_path = page_path.with_suffix(".seams.json")
+    metadata_path.write_text(
+        json.dumps({"protected_split_boundaries": boundaries}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
 def _filter_redundant_frames(

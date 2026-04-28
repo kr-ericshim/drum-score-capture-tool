@@ -10,7 +10,7 @@ const STEP_ICONS = {
   review: "04",
 };
 
-const PIPELINE = "Workflow";
+const PIPELINE = "Steps";
 
 function renderRailFooter(state) {
   const locale = state.ui.locale || "en";

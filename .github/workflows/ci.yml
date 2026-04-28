@@ -42,23 +42,9 @@ jobs:
             echo "Skipping ROI health tests because backend/tests/test_roi_health.py is not present on this branch."
           fi
 
-      - name: Check renderer syntax
+      - name: Verify renderer-v2
         working-directory: desktop
-        run: |
-          if [ -f renderer/modules/i18n.js ]; then
-            npm run check:renderer-syntax
-          else
-            echo "Skipping renderer syntax check because renderer/modules/i18n.js is not present on this branch."
-          fi
-
-      - name: Check locale bootstrap policy
-        working-directory: desktop
-        run: |
-          if [ -f renderer/modules/i18n.js ] && [ -f scripts/check-locale-init.js ]; then
-            npm run check:locale-init
-          else
-            echo "Skipping locale bootstrap policy check because locale bootstrap files are not present on this branch."
-          fi
+        run: npm run verify:renderer-v2
 
       - name: Verify release docs exist
         run: |

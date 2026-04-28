@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Literal, Optional, Tuple
+from typing import List, Literal, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
@@ -16,12 +16,18 @@ def finalize_sheet_pages(
     page_ratio: float = PORTRAIT_PAGE_RATIO,
     page_fill_mode: PageFillMode = "performance",
     normalize_tone: bool = True,
+    protected_split_boundaries: Optional[Sequence[int]] = None,
 ) -> List[np.ndarray]:
     if image is None or image.size == 0:
         return []
 
     prepared = _normalize_score_tone(image) if normalize_tone else image.copy()
-    pages = _split_long_page(prepared, page_ratio=page_ratio, page_fill_mode=page_fill_mode)
+    pages = _split_long_page(
+        prepared,
+        page_ratio=page_ratio,
+        page_fill_mode=page_fill_mode,
+        protected_split_boundaries=protected_split_boundaries,
+    )
     if not pages:
         pages = [prepared]
     return _frame_pages_as_printed_set(pages, page_ratio=page_ratio)
@@ -235,15 +241,25 @@ def _crop_to_content(image) -> np.ndarray:
     return image[y0:y1, x0:x1].copy()
 
 
-def _split_long_page(image, *, page_ratio: float, page_fill_mode: PageFillMode = "performance") -> List[np.ndarray]:
+def _split_long_page(
+    image,
+    *,
+    page_ratio: float,
+    page_fill_mode: PageFillMode = "performance",
+    protected_split_boundaries: Optional[Sequence[int]] = None,
+) -> List[np.ndarray]:
     h, w = image.shape[:2]
     if h <= 0 or w <= 0:
         return []
 
     mode: PageFillMode = "performance" if page_fill_mode == "performance" else "balanced"
 
-    target_h = int(np.clip(round(w / max(0.35, page_ratio)), 900, 2600))
     min_single_page_scale = 0.94 if mode == "performance" else 0.97
+    target_h = _resolve_split_target_height(
+        width=w,
+        page_ratio=page_ratio,
+        min_single_page_scale=min_single_page_scale,
+    )
     if _estimate_single_page_frame_scale(height=h, width=w, page_ratio=page_ratio) >= min_single_page_scale:
         return [image]
 
@@ -257,6 +273,21 @@ def _split_long_page(image, *, page_ratio: float, page_fill_mode: PageFillMode =
         7,
     )
     row_density = (inv > 0).sum(axis=1).astype(np.float32) / float(max(1, w))
+
+    protected_boundaries = _normalize_protected_split_boundaries(
+        protected_split_boundaries,
+        height=h,
+    )
+    if protected_boundaries:
+        return _slice_by_whitespace(
+            image,
+            row_density=row_density,
+            target_h=target_h,
+            page_fill_mode=mode,
+            page_ratio=page_ratio,
+            protected_split_boundaries=protected_boundaries,
+        )
+
     threshold = float(np.clip(np.percentile(row_density, 72) * 0.34, 0.004, 0.03))
     active = row_density > threshold
     bands = _extract_active_bands(active, min_len=max(6, int(h * 0.004)))
@@ -368,6 +399,60 @@ def _split_long_page(image, *, page_ratio: float, page_fill_mode: PageFillMode =
     )
 
 
+def _resolve_split_target_height(
+    *,
+    width: int,
+    page_ratio: float,
+    min_single_page_scale: float,
+) -> int:
+    if width <= 0:
+        return 900
+
+    desired_height = max(900, int(round(width / max(0.35, page_ratio))))
+    if _estimate_single_page_frame_scale(
+        height=desired_height,
+        width=width,
+        page_ratio=page_ratio,
+    ) >= min_single_page_scale:
+        return desired_height
+
+    low = 900
+    high = desired_height
+    best = low
+    while low <= high:
+        mid = (low + high) // 2
+        scale = _estimate_single_page_frame_scale(
+            height=mid,
+            width=width,
+            page_ratio=page_ratio,
+        )
+        if scale >= min_single_page_scale:
+            best = mid
+            low = mid + 1
+        else:
+            high = mid - 1
+    return max(900, int(best))
+
+
+def _normalize_protected_split_boundaries(
+    boundaries: Optional[Sequence[int]],
+    *,
+    height: int,
+) -> List[int]:
+    if not boundaries or height <= 1:
+        return []
+
+    normalized: List[int] = []
+    for raw in boundaries:
+        try:
+            boundary = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if 0 < boundary < height and boundary not in normalized:
+            normalized.append(boundary)
+    return sorted(normalized)
+
+
 def _resolve_overlapping_ranges(
     ranges: List[Tuple[int, int]],
     *,
@@ -471,6 +556,7 @@ def _slice_by_whitespace(
     target_h: int,
     page_fill_mode: PageFillMode = "performance",
     page_ratio: Optional[float] = None,
+    protected_split_boundaries: Optional[Sequence[int]] = None,
 ) -> List[np.ndarray]:
     mode: PageFillMode = "performance" if page_fill_mode == "performance" else "balanced"
     h = image.shape[0]
@@ -500,6 +586,21 @@ def _slice_by_whitespace(
         search_lo = max(start + min_h, hard_end - back_window)
         search_mid = hard_end
         search_hi = min(h - 1, hard_end + forward_window)
+
+        protected_cut = _choose_protected_split_boundary(
+            protected_split_boundaries,
+            start=start,
+            hard_end=hard_end,
+            search_lo=search_lo,
+            search_hi=search_hi,
+            min_h=min_h,
+            total_h=h,
+        )
+        if protected_cut is not None:
+            cut = protected_cut
+            pages.append(image[start:cut].copy())
+            start = cut
+            continue
 
         cut = hard_end
         if search_mid > search_lo:
@@ -573,6 +674,35 @@ def _slice_by_whitespace(
     )
 
 
+def _choose_protected_split_boundary(
+    boundaries: Optional[Sequence[int]],
+    *,
+    start: int,
+    hard_end: int,
+    search_lo: int,
+    search_hi: int,
+    min_h: int,
+    total_h: int,
+) -> Optional[int]:
+    if not boundaries:
+        return None
+
+    lower = max(start + min_h, search_lo)
+    upper = min(total_h - 1, search_hi)
+    candidates = [
+        int(boundary)
+        for boundary in boundaries
+        if lower <= int(boundary) <= upper
+    ]
+    if not candidates:
+        return None
+
+    before_or_at_target = [boundary for boundary in candidates if boundary <= hard_end]
+    if before_or_at_target:
+        return max(before_or_at_target)
+    return min(candidates, key=lambda boundary: abs(boundary - hard_end))
+
+
 def _refine_cut_boundary(
     *,
     row_density: np.ndarray,
@@ -599,13 +729,21 @@ def _refine_cut_boundary(
     current_score = boundary_score(cut)
     # When the local boundary is still dense, search nearby rows for a clearer seam.
     # This avoids slicing through staff lines or lyrics even if a single row looks blank.
-    if current_score <= 0.0105:
+    clear_boundary_score = 0.0105
+    if current_score <= clear_boundary_score:
         return cut
 
     candidate_lo = max(start + min_h, search_lo)
     candidate_hi = min(total_h - 1, search_hi)
     if candidate_hi <= candidate_lo:
         return cut
+
+    clear_candidates: List[int] = []
+    for candidate in range(candidate_lo, candidate_hi + 1):
+        if boundary_score(candidate) <= clear_boundary_score:
+            clear_candidates.append(candidate)
+    if clear_candidates:
+        return int(min(clear_candidates, key=lambda candidate: abs(candidate - hard_end)))
 
     best_cut = cut
     best_score = current_score + (abs(cut - hard_end) * 0.00018)

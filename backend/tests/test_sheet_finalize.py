@@ -5,6 +5,7 @@ import numpy as np
 
 from app.pipeline.sheet_finalize import (
     _frame_pages_as_printed_set,
+    _refine_cut_boundary,
     _resolve_overlapping_ranges,
     _slice_by_whitespace,
     _split_long_page,
@@ -134,6 +135,45 @@ class TestSheetFinalizePagination(unittest.TestCase):
         self.assertGreaterEqual(len(pages), 2)
         self.assertLess(max(int(page.shape[0]) for page in pages), h)
 
+    def test_split_long_page_uses_print_ratio_for_high_resolution_width(self):
+        h, w = 6800, 2400
+        image = np.full((h, w, 3), 255, dtype=np.uint8)
+
+        for start in range(140, 6500, 460):
+            for offset in [0, 12, 24, 36, 48]:
+                y = start + offset
+                cv2.line(image, (90, y), (w - 90, y), (0, 0, 0), 2)
+            cv2.circle(image, (300, start + 18), 10, (0, 0, 0), -1)
+            cv2.circle(image, (1200, start + 30), 10, (0, 0, 0), -1)
+            cv2.circle(image, (2100, start + 42), 10, (0, 0, 0), -1)
+
+        pages = _split_long_page(image, page_ratio=1.0 / 1.4142, page_fill_mode="performance")
+
+        self.assertGreaterEqual(len(pages), 2)
+        self.assertGreaterEqual(int(pages[0].shape[0]), 3000)
+
+    def test_split_long_page_prefers_protected_capture_boundary(self):
+        h, w = 6800, 2400
+        image = np.full((h, w, 3), 255, dtype=np.uint8)
+
+        for start in range(140, 6500, 460):
+            for offset in [0, 12, 24, 36, 48]:
+                y = start + offset
+                cv2.line(image, (90, y), (w - 90, y), (0, 0, 0), 2)
+            cv2.circle(image, (300, start + 18), 10, (0, 0, 0), -1)
+            cv2.circle(image, (1200, start + 30), 10, (0, 0, 0), -1)
+            cv2.circle(image, (2100, start + 42), 10, (0, 0, 0), -1)
+
+        pages = _split_long_page(
+            image,
+            page_ratio=1.0 / 1.4142,
+            page_fill_mode="performance",
+            protected_split_boundaries=[3200],
+        )
+
+        self.assertGreaterEqual(len(pages), 2)
+        self.assertEqual(int(pages[0].shape[0]), 3200)
+
     def test_slice_by_whitespace_avoids_cutting_through_dense_boundary(self):
         h, w = 4300, 1800
         image = np.full((h, w, 3), 255, dtype=np.uint8)
@@ -154,6 +194,25 @@ class TestSheetFinalizePagination(unittest.TestCase):
 
         self.assertGreaterEqual(len(pages), 2)
         self.assertGreaterEqual(int(pages[0].shape[0]), 2045)
+
+    def test_refine_cut_boundary_prefers_clear_gap_over_internal_valley(self):
+        row_density = np.full(7000, 0.02, dtype=np.float32)
+        row_density[5170:5220] = 0.009
+        row_density[5423:5447] = 0.0245
+        row_density[5434:5437] = 0.001
+
+        cut = _refine_cut_boundary(
+            row_density=row_density,
+            cut=5435,
+            start=0,
+            hard_end=5431,
+            search_lo=4671,
+            search_hi=6951,
+            min_h=4018,
+        )
+
+        self.assertGreaterEqual(cut, 5170)
+        self.assertLessEqual(cut, 5220)
 
     def test_finalize_sheet_sequence_can_skip_near_same_dedupe(self):
         h, w = 900, 1800

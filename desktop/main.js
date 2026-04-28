@@ -4,6 +4,7 @@ const os = require("os");
 const crypto = require("crypto");
 const { app, BrowserWindow, clipboard, dialog, ipcMain, shell } = require("electron");
 const { spawn, spawnSync } = require("child_process");
+const { decidePackagedBackendLaunchMode } = require("./backend-launch-policy");
 const { resolveRendererIndexPath } = require("./renderer-entry");
 
 const BACKEND_PORT = Number(process.env.DRUMSHEET_PORT || 8000);
@@ -452,6 +453,7 @@ function runBackend() {
 
   const backendDir = resolveBackendDir();
   const runPy = path.join(backendDir, "run.py");
+  const backendSourceEntry = path.join(backendDir, "app", "main.py");
   const bundledBackendExecutable = resolveBundledBackendExecutable(backendDir);
   if (!bundledBackendExecutable && !fs.existsSync(runPy)) {
     throw new Error(`Cannot find backend entrypoint: ${runPy}`);
@@ -489,9 +491,48 @@ function runBackend() {
   let args = [];
   let shell = false;
   if (app.isPackaged && bundledBackendExecutable) {
-    command = bundledBackendExecutable;
-    args = [];
-    console.log(`[backend] frozen backend launcher -> ${command}`);
+    let packagedDecision = {
+      mode: "runtime",
+      reason: "runtime-current",
+      staleRuntime: false,
+      runtimeMtimeMs: 0,
+      sourceMtimeMs: 0,
+    };
+    let python = null;
+
+    try {
+      python = findPythonCommand(backendDir);
+    } catch (_) {
+      python = null;
+    }
+
+    packagedDecision = decidePackagedBackendLaunchMode({
+      runtimeExecutablePath: bundledBackendExecutable,
+      sourceEntryPath: backendSourceEntry,
+      pythonAvailable: Boolean(python),
+    });
+
+    if (packagedDecision.mode === "python" && python) {
+      command = python.command;
+      args = [...python.prefixArgs, runPy];
+      shell = process.platform === "win32";
+      console.warn(
+        `[backend] packaged frozen runtime is older than bundled source; falling back to python launcher ` +
+        `(runtime=${new Date(packagedDecision.runtimeMtimeMs).toISOString()}, source=${new Date(packagedDecision.sourceMtimeMs).toISOString()})`,
+      );
+      console.log(`[backend] python launcher: ${python.label} -> ${python.command} ${python.prefixArgs.join(" ")}`.trim());
+    } else {
+      if (packagedDecision.reason === "runtime-stale-no-python") {
+        console.warn(
+          `[backend] packaged frozen runtime is older than bundled source, but no Python fallback is available; ` +
+          `continuing with frozen backend (runtime=${new Date(packagedDecision.runtimeMtimeMs).toISOString()}, ` +
+          `source=${new Date(packagedDecision.sourceMtimeMs).toISOString()})`,
+        );
+      }
+      command = bundledBackendExecutable;
+      args = [];
+      console.log(`[backend] frozen backend launcher -> ${command}`);
+    }
   } else {
     const python = findPythonCommand(backendDir);
     command = python.command;

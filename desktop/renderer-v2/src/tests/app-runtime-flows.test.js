@@ -1277,7 +1277,7 @@ test("locale toggle updates the top bar labels and inline notices", async () => 
   });
 
   await root.dispatchAction("set-locale", { locale: "en" });
-  assert.match(root.querySelector("#topBar").innerHTML, /Drum Sheet Capture|Choose video|Language switcher/);
+  assert.match(root.querySelector("#topBar").innerHTML, /Drum Sheet Capture|Source|Language switcher/);
 
   app.debug.setState((next) => {
     next.review.outputDir = "/tmp/export";
@@ -1650,7 +1650,7 @@ test("youtube prepare polls live progress into the source screen, top bar, and p
   }
 });
 
-test("export after prepared youtube submits a file-backed payload", async () => {
+test("export after prepared youtube submits a file-backed payload without inheriting preview time", async () => {
   installBrowserStubs();
   let seenPayload = null;
   const root = createRoot();
@@ -1689,6 +1689,7 @@ test("export after prepared youtube submits a file-backed payload", async () => 
 
   assert.equal(seenPayload.source_type, "file");
   assert.equal(seenPayload.file_path, "/tmp/cache/youtube.mp4");
+  assert.equal(app.debug.getState().roi.frameTime, 60);
   assert.equal(seenPayload.options.extract.start_sec, 0);
 });
 

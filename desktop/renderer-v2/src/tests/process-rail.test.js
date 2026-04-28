@@ -15,7 +15,7 @@ test("roi rail drops the workbench footer and keeps only the step guidance", () 
 
   const markup = renderProcessRail(state, getProcessRailItems(state));
 
-  assert.doesNotMatch(markup, /WORKBENCH STATUS/);
+  assert.doesNotMatch(markup, /WORKBENCH STATUS|Ready now|지금 준비된 항목|준비 상태/);
   assert.match(markup, /대표 프레임을 불러온 뒤 ROI를 잡고 다음으로/);
 });
 
@@ -124,17 +124,18 @@ test("english shell copy uses plain labels instead of machine-style strings", ()
   const laneMarkup = renderContextLane(reviewState);
 
   assert.match(topBarMarkup, />Drum Sheet Capture</);
-  assert.match(topBarMarkup, />Choose video</);
-  assert.match(topBarMarkup, />Engine ready</);
+  assert.match(topBarMarkup, />Source</);
+  assert.match(topBarMarkup, />Processor ready</);
   assert.doesNotMatch(topBarMarkup, /VIDEO SOURCE|ENGINE_READY|PRECISION MEDIA WORKBENCH/);
+  assert.doesNotMatch(topBarMarkup, /Personal score capture/);
 
-  assert.match(railMarkup, />Workflow</);
-  assert.match(railMarkup, />System status</);
+  assert.match(railMarkup, />Steps</);
+  assert.match(railMarkup, />Ready</);
   assert.match(railMarkup, /<span>Source<\/span><strong>Loaded<\/strong>/);
   assert.doesNotMatch(railMarkup, /PIPELINE|WORKBENCH STATUS|<span>SOURCE<\/span><strong>LOADED<\/strong>/);
 
-  assert.match(laneMarkup, />Preview</);
-  assert.match(laneMarkup, />Review state</);
+  assert.match(laneMarkup, />Selected result</);
+  assert.match(laneMarkup, />Selection state</);
   assert.match(laneMarkup, />Nothing selected</);
   assert.doesNotMatch(laneMarkup, /INSPECTION VIEW|EXPORT STATE|NO SELECTION/);
 });
@@ -169,8 +170,16 @@ test("roi top bar css reserves a centered lane while anchoring locale controls t
 test("layout css enables independent shell scrolling for short-height viewports", () => {
   const layoutCss = readFileSync(new URL("../styles/layout.css", import.meta.url), "utf8");
 
+  assert.match(layoutCss, /\.app-shell \{[\s\S]*?grid-template-rows:\s*56px minmax\(0, 1fr\) 26px;/);
   assert.match(layoutCss, /\.process-rail \{[\s\S]*?overflow-y:\s*auto;/);
   assert.match(layoutCss, /\.screen-source,\s*[\r\n]+\s*\.screen-export,\s*[\r\n]+\s*\.screen-review \{[\s\S]*?grid-template-rows:\s*auto minmax\(0, 1fr\);/);
+});
+
+test("top bar css keeps breathing room around navigation controls", () => {
+  const componentsCss = readFileSync(new URL("../styles/components.css", import.meta.url), "utf8");
+
+  assert.match(componentsCss, /\.topbar \{[\s\S]*?gap:\s*20px;[\s\S]*?padding:\s*0 20px;/);
+  assert.match(componentsCss, /\.topbar-step \{[\s\S]*?min-height:\s*28px;[\s\S]*?padding:\s*0 12px;/);
 });
 
 test("export crop preview css opts out of full-height stretching so roi aspect ratios stay intact", () => {
@@ -180,4 +189,44 @@ test("export crop preview css opts out of full-height stretching so roi aspect r
     componentsCss,
     /\.export-preview-crop \{[\s\S]*?height:\s*auto;[\s\S]*?aspect-ratio:\s*calc\(var\(--crop-w\) \/ var\(--crop-h\)\);/
   );
+});
+
+test("export preview column does not stretch into a dead gray slab", () => {
+  const componentsCss = readFileSync(new URL("../styles/components.css", import.meta.url), "utf8");
+
+  assert.match(
+    componentsCss,
+    /\.export-preview-workbench \{[\s\S]*?align-self:\s*start;[\s\S]*?padding:\s*18px 20px 16px;/
+  );
+  assert.match(
+    componentsCss,
+    /\.export-preview-stage \{[\s\S]*?height:\s*clamp\(300px,\s*42vh,\s*440px\);[\s\S]*?padding:\s*24px;/
+  );
+  assert.match(
+    componentsCss,
+    /\.export-preview-crop \{[\s\S]*?width:\s*min\(960px,\s*100%\);/
+  );
+});
+
+test("metadata modal secondary buttons keep explicit visible text color on the paper surface", () => {
+  const componentsCss = readFileSync(new URL("../styles/components.css", import.meta.url), "utf8");
+
+  assert.match(
+    componentsCss,
+    /\.export-metadata-actions \.button-secondary,\s*[\r\n]+\s*\.export-metadata-discard-actions \.button-secondary \{[\s\S]*?color:\s*var\(--accent\);/
+  );
+});
+
+test("shared visual tokens stay calm and avoid futuristic amber shell effects", () => {
+  const tokensCss = readFileSync(new URL("../styles/tokens.css", import.meta.url), "utf8");
+  const baseCss = readFileSync(new URL("../styles/base.css", import.meta.url), "utf8");
+  const componentsCss = readFileSync(new URL("../styles/components.css", import.meta.url), "utf8");
+  const combinedCss = `${tokensCss}\n${baseCss}\n${componentsCss}`;
+
+  assert.match(tokensCss, /--accent:\s*oklch\(0\.48 0\.07 190\);/);
+  assert.match(tokensCss, /--bg-app:\s*oklch\(0\.86 0\.006 205\);/);
+  assert.match(tokensCss, /--bg-pane:\s*oklch\(0\.905 0\.006 205\);/);
+  assert.match(baseCss, /color-scheme:\s*light;/);
+  assert.doesNotMatch(componentsCss, /rgba?\(|#[0-9a-fA-F]{3,8}|oklch\(/);
+  assert.doesNotMatch(combinedCss, /#d7a347|#e7bd72|236,\s*182,\s*19|215,\s*163,\s*71|radial-gradient/i);
 });

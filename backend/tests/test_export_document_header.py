@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -65,6 +66,43 @@ class TestExportDocumentHeader(unittest.TestCase):
 
         self.assertEqual(len(finalized), 1)
         self.assertFalse(np.array_equal(finalized[0][:, :, 0], finalized[0][:, :, 2]))
+
+    def test_finalize_export_pages_honors_stitch_boundary_metadata(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            page_path = root / "stitched.png"
+            page = np.full((6800, 2400, 3), 255, dtype=np.uint8)
+
+            for start in range(140, 6500, 460):
+                for offset in [0, 12, 24, 36, 48]:
+                    y = start + offset
+                    cv2.line(page, (90, y), (2310, y), (0, 0, 0), 2)
+            page[3300:3380, 600:1800] = (0, 0, 255)
+            cv2.imwrite(str(page_path), page)
+            page_path.with_suffix(".seams.json").write_text(
+                json.dumps({"protected_split_boundaries": [3200]}),
+                encoding="utf-8",
+            )
+
+            finalized = _finalize_export_pages(
+                [page],
+                page_fill_mode="performance",
+                source_paths=[page_path],
+            )
+
+        self.assertGreaterEqual(len(finalized), 2)
+        first_red_pixels = np.logical_and.reduce((
+            finalized[0][:, :, 2] > 180,
+            finalized[0][:, :, 1] < 90,
+            finalized[0][:, :, 0] < 90,
+        ))
+        second_red_pixels = np.logical_and.reduce((
+            finalized[1][:, :, 2] > 180,
+            finalized[1][:, :, 1] < 90,
+            finalized[1][:, :, 0] < 90,
+        ))
+        self.assertEqual(int(first_red_pixels.sum()), 0)
+        self.assertGreater(int(second_red_pixels.sum()), 100)
 
     def test_compose_pdf_pages_with_document_header_adds_band_to_first_page_only(self):
         page_one = _make_score_page(label="One")

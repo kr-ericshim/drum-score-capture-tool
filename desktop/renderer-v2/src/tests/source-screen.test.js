@@ -14,7 +14,7 @@ test("source screen promotes file selection before metadata", () => {
   const model = buildSourceScreenModel(state);
 
   assert.equal(model.primaryAction.disabled, false);
-  assert.match(model.primaryAction.label, /영상 선택|Choose Video/);
+  assert.match(model.primaryAction.label, /소스|Source/);
   assert.equal(model.fileMeta.length, 0);
   assert.equal(model.secondaryAction, null);
 });
@@ -48,7 +48,7 @@ test("source screen keeps only the real file-pick action", () => {
   assert.doesNotMatch(markup, /SCAN DIRECTORY|폴더 스캔/);
   assert.doesNotMatch(markup, /<button[^>]*>LOAD<\/button>/);
   assert.match(markup, /현재 작업 중|In progress/);
-  assert.match(markup, /먼저 할 일|Start here/);
+  assert.match(markup, /입력|Input/);
 });
 
 test("source registry reflects the actual selected file directory instead of a placeholder path", () => {
@@ -142,8 +142,8 @@ test("source screen renders english helper copy when locale is en", () => {
 
   const markup = renderSourceScreen(state);
 
-  assert.match(markup, /Choose Video|Choose one video|Reopen recent/i);
-  assert.match(markup, /Start here|Recent sources/);
+  assert.match(markup, /Source|Open file|Reopen recent/i);
+  assert.match(markup, /Input|Recent/);
   assert.doesNotMatch(markup, /현재 1차 플로우는|로컬 영상 불러오기/);
 });
 

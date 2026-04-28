@@ -9,6 +9,7 @@ import { renderReviewScreen } from "../features/review/ReviewScreen.js";
 import { mountShell } from "../ui/shell/AppShell.js";
 import { renderTopBar } from "../ui/shell/TopBar.js";
 import { renderProcessRail } from "../ui/shell/ProcessRail.js";
+import { renderContextLane } from "../ui/shell/ContextLane.js";
 import { getProcessRailItems } from "../app/session/selectors.js";
 
 function createShellRoot() {
@@ -75,7 +76,7 @@ test("roi top bar collapses to source and step only", () => {
   });
 
   assert.match(markup, /song\.mp4/);
-  assert.match(markup, /ROI 지정/);
+  assert.match(markup, /영역 지정/);
   assert.match(markup, /class="topbar-roi"/);
   assert.match(markup, /class="topbar-balance"/);
   assert.match(markup, /class="topbar-tools topbar-tools-compact"/);
@@ -88,7 +89,7 @@ test("source screen exposes ingest zone and media registry structure", () => {
 
   assert.match(markup, /data-stitch-region="source-ingest"/);
   assert.match(markup, /data-stitch-region="source-registry"/);
-  assert.match(markup, /Local Media Registry|미디어 레지스트리/);
+  assert.match(markup, /Reopen recent|다시 열기/);
 });
 
 test("roi screen exposes a simplified frame scrubber and action bar around the stage", () => {
@@ -152,17 +153,42 @@ test("review process rail keeps export settings and finalize actions in the left
 
   const markup = renderProcessRail(state, getProcessRailItems(state));
 
-  assert.match(markup, /Export settings/);
+  assert.match(markup, /Saved output|현재 출력 결과/);
   assert.match(markup, /Open PDF/);
   assert.match(markup, /Copy path|경로 복사/);
 });
 
-test("source process rail uses live workbench status instead of fabricated system resource meters", () => {
+test("shell surfaces reject generic workbench vocabulary and keep task-first labels", () => {
   const state = createInitialSessionState();
+  state.ui.locale = "en";
   state.ui.activeStep = "source";
+  state.ui.backend = { ready: true };
+  state.source.filePath = "/tmp/video.mp4";
+  state.source.displayName = "video.mp4";
+  state.source.metadata = {
+    resolutionLabel: "1920x1080",
+    durationLabel: "01:24",
+  };
 
-  const markup = renderProcessRail(state, getProcessRailItems(state));
+  const reviewState = createInitialSessionState();
+  reviewState.ui.locale = "en";
+  reviewState.ui.activeStep = "review";
 
-  assert.match(markup, /System status/);
-  assert.doesNotMatch(markup, /SYSTEM RESOURCES|BUFFER|32%/);
+  const topBarMarkup = renderTopBar(state, {
+    sourceLabel: "video.mp4",
+    stepLabel: "source",
+    stepState: { enabled: true, complete: false },
+  });
+  const railMarkup = renderProcessRail(state, getProcessRailItems(state));
+  const laneMarkup = renderContextLane(reviewState);
+
+  assert.match(topBarMarkup, />Drum Sheet Capture</);
+  assert.match(topBarMarkup, /Processor ready/);
+  assert.match(railMarkup, />Steps</);
+  assert.match(railMarkup, />Ready</);
+  assert.match(laneMarkup, />Selected result</);
+
+  const combinedMarkup = `${topBarMarkup} ${railMarkup} ${laneMarkup}`;
+  assert.doesNotMatch(combinedMarkup, /Workflow|System status|Inspection view|ENGINE_READY|WORKBENCH STATUS|PIPELINE/);
+  assert.doesNotMatch(railMarkup, /SYSTEM RESOURCES|BUFFER|32%/);
 });
