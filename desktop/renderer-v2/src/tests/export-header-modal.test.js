@@ -598,6 +598,45 @@ test("metadata modal moves focus into the title field on open and back to the ru
   app.destroy();
 });
 
+test("metadata modal tab key commits the current field and moves focus to the next field", async () => {
+  installBrowserStubs();
+  const root = createRoot();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+      reviewExport: async () => ({}),
+    },
+  });
+
+  seedExportState(app);
+  await root.dispatchAction("run-export");
+  await flush();
+
+  const titleInput = root.querySelector("#stagePane")?.querySelector?.('[data-action="update-export-metadata"][data-field="title"]');
+  assert.ok(titleInput);
+  titleInput.focus();
+  titleInput.value = "Autumn Leaves";
+
+  let preventDefaultCalls = 0;
+  root.dispatchKeyDown({
+    key: "Tab",
+    target: titleInput,
+    preventDefault() {
+      preventDefaultCalls += 1;
+    },
+  });
+  await flush();
+
+  const state = app.debug.getState();
+  const activeElement = globalThis.document?.activeElement;
+  assert.equal(preventDefaultCalls, 1);
+  assert.equal(state.exportConfig.metadataModal.draft.title, "Autumn Leaves");
+  assert.equal(activeElement?.dataset?.field, "performer");
+});
+
 test("metadata composition input keeps draft state untouched until the field commits", async () => {
   installBrowserStubs();
   const root = createRoot();

@@ -56,6 +56,15 @@ function clamp(value, min, max) {
 
 const SOURCE_DROP_ZONE_SELECTOR = '[data-drop-zone="source-ingest"]';
 const SUPPORTED_VIDEO_EXTENSIONS = new Set(["mp4", "mkv", "mov", "avi", "webm"]);
+const EXPORT_METADATA_TAB_TARGETS = [
+  { action: "update-export-metadata", field: "title" },
+  { action: "update-export-metadata", field: "performer" },
+  { action: "update-export-metadata", field: "bpm" },
+  { action: "update-export-metadata", field: "date" },
+  { action: "update-export-metadata", field: "memo" },
+  { action: "confirm-export-metadata" },
+  { action: "close-export-metadata" },
+];
 
 function fileExtension(filePath = "") {
   const normalized = String(filePath || "").replace(/\\/g, "/").trim();
@@ -165,6 +174,45 @@ function syncDocumentChrome(locale) {
   if (skipLink) {
     skipLink.textContent = t("app.skipLink", { locale });
   }
+}
+
+function exportMetadataTabSelector(target) {
+  if (!target?.action) {
+    return "";
+  }
+  if (target.field) {
+    return `[data-action="${target.action}"][data-field="${target.field}"]`;
+  }
+  return `[data-action="${target.action}"]`;
+}
+
+function exportMetadataTabTargetIndex(element) {
+  const action = String(element?.dataset?.action || "");
+  const field = String(element?.dataset?.field || "");
+  return EXPORT_METADATA_TAB_TARGETS.findIndex((target) => (
+    target.action === action && String(target.field || "") === field
+  ));
+}
+
+function focusAdjacentExportMetadataTarget(stagePane, currentElement, reverse = false) {
+  const currentIndex = exportMetadataTabTargetIndex(currentElement);
+  if (currentIndex < 0 || !stagePane) {
+    return false;
+  }
+
+  const direction = reverse ? -1 : 1;
+  for (let offset = 1; offset <= EXPORT_METADATA_TAB_TARGETS.length; offset += 1) {
+    const nextIndex = (
+      currentIndex + (direction * offset) + EXPORT_METADATA_TAB_TARGETS.length
+    ) % EXPORT_METADATA_TAB_TARGETS.length;
+    const selector = exportMetadataTabSelector(EXPORT_METADATA_TAB_TARGETS[nextIndex]);
+    const nextElement = selector ? stagePane.querySelector?.(selector) : null;
+    if (nextElement && !nextElement.disabled && typeof nextElement.focus === "function") {
+      nextElement.focus();
+      return true;
+    }
+  }
+  return false;
 }
 
 function captureStageInputFocus() {
@@ -1835,6 +1883,17 @@ export function createApp(root, dependencies = {}) {
   };
 
   const handleKeyDown = (event) => {
+    if (event.key === "Tab" && store.getState().exportConfig.metadataModal?.isOpen) {
+      const tabTargetIndex = exportMetadataTabTargetIndex(event.target);
+      if (tabTargetIndex >= 0) {
+        event.preventDefault?.();
+        if (event.target?.dataset?.action === "update-export-metadata") {
+          syncExportMetadataDraftFromDom(String(event.target.dataset.field || ""));
+        }
+        focusAdjacentExportMetadataTarget(shell.stagePane, event.target, Boolean(event.shiftKey));
+        return;
+      }
+    }
     if (event.key === "Escape" && store.getState().archive.isOpen) {
       event.preventDefault?.();
       closeArchive();

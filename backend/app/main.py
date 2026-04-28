@@ -1074,6 +1074,7 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
             workspace=artifact_dir,
             runtime_info=runtime_capture,
             logger=lambda msg: _append(job_id, msg),
+            progress_callback=lambda update: _apply_export_extract_progress(job_id, update),
         )
         result["extracted_frames"] = [str(frame_path) for frame_path in frames]
         result["runtime"] = runtime_public_info(accel, ffmpeg_mode=runtime_capture.get("ffmpeg_mode"))
@@ -1267,6 +1268,29 @@ def _apply_source_prepare_progress(job_id: str, update: Dict[str, Any]) -> None:
         progress=progress,
         progress_mode=progress_mode,
         message=str(update.get("message") or ""),
+    )
+
+
+def _apply_export_extract_progress(job_id: str, update: Dict[str, Any]) -> None:
+    if not update:
+        return
+    progress_value = update.get("progress")
+    try:
+        sub_progress = float(progress_value) if progress_value is not None else None
+    except (TypeError, ValueError):
+        sub_progress = None
+
+    progress = None
+    if sub_progress is not None:
+        progress = 0.02 + max(0.0, min(sub_progress, 1.0)) * 0.18
+    stage = str(update.get("stage") or "extracting").strip() or "extracting"
+    message = str(update.get("message") or "frame extraction in progress").strip()
+    job_store.set_state(
+        job_id,
+        JobStatus.RUNNING,
+        progress,
+        stage,
+        message,
     )
 
 

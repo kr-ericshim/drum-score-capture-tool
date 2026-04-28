@@ -78,6 +78,29 @@ test("export screen exposes an accessible progress indicator", () => {
   assert.match(markup, /aria-valuenow="42"/);
 });
 
+test("export screen shows live frame extraction progress text", () => {
+  const state = createInitialSessionState();
+  state.ui.locale = "ko";
+  state.source.displayName = "practice.mp4";
+  state.source.filePath = "/tmp/practice.mp4";
+  state.roi.frameTime = 5;
+  state.roi.appliedRect = [
+    [0, 0],
+    [320, 0],
+    [320, 180],
+    [0, 180],
+  ];
+  state.exportConfig.runStatus = "running";
+  state.exportConfig.currentStep = "extracting";
+  state.exportConfig.progress = 0.11;
+  state.exportConfig.message = "frame extraction 50%";
+
+  const markup = renderExportScreen(state);
+
+  assert.match(markup, /프레임 추출 중 50%/);
+  assert.match(markup, /11%/);
+});
+
 test("export screen locks format toggles while an export is already running", () => {
   const state = createInitialSessionState();
   state.source.filePath = "/tmp/practice.mp4";

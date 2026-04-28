@@ -9,7 +9,8 @@ import numpy as np
 from app import main
 from app.job_store import JobStore
 from app.pipeline.detect import detect_sheet_regions
-from app.schemas import DetectOptions, JobCreate
+from app.pipeline.stitch import select_review_candidates
+from app.schemas import DetectOptions, JobCreate, StitchOptions
 
 
 class TestCaptureQualityPipeline(unittest.TestCase):
@@ -81,6 +82,44 @@ class TestCaptureQualityPipeline(unittest.TestCase):
             self.assertEqual(detections[0]["roi"], [[10.0, 10.0], [70.0, 10.0], [70.0, 40.0], [10.0, 40.0]])
             self.assertIn("safe_roi", detections[0])
             self.assertEqual(detections[0]["safe_roi"], [[6.0, 2.0], [74.0, 2.0], [74.0, 48.0], [6.0, 48.0]])
+
+    def test_review_candidates_replace_fade_in_frame_with_clear_duplicate(self):
+        with tempfile.TemporaryDirectory() as td:
+            workspace = Path(td)
+            faded_path = workspace / "frame_000001.png"
+            clear_path = workspace / "frame_000002.png"
+
+            faded = _make_score_frame(ink=176, blur=True)
+            clear = _make_score_frame(ink=0, blur=False)
+            cv2.imwrite(str(faded_path), faded)
+            cv2.imwrite(str(clear_path), clear)
+
+            candidates = select_review_candidates(
+                frame_paths=[faded_path, clear_path],
+                options=StitchOptions(enable=True, layout_hint="full_scroll", dedupe_level="normal"),
+                source_type="file",
+                logger=lambda *_: None,
+            )
+
+            self.assertEqual(candidates, [clear_path])
+
+
+def _make_score_frame(*, ink: int, blur: bool) -> np.ndarray:
+    image = np.full((240, 420, 3), 255, dtype=np.uint8)
+    color = (ink, ink, ink)
+    for system_top in (42, 122):
+        for offset in (0, 9, 18, 27, 36):
+            cv2.line(image, (34, system_top + offset), (386, system_top + offset), color, 2)
+        cv2.circle(image, (104, system_top + 12), 8, color, -1)
+        cv2.circle(image, (188, system_top + 25), 7, color, -1)
+        cv2.circle(image, (280, system_top + 18), 7, color, -1)
+        cv2.line(image, (112, system_top + 12), (112, system_top - 20), color, 2)
+        cv2.line(image, (196, system_top + 25), (196, system_top - 8), color, 2)
+        cv2.line(image, (288, system_top + 18), (288, system_top - 16), color, 2)
+
+    if blur:
+        image = cv2.GaussianBlur(image, (5, 5), 0)
+    return image
 
 
 if __name__ == "__main__":

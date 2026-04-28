@@ -12,6 +12,40 @@ function clampPercent(progress = 0) {
   return Math.max(0, Math.min(100, value));
 }
 
+function extractMessagePercent(message = "") {
+  const match = String(message || "").match(/frame extraction\s+(\d{1,3})%/i);
+  if (!match) {
+    return null;
+  }
+  const percent = Number(match[1]);
+  if (!Number.isFinite(percent)) {
+    return null;
+  }
+  return Math.max(0, Math.min(100, Math.round(percent)));
+}
+
+function formatExportProgressStatus({ currentStep, message, locale, runStatus }) {
+  const step = String(currentStep || "").trim().toLowerCase();
+  if (runStatus !== "running" && !step) {
+    return message || t("export.ready", { locale });
+  }
+  const framePercent = extractMessagePercent(message);
+  if (step === "extracting" || framePercent !== null) {
+    if (framePercent !== null) {
+      return t("export.progress.extractingFramesPercent", {
+        locale,
+        replacements: { percent: framePercent },
+      });
+    }
+    return t("export.progress.extractingFrames", { locale });
+  }
+
+  const stepKey = `export.progress.step.${step}`;
+  const fallback = t("export.progress.step.default", { locale });
+  const label = step ? t(stepKey, { locale }) : fallback;
+  return label === stepKey ? fallback : label;
+}
+
 function buildProfileRows(state) {
   const locale = state.ui.locale || "en";
   return [
@@ -47,6 +81,7 @@ export function buildExportScreenModel(state) {
   const pdfSelected = isPdfSelected(formats);
   const formatsLabel = hasFormats ? formats.join(", ").toUpperCase() : t("export.formatsRequired", { locale });
   const canRun = Boolean(state.source.filePath) && hasValidRoi && hasFormats && !running;
+  const statusMessage = state.exportConfig.message || t("export.ready", { locale });
   const previewSource = state.roi.previewImage ? normalizeAssetPath(state.roi.previewImage) : "";
   const cropBounds = rectToBounds(state.roi.appliedRect);
   const sourceWidth = Number(state.source.metadata?.width || state.roi.imageWidth || 0);
@@ -83,7 +118,14 @@ export function buildExportScreenModel(state) {
       : pdfSelected
         ? t("export.runPdf", { locale })
         : t("export.runDirect", { locale }),
-    statusMessage: state.exportConfig.message || t("export.ready", { locale }),
+    statusMessage,
+    progressStatus: formatExportProgressStatus({
+      currentStep: state.exportConfig.currentStep,
+      message: statusMessage,
+      locale,
+      runStatus: state.exportConfig.runStatus,
+    }),
+    progressLabel: `${progress}%`,
     previewSource,
     cropBounds,
     sourceWidth,
@@ -142,6 +184,8 @@ export function renderExportScreen(state) {
   const safeDestinationLabel = escapeHtml(model.destinationLabel);
   const safeDestinationValue = escapeHtml(model.destinationValue);
   const safeStatusMessage = escapeHtml(model.statusMessage);
+  const safeProgressStatus = escapeHtml(model.progressStatus);
+  const safeProgressLabel = escapeHtml(model.progressLabel);
   const safePreviewCaption = escapeHtml(model.previewCaption);
   const safePreviewSource = escapeAttr(model.previewSource);
   const safeError = state.exportConfig.error && !model.metadata.isOpen ? escapeHtml(state.exportConfig.error) : "";
@@ -219,6 +263,10 @@ export function renderExportScreen(state) {
             <span class="panel-kicker">${t("export.previewKicker", { locale: model.locale })}</span>
             <h2>${t("export.previewTitle", { locale: model.locale })}</h2>
             <p>${safePreviewCaption}</p>
+          </div>
+          <div class="export-progress-summary" role="status" aria-live="polite">
+            <span>${safeProgressStatus}</span>
+            <strong>${safeProgressLabel}</strong>
           </div>
           <div class="export-progress-strip" role="progressbar" aria-label="${t("export.progressAria", { locale: model.locale })}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${model.progress}">
             <span style="width:${model.progress}%"></span>

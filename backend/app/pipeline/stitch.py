@@ -182,12 +182,20 @@ def _filter_redundant_frames(
         recent_hashes.append(first_hash)
 
     removed = 0
+    clarity_replacements = 0
     scroll_direction = 0
     for path in frame_paths[1:]:
         current = cv2.imread(str(path))
         if current is None:
             continue
         if _is_near_duplicate(prev, current, layout_mode=layout_mode, dedupe_level=dedupe_level):
+            if _should_replace_with_clearer_duplicate(prev, current):
+                kept_paths[-1] = path
+                prev = current
+                current_hash = _frame_dhash(current)
+                if current_hash is not None:
+                    recent_hashes.append(current_hash)
+                clarity_replacements += 1
             removed += 1
             continue
 
@@ -224,7 +232,24 @@ def _filter_redundant_frames(
 
     if removed > 0:
         logger(f"temporal dedupe removed {removed} near-duplicate frames")
+    if clarity_replacements > 0:
+        logger(f"temporal dedupe replaced {clarity_replacements} low-clarity duplicate frames")
     return kept_paths
+
+
+def _should_replace_with_clearer_duplicate(prev_img, cur_img) -> bool:
+    prev_score = _sheet_clarity_score(prev_img)
+    cur_score = _sheet_clarity_score(cur_img)
+    return cur_score >= max(prev_score + 45.0, prev_score * 1.35)
+
+
+def _sheet_clarity_score(image: np.ndarray) -> float:
+    h = min(image.shape[0], 900)
+    w = min(image.shape[1], 1600)
+    if h <= 16 or w <= 16:
+        return 0.0
+    gray = cv2.cvtColor(cv2.resize(image, (w, h)), cv2.COLOR_BGR2GRAY)
+    return float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
 
 def _is_near_duplicate(prev_img, cur_img, *, layout_mode: str, dedupe_level: str) -> bool:

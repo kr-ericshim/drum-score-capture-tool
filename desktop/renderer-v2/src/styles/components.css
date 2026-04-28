@@ -1534,7 +1534,7 @@
 .export-preview-workbench {
   position: relative;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   gap: 16px;
   align-self: start;
   min-height: 0;
@@ -1545,6 +1545,28 @@
   display: grid;
   gap: 4px;
   align-items: start;
+}
+
+.export-progress-summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.export-progress-summary span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.export-progress-summary strong {
+  flex: 0 0 auto;
+  color: var(--text-1);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .export-progress-strip {

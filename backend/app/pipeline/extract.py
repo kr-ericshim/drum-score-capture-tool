@@ -58,6 +58,7 @@ def extract_frames(
     workspace: Path,
     runtime_info: Optional[Dict[str, str]] = None,
     logger,
+    progress_callback=None,
 ) -> List[Path]:
     workspace.mkdir(parents=True, exist_ok=True)
     logger("starting frame extraction")
@@ -70,6 +71,7 @@ def extract_frames(
         youtube_url=youtube_url,
         workspace=workspace,
         logger=logger,
+        progress_callback=progress_callback,
     )
     if runtime_info is not None:
         runtime_info["source_video"] = str(source_video)
@@ -84,6 +86,7 @@ def extract_frames(
         end_sec=options.end_sec,
         runtime_info=runtime_info,
         logger=logger,
+        progress_callback=progress_callback,
     )
 
 
@@ -608,6 +611,36 @@ def _probe_download_resolution(path: Path) -> tuple[int, int]:
         return (0, 0)
 
 
+def _probe_video_duration_seconds(path: Path) -> float:
+    try:
+        ffprobe = resolve_ffprobe_bin(strict=False)
+        completed = subprocess.run(
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+    except (OSError, RuntimeError, ValueError):
+        return 0.0
+
+    if completed.returncode != 0:
+        return 0.0
+    try:
+        return max(0.0, float(str(completed.stdout or "").strip()))
+    except ValueError:
+        return 0.0
+
+
 def _is_low_quality_video(*, width: int, height: int) -> bool:
     if height > 0:
         return height <= YOUTUBE_LOW_QUALITY_HEIGHT_THRESHOLD
@@ -625,21 +658,31 @@ def _extract_with_ffmpeg(
     end_sec: Optional[float],
     runtime_info: Optional[Dict[str, str]],
     logger,
+    progress_callback=None,
 ) -> List[Path]:
     ffmpeg = resolve_ffmpeg_bin(strict=platform.system().lower() == "windows")
     accel = get_runtime_acceleration(logger=logger, ffmpeg_bin=ffmpeg)
     hwaccel_flag_sets = accel.ffmpeg_hwaccel_flags or [[]]
     out_pattern = out_dir / "frame_%06d.png"
     attempt_errors: List[str] = []
+    expected_duration = _resolve_extract_duration_seconds(
+        source_video=source_video,
+        start_sec=start_sec,
+        end_sec=end_sec,
+    )
 
     for hw_flags in hwaccel_flag_sets:
         _clear_extracted_frames(out_dir)
+        _emit_frame_extract_progress(progress_callback, progress=0.0)
         cmd = [
             ffmpeg,
             "-y",
             "-hide_banner",
             "-loglevel",
             "error",
+            "-nostats",
+            "-progress",
+            "pipe:1",
             *hw_flags,
             "-i",
             str(source_video),
@@ -652,19 +695,118 @@ def _extract_with_ffmpeg(
 
         mode = _hwaccel_mode_name(hw_flags)
         logger(f"running ffmpeg extract ({mode})")
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        _consume_ffmpeg_progress(
+            process,
+            expected_duration=expected_duration,
+            progress_callback=progress_callback,
+        )
+        returncode = process.wait()
+        stderr = process.stderr.read().strip() if process.stderr else ""
         frames = sorted(out_dir.glob("frame_*.png"))
-        if result.returncode == 0 and frames:
+        if returncode == 0 and frames:
+            _emit_frame_extract_progress(progress_callback, progress=1.0)
             logger(f"extracted {len(frames)} frames")
             if runtime_info is not None:
                 runtime_info["ffmpeg_mode"] = mode
             return frames
 
-        stderr = result.stderr.strip() if result.stderr else "unknown ffmpeg error"
+        stderr = stderr or "unknown ffmpeg error"
         attempt_errors.append(f"{mode}: {stderr}")
 
     joined = " | ".join(attempt_errors[-3:]) if attempt_errors else "no ffmpeg attempts"
     raise RuntimeError(f"ffmpeg failed after gpu/cpu fallback: {joined}")
+
+
+def _resolve_extract_duration_seconds(
+    *,
+    source_video: Path,
+    start_sec: Optional[float],
+    end_sec: Optional[float],
+) -> float:
+    try:
+        start = max(0.0, float(start_sec or 0.0))
+    except (TypeError, ValueError):
+        start = 0.0
+    try:
+        end = float(end_sec) if end_sec is not None else None
+    except (TypeError, ValueError):
+        end = None
+
+    if end is not None and end > start:
+        return max(0.0, end - start)
+
+    duration = _probe_video_duration_seconds(source_video)
+    if duration <= 0:
+        return 0.0
+    return max(0.0, duration - start)
+
+
+def _consume_ffmpeg_progress(process, *, expected_duration: float, progress_callback) -> None:
+    if not process.stdout:
+        return
+    last_percent = -1
+    for raw_line in process.stdout:
+        if not progress_callback:
+            continue
+        key, _, value = str(raw_line or "").strip().partition("=")
+        if key != "out_time":
+            continue
+        seconds = _parse_ffmpeg_out_time_seconds(value)
+        if seconds is None or expected_duration <= 0:
+            continue
+        fraction = max(0.0, min(seconds / expected_duration, 1.0))
+        percent = int(round(fraction * 100.0))
+        if percent <= last_percent:
+            continue
+        last_percent = percent
+        _emit_frame_extract_progress(progress_callback, progress=fraction)
+
+
+def _parse_ffmpeg_out_time_seconds(value: object) -> Optional[float]:
+    text = str(value or "").strip()
+    if not text or text.upper() == "N/A":
+        return None
+    if ":" not in text:
+        try:
+            return max(0.0, float(text))
+        except ValueError:
+            return None
+    parts = text.split(":")
+    if len(parts) != 3:
+        return None
+    try:
+        hours = float(parts[0])
+        minutes = float(parts[1])
+        seconds = float(parts[2])
+    except ValueError:
+        return None
+    return max(0.0, hours * 3600.0 + minutes * 60.0 + seconds)
+
+
+def _emit_frame_extract_progress(progress_callback, *, progress: Optional[float]) -> None:
+    if not progress_callback:
+        return
+    if progress is None:
+        progress_callback(
+            {
+                "stage": "extracting",
+                "progress_mode": "indeterminate",
+                "message": "frame extraction in progress",
+            }
+        )
+        return
+
+    clamped = max(0.0, min(float(progress), 1.0))
+    percent = int(round(clamped * 100.0))
+    progress_callback(
+        {
+            "stage": "extracting",
+            "progress": clamped,
+            "progress_mode": "determinate",
+            "message": f"frame extraction {percent}%",
+        }
+    )
 
 
 def _extract_single_frame_with_ffmpeg(
