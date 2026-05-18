@@ -55,6 +55,7 @@ function clamp(value, min, max) {
 }
 
 const SOURCE_DROP_ZONE_SELECTOR = '[data-drop-zone="source-ingest"]';
+const STAGE_SCROLL_RESTORE_SELECTORS = [".review-grid-shell"];
 const SUPPORTED_VIDEO_EXTENSIONS = new Set(["mp4", "mkv", "mov", "avi", "webm"]);
 const EXPORT_METADATA_TAB_TARGETS = [
   { action: "update-export-metadata", field: "title" },
@@ -186,6 +187,10 @@ function exportMetadataTabSelector(target) {
   return `[data-action="${target.action}"]`;
 }
 
+function cssAttributeValue(value) {
+  return String(value ?? "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
 function exportMetadataTabTargetIndex(element) {
   const action = String(element?.dataset?.action || "");
   const field = String(element?.dataset?.field || "");
@@ -227,6 +232,13 @@ function captureStageInputFocus() {
       selectionEnd: Number.isInteger(activeElement.selectionEnd) ? activeElement.selectionEnd : null,
     };
   }
+  if (activeElement.dataset.action === "toggle-review-page" && activeElement.dataset.pageId) {
+    return {
+      selector: `[data-action="toggle-review-page"][data-page-id="${cssAttributeValue(activeElement.dataset.pageId)}"]`,
+      selectionStart: Number.isInteger(activeElement.selectionStart) ? activeElement.selectionStart : null,
+      selectionEnd: Number.isInteger(activeElement.selectionEnd) ? activeElement.selectionEnd : null,
+    };
+  }
   return {
     selector: `[data-action="${activeElement.dataset.action}"]`,
     selectionStart: Number.isInteger(activeElement.selectionStart) ? activeElement.selectionStart : null,
@@ -250,6 +262,39 @@ function restoreStageInputFocus(stagePane, snapshot) {
   ) {
     nextField.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd);
   }
+}
+
+function captureStageScrollSnapshot(stagePane) {
+  if (!stagePane || typeof stagePane.querySelector !== "function") {
+    return [];
+  }
+  return STAGE_SCROLL_RESTORE_SELECTORS
+    .map((selector) => {
+      const element = stagePane.querySelector(selector);
+      if (!element) {
+        return null;
+      }
+      return {
+        selector,
+        scrollTop: Number(element.scrollTop || 0),
+        scrollLeft: Number(element.scrollLeft || 0),
+      };
+    })
+    .filter(Boolean);
+}
+
+function restoreStageScrollSnapshot(stagePane, snapshot) {
+  if (!stagePane || !Array.isArray(snapshot) || !snapshot.length || typeof stagePane.querySelector !== "function") {
+    return;
+  }
+  snapshot.forEach((item) => {
+    const element = stagePane.querySelector(item.selector);
+    if (!element) {
+      return;
+    }
+    element.scrollTop = item.scrollTop;
+    element.scrollLeft = item.scrollLeft;
+  });
 }
 
 function captureLiveExportMetadataDraft(stagePane, draft = {}) {
@@ -628,6 +673,7 @@ export function createApp(root, dependencies = {}) {
     shell.contextLane.hidden = !laneMarkup.trim();
     if (stageMarkupValue !== lastStageMarkup) {
       const focusSnapshot = captureStageInputFocus();
+      const scrollSnapshot = captureStageScrollSnapshot(shell.stagePane);
       const liveMetadataDraftSnapshot = isMetadataModalOpen
         ? captureLiveExportMetadataDraft(shell.stagePane, state.exportConfig?.metadataModal?.draft)
         : null;
@@ -636,6 +682,7 @@ export function createApp(root, dependencies = {}) {
       lastStageMarkup = stageMarkupValue;
       restoreLiveExportMetadataDraft(shell.stagePane, liveMetadataDraftSnapshot);
       restoreLiveMetadataTextInputSnapshot(shell.stagePane, liveMetadataTextInputSnapshot);
+      restoreStageScrollSnapshot(shell.stagePane, scrollSnapshot);
       restoreStageInputFocus(shell.stagePane, focusSnapshot);
     }
     if (archiveMarkupChanged) {

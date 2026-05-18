@@ -206,6 +206,29 @@ function createDynamicStageRoot() {
   const stageNodesByVersion = new Map();
 
   function createStageNode(selector) {
+    if (selector === ".review-grid-shell") {
+      return { scrollTop: 0, scrollLeft: 0 };
+    }
+    if (selector === '[data-action="toggle-review-page"]') {
+      return {
+        dataset: { action: "toggle-review-page", pageId: "1" },
+        focus() {
+          const scroller = nodes["#stagePane"].querySelector(".review-grid-shell");
+          if (scroller) {
+            scroller.scrollTop = 0;
+          }
+          globalThis.document.activeElement = this;
+        },
+      };
+    }
+    if (selector === '[data-action="toggle-review-page"][data-page-id="5"]') {
+      return {
+        dataset: { action: "toggle-review-page", pageId: "5" },
+        focus() {
+          globalThis.document.activeElement = this;
+        },
+      };
+    }
     if (selector === "#roiImage") {
       return { complete: true, naturalWidth: 1920, naturalHeight: 1080 };
     }
@@ -241,6 +264,12 @@ function createDynamicStageRoot() {
         return this._innerHTML;
       },
       querySelector(selector) {
+        if (selector === ".review-grid-shell" && !this._innerHTML.includes('class="review-grid-shell"')) {
+          return null;
+        }
+        if (selector.startsWith('[data-action="toggle-review-page"') && !this._innerHTML.includes('data-action="toggle-review-page"')) {
+          return null;
+        }
         if (selector === "#roiImage" && !this._innerHTML.includes('id="roiImage"')) {
           return null;
         }
@@ -755,6 +784,58 @@ test("applied review selection stays locked when a checkbox input fires later", 
   const state = app.debug.getState();
   assert.equal(state.review.status, "applied");
   assert.deepEqual(state.review.selectedPageIds, ["1"]);
+});
+
+test("review checkbox rerender preserves the review grid scroll position", () => {
+  installBrowserStubs();
+  const root = createDynamicStageRoot();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+      reviewExport: async () => ({}),
+    },
+  });
+
+  app.debug.setState((next) => {
+    next.exportConfig.jobId = "job-1";
+    next.exportConfig.runStatus = "done";
+    next.review.pages = Array.from({ length: 8 }, (_, index) => {
+      const pageNumber = index + 1;
+      return {
+        id: String(pageNumber),
+        title: `페이지 ${pageNumber}`,
+        previewPath: `/tmp/page-${pageNumber}.png`,
+        capturePath: `/tmp/page-${pageNumber}.png`,
+      };
+    });
+    next.review.selectedPageIds = next.review.pages.map((page) => page.id);
+    next.review.focusedPageId = "1";
+    next.ui.activeStep = "review";
+    return next;
+  });
+
+  const stagePane = root.querySelector("#stagePane");
+  const beforeScroller = stagePane.querySelector(".review-grid-shell");
+  beforeScroller.scrollTop = 512;
+  beforeScroller.scrollLeft = 24;
+  globalThis.document.activeElement = {
+    dataset: { action: "toggle-review-page", pageId: "5" },
+  };
+
+  root.dispatchInput({
+    dataset: { action: "toggle-review-page", pageId: "5" },
+    checked: false,
+  });
+
+  const afterScroller = stagePane.querySelector(".review-grid-shell");
+  const state = app.debug.getState();
+  assert.equal(afterScroller.scrollTop, 512);
+  assert.equal(afterScroller.scrollLeft, 24);
+  assert.equal(globalThis.document.activeElement?.dataset?.pageId, "5");
+  assert.deepEqual(state.review.selectedPageIds, ["1", "2", "3", "4", "6", "7", "8"]);
 });
 
 test("a fresh export run clears previous output and review artifacts before polling finishes", async () => {
