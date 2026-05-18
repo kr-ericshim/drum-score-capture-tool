@@ -94,6 +94,27 @@ test("export config reset defaults the document title from the source filename s
   assert.equal(exportConfig.documentHeader.date, "2026-04-19");
 });
 
+test("export config prefers the user-facing source display name over cached media basenames", () => {
+  const exportConfig = createInitialExportConfig(
+    "/tmp/cache/unAynsH6ml4.mkv",
+    new Date("2026-04-19T09:00:00Z"),
+    "Bon Jovi - It's My Lifeㅣ드럼커버ㅣ드럼악보",
+  );
+
+  assert.equal(exportConfig.documentHeader.title, "Bon Jovi - It's My Lifeㅣ드럼커버ㅣ드럼악보");
+  assert.equal(exportConfig.metadataModal.draft.title, "Bon Jovi - It's My Lifeㅣ드럼커버ㅣ드럼악보");
+});
+
+test("export config cleans noisy youtube source names for pdf metadata defaults", () => {
+  const exportConfig = createInitialExportConfig(
+    "/tmp/cache/won1f_dp6Gg.webm",
+    new Date("2026-04-19T09:00:00Z"),
+    "[Lv.04] It's My Life - Bon Jovi (★★☆☆☆) Pop Drum Cover Score book Sheet Lessons Tutorial | DRUMMATE",
+  );
+
+  assert.equal(exportConfig.documentHeader.title, "It's My Life - Bon Jovi Pop");
+});
+
 test("document header helpers normalize title and optional blank fields without placeholders", () => {
   const fallbackHeader = createDocumentHeaderState("/tmp/Take Five.mkv", new Date("2026-04-19T09:00:00Z"));
   const normalized = normalizeDocumentHeader(
@@ -155,7 +176,7 @@ test("dirty roi draft relocks export until the new roi is applied", () => {
 
   assert.equal(getStepState(state, "roi").complete, false);
   assert.equal(getStepState(state, "export").enabled, false);
-  assert.match(getStepState(state, "roi").blockingReason, /ROI 변경사항|ROI changes/i);
+  assert.match(getStepState(state, "roi").blockingReason, /악보 영역 변경사항|score-region changes/i);
 });
 
 test("deriveCapturePages prefers review candidates and keeps diagnostics aligned", () => {
@@ -263,10 +284,12 @@ test("inferLayoutHintFromRoi distinguishes bottom bar, page turn, and scroll lay
   const bottomBar = inferLayoutHintFromRoi([[0, 0], [300, 0], [300, 60], [0, 60]]);
   const pageTurn = inferLayoutHintFromRoi([[0, 0], [160, 0], [160, 200], [0, 200]]);
   const fullScroll = inferLayoutHintFromRoi([[0, 0], [240, 0], [240, 180], [0, 180]]);
+  const defaultBottomStrip = inferLayoutHintFromRoi([[77, 734], [1843, 734], [1843, 1037], [77, 1037]]);
 
   assert.equal(bottomBar, "bottom_bar");
   assert.equal(pageTurn, "page_turn");
   assert.equal(fullScroll, "full_scroll");
+  assert.equal(defaultBottomStrip, "bottom_bar");
 });
 
 test("selection summary reports kept items", () => {

@@ -75,3 +75,24 @@ test("decidePackagedBackendLaunchMode keeps the frozen runtime when it is at lea
   assert.equal(decision.reason, "runtime-current");
   assert.equal(decision.staleRuntime, false);
 });
+
+test("decidePackagedBackendLaunchMode ignores small packaging mtime skew", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "backend-launch-policy-"));
+  const runtimePath = path.join(workspace, "runtime", "drumsheet-backend");
+  const sourcePath = path.join(workspace, "app", "main.py");
+
+  writeFile(runtimePath);
+  writeFile(sourcePath);
+  fs.utimesSync(runtimePath, new Date("2026-04-20T02:30:00.000Z"), new Date("2026-04-20T02:30:00.000Z"));
+  fs.utimesSync(sourcePath, new Date("2026-04-20T02:30:00.500Z"), new Date("2026-04-20T02:30:00.500Z"));
+
+  const decision = policy.decidePackagedBackendLaunchMode({
+    runtimeExecutablePath: runtimePath,
+    sourceEntryPath: sourcePath,
+    pythonAvailable: true,
+  });
+
+  assert.equal(decision.mode, "runtime");
+  assert.equal(decision.reason, "runtime-current");
+  assert.equal(decision.staleRuntime, false);
+});

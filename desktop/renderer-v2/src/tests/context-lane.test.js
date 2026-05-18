@@ -4,15 +4,14 @@ import assert from "node:assert/strict";
 import { createInitialSessionState } from "../app/session/selectors.js";
 import { renderContextLane } from "../ui/shell/ContextLane.js";
 
-test("context lane renders english source guidance when locale is en", () => {
+test("context lane stays hidden on source because the source screen already owns that context", () => {
   const state = createInitialSessionState();
   state.ui.locale = "en";
   state.ui.activeStep = "source";
 
   const markup = renderContextLane(state);
 
-  assert.match(markup, /Source summary|Source status|Next step/);
-  assert.doesNotMatch(markup, /대표 프레임|먼저 로컬 영상을 선택합니다/);
+  assert.equal(markup, "");
 });
 
 test("context lane renders english review preview labels when locale is en", () => {
@@ -37,8 +36,11 @@ test("context lane renders english review preview labels when locale is en", () 
   assert.doesNotMatch(markup, /결과 요약|다음 작업/);
 });
 
-test("context lane stays hidden for roi and export when there is no selection-specific inspector", () => {
+test("context lane stays hidden for source, roi, and export when there is no selection-specific inspector", () => {
   const state = createInitialSessionState();
+
+  state.ui.activeStep = "source";
+  assert.equal(renderContextLane(state), "");
 
   state.ui.activeStep = "roi";
   assert.equal(renderContextLane(state), "");

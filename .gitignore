@@ -11,6 +11,10 @@ desktop/build/icon.iconset/
 __pycache__/
 .DS_Store
 .idea/
+.serena/
+screenshots/
+*-screenshot.png
+stitch_exports/
 backend/.uv/
 backend/.venv/
 backend/third_party/

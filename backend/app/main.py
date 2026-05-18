@@ -7,9 +7,11 @@ import platform
 import shutil
 import subprocess
 import tempfile
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import RLock
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, unquote, urlsplit
 
@@ -69,6 +71,8 @@ from app.pipeline.export import export_frames, export_selected_pages
 
 
 PREVIEW_SOURCE_CACHE_NAMESPACE = YOUTUBE_DOWNLOAD_STRATEGY_VERSION
+PREVIEW_FRAME_WORKSPACE_KEEP = 2
+PREVIEW_FRAME_WORKSPACE_TTL_SECONDS = 30 * 60
 DRUMSHEET_SESSION_TOKEN = str(os.getenv("DRUMSHEET_SESSION_TOKEN") or "").strip()
 TOKEN_HEADER_NAME = "x-drumsheet-token"
 SUPPORTED_YOUTUBE_HOSTS = {
@@ -97,6 +101,7 @@ job_store = JobStore(jobs_root)
 executor = ThreadPoolExecutor(max_workers=1)
 source_prepare_store = SourcePrepareStore(jobs_root / "_preview_source_jobs")
 source_prepare_executor = ThreadPoolExecutor(max_workers=1)
+maintenance_lock = RLock()
 
 
 def _runtime_metadata() -> Dict[str, str]:
@@ -112,7 +117,7 @@ def _requires_session_token(path: str) -> bool:
     return normalized != "/health"
 
 
-def _has_valid_session_token(headers, expected_token: str, query_params=None) -> bool:
+def _has_valid_session_token(headers, expected_token: str) -> bool:
     expected = str(expected_token or "").strip()
     if not expected:
         return True
@@ -120,11 +125,6 @@ def _has_valid_session_token(headers, expected_token: str, query_params=None) ->
     if headers is not None:
         header_value = str(headers.get(TOKEN_HEADER_NAME, "") or headers.get("X-DrumSheet-Token", "") or "").strip()
         if header_value == expected:
-            return True
-
-    if query_params is not None:
-        query_value = str(query_params.get("token") or "").strip()
-        if query_value == expected:
             return True
     return False
 
@@ -277,7 +277,7 @@ def _resolve_jobs_file_path(file_path: str) -> Path:
 @app.middleware("http")
 async def enforce_session_token(request: Request, call_next):
     if request.method != "OPTIONS" and _requires_session_token(request.url.path):
-        if not _has_valid_session_token(request.headers, DRUMSHEET_SESSION_TOKEN, request.query_params):
+        if not _has_valid_session_token(request.headers, DRUMSHEET_SESSION_TOKEN):
             return JSONResponse(status_code=401, content={"detail": "missing or invalid session token"})
     return await call_next(request)
 
@@ -302,24 +302,25 @@ def read_job_file(file_path: str) -> FileResponse:
 
 @app.post("/maintenance/clear-cache", response_model=CacheClearResponse)
 def clear_cache() -> CacheClearResponse:
-    active_jobs = job_store.active_job_ids()
-    active_prepare_jobs = source_prepare_store.active_job_ids()
-    if active_jobs or active_prepare_jobs:
-        raise HTTPException(status_code=409, detail="cache clear is blocked while jobs are running")
+    with maintenance_lock:
+        active_jobs = job_store.active_job_ids()
+        active_prepare_jobs = source_prepare_store.active_job_ids()
+        if active_jobs or active_prepare_jobs:
+            raise HTTPException(status_code=409, detail="cache clear is blocked while jobs are running")
 
-    reclaimed_bytes = 0
-    cleared_paths = 0
-    skipped_paths: List[str] = []
+        reclaimed_bytes = 0
+        cleared_paths = 0
+        skipped_paths: List[str] = []
 
-    for child in sorted(jobs_root.iterdir(), key=lambda item: item.name):
-        try:
-            reclaimed_bytes += _path_size_bytes(child)
-            _remove_path(child)
-            cleared_paths += 1
-        except OSError as exc:
-            skipped_paths.append(f"{child.name}: {exc}")
+        for child in sorted(jobs_root.iterdir(), key=lambda item: item.name):
+            try:
+                reclaimed_bytes += _path_size_bytes(child)
+                _remove_path(child)
+                cleared_paths += 1
+            except OSError as exc:
+                skipped_paths.append(f"{child.name}: {exc}")
 
-    cleared_jobs = job_store.clear_all() + source_prepare_store.clear_all()
+        cleared_jobs = job_store.clear_all() + source_prepare_store.clear_all()
     return CacheClearResponse(
         cleared_paths=cleared_paths,
         cleared_jobs=cleared_jobs,
@@ -551,7 +552,11 @@ def preview_frame(payload: PreviewFrameRequest) -> PreviewFrameResponse:
         )
 
         preview_root = jobs_root / "_preview"
-        _prune_preview_workspaces(preview_root, keep=2)
+        _prune_preview_workspaces(
+            preview_root,
+            keep=PREVIEW_FRAME_WORKSPACE_KEEP,
+            max_age_seconds=PREVIEW_FRAME_WORKSPACE_TTL_SECONDS,
+        )
         preview_workspace = preview_root / str(uuid.uuid4())
         preview_workspace.mkdir(parents=True, exist_ok=True)
         resolved_source_type = payload.source_type
@@ -675,17 +680,18 @@ def create_preview_source_job(payload: PreviewSourceJobCreateRequest) -> Preview
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    job_id = f"source-{uuid.uuid4().hex[:12]}"
-    artifact_dir = source_prepare_store.root / job_id
-    artifact_dir.mkdir(parents=True, exist_ok=True)
-    source_prepare_store.create(
-        SourcePrepareJob(
-            id=job_id,
-            youtube_url=normalized_youtube_url,
-            artifact_dir=str(artifact_dir),
+    with maintenance_lock:
+        job_id = f"source-{uuid.uuid4().hex[:12]}"
+        artifact_dir = source_prepare_store.root / job_id
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        source_prepare_store.create(
+            SourcePrepareJob(
+                id=job_id,
+                youtube_url=normalized_youtube_url,
+                artifact_dir=str(artifact_dir),
+            )
         )
-    )
-    source_prepare_executor.submit(_run_source_prepare_job, job_id)
+        source_prepare_executor.submit(_run_source_prepare_job, job_id)
     return PreviewSourceJobCreateResponse(job_id=job_id)
 
 
@@ -715,20 +721,21 @@ def create_job(payload: JobCreate) -> JobCreateResponse:
         payload.source_identity.model_dump() if payload.source_identity else {}
     )
 
-    job_id = str(uuid.uuid4())
-    artifact_dir = jobs_root / job_id
-    artifact_dir.mkdir(parents=True, exist_ok=True)
-    job = Job(
-        id=job_id,
-        source_type=payload.source_type,
-        file_path=normalized_file_path,
-        youtube_url=normalized_youtube_url,
-        options=payload.options.model_dump(),
-        artifact_dir=str(artifact_dir),
-        source_identity=normalized_source_identity,
-    )
-    job_store.create(job)
-    executor.submit(_run_job, job_id, payload)
+    with maintenance_lock:
+        job_id = str(uuid.uuid4())
+        artifact_dir = jobs_root / job_id
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        job = Job(
+            id=job_id,
+            source_type=payload.source_type,
+            file_path=normalized_file_path,
+            youtube_url=normalized_youtube_url,
+            options=payload.options.model_dump(),
+            artifact_dir=str(artifact_dir),
+            source_identity=normalized_source_identity,
+        )
+        job_store.create(job)
+        executor.submit(_run_job, job_id, payload)
     return JobCreateResponse(job_id=job_id)
 
 
@@ -1370,15 +1377,38 @@ def _coerce_prepared_youtube_source(prepared: object, *, fallback_url: str) -> D
     }
 
 
-def _prune_preview_workspaces(root: Path, *, keep: int = 2) -> None:
+def _preview_cleanup_now() -> float:
+    return time.time()
+
+
+def _prune_preview_workspaces(
+    root: Path,
+    *,
+    keep: int = 2,
+    max_age_seconds: float | None = None,
+) -> None:
     if keep < 0 or not root.exists():
         return
     try:
-        candidates = [path for path in root.iterdir() if path.is_dir()]
+        paths = [path for path in root.iterdir() if path.is_dir()]
     except OSError:
         return
-    candidates.sort(key=lambda path: path.stat().st_mtime if path.exists() else 0, reverse=True)
-    for stale in candidates[keep:]:
+
+    candidates: List[tuple[Path, float]] = []
+    for path in paths:
+        try:
+            candidates.append((path, path.stat().st_mtime))
+        except OSError:
+            continue
+
+    candidates.sort(key=lambda item: item[1], reverse=True)
+    cutoff = None
+    if max_age_seconds is not None and max_age_seconds >= 0:
+        cutoff = _preview_cleanup_now() - max_age_seconds
+
+    for index, (stale, mtime) in enumerate(candidates):
+        if index < keep and (cutoff is None or mtime >= cutoff):
+            continue
         try:
             _remove_path(stale)
         except OSError:
@@ -1406,20 +1436,31 @@ def _resolve_cached_youtube_source_entry(*, youtube_url: str, source_key: str = 
     }
 
 
+def _safe_source_prepare_progress(progress_callback, update, *, logger=None) -> None:
+    if progress_callback is None:
+        return
+    try:
+        progress_callback(dict(update or {}))
+    except Exception as exc:
+        if logger is not None:
+            logger(f"source prepare progress callback failed: {exc}")
+
+
 def _get_or_prepare_cached_youtube_video(youtube_url: str, *, logger, progress_callback=None) -> tuple[Path, bool]:
     url = _best_effort_normalize_youtube_key(youtube_url)
     if not url:
         raise ValueError("youtube_url is required when source_type is youtube")
 
-    if progress_callback:
-        progress_callback(
-            {
-                "stage": "cache_lookup",
-                "progress": 0.0,
-                "progress_mode": "indeterminate",
-                "message": "checking youtube cache",
-            }
-        )
+    _safe_source_prepare_progress(
+        progress_callback,
+        {
+            "stage": "cache_lookup",
+            "progress": 0.0,
+            "progress_mode": "indeterminate",
+            "message": "checking youtube cache",
+        },
+        logger=logger,
+    )
 
     cache_dir = _preview_source_cache_workspace(url)
     cached = _find_cached_video(cache_dir)
@@ -1439,14 +1480,15 @@ def _get_or_prepare_cached_youtube_video(youtube_url: str, *, logger, progress_c
                 pass
         else:
             logger(f"youtube cache hit: {cached.name} {width}x{height}")
-            if progress_callback:
-                progress_callback(
-                    {
-                        "stage": "validate",
-                        "progress_mode": "indeterminate",
-                        "message": "using cached youtube video",
-                    }
-                )
+            _safe_source_prepare_progress(
+                progress_callback,
+                {
+                    "stage": "validate",
+                    "progress_mode": "indeterminate",
+                    "message": "using cached youtube video",
+                },
+                logger=logger,
+            )
             return cached, True
 
     logger("youtube cache miss: downloading source")

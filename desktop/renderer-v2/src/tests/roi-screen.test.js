@@ -22,12 +22,12 @@ test("roi screen distinguishes draft and applied states", () => {
 
   let model = buildRoiScreenModel(state);
   assert.equal(model.statusTone, "draft");
-  assert.match(model.statusText, /프레임 위에서 악보 영역을 맞춘 뒤 적용하세요/);
+  assert.match(model.statusText, /악보 영역을 맞춘 뒤 적용합니다/);
 
   state.roi.appliedRect = state.roi.draftRect;
   model = buildRoiScreenModel(state);
   assert.equal(model.statusTone, "ready");
-  assert.match(model.statusText, /출력 준비로 넘어갈 수 있습니다/);
+  assert.match(model.statusText, /영역 확정됨/);
   assert.equal(model.applyDisabled, true);
 });
 
@@ -97,7 +97,7 @@ test("roi screen does not render a broken image element before a preview frame e
   const markup = renderRoiScreen(state);
 
   assert.doesNotMatch(markup, /id="roiImage"/);
-  assert.match(markup, /대표 프레임을 고르면 여기서 영역을 지정합니다/);
+  assert.match(markup, /대표 프레임을 고릅니다/);
 });
 
 test("roi screen keeps frame controls simple before and after preview load", () => {
@@ -113,7 +113,7 @@ test("roi screen keeps frame controls simple before and after preview load", () 
   let markup = renderRoiScreen(state);
   assert.match(markup, /id="frameTimeSlider"/);
   assert.match(markup, /Refresh current frame/);
-  assert.match(markup, /Pick the clearest frame/);
+  assert.match(markup, /Representative frame/);
   assert.doesNotMatch(markup, /ROI RECT|DRAG ON FRAME/);
   assert.doesNotMatch(markup, /data-stitch-region="roi-transport"/);
 
@@ -121,7 +121,7 @@ test("roi screen keeps frame controls simple before and after preview load", () 
   state.roi.draftRect = [[10, 10], [110, 10], [110, 90], [10, 90]];
   markup = renderRoiScreen(state);
   assert.match(markup, /Apply region/);
-  assert.match(markup, /Adjust the score region on the frame, then apply it/);
+  assert.match(markup, /Adjust the score region, then apply it/);
 });
 
 test("roi screen renders exactly three recommended-frame buttons and marks one as selected", () => {
@@ -139,7 +139,7 @@ test("roi screen renders exactly three recommended-frame buttons and marks one a
   assert.match(markup, /data-stitch-region="roi-candidates"/);
   assert.equal((markup.match(/data-action="select-preview-candidate"/g) || []).length, 3);
   assert.match(markup, /class="roi-candidate is-active"/);
-  assert.match(markup, /Recommended|Pick the clearest frame/);
+  assert.match(markup, /Recommended|Representative frame/);
   assert.match(markup, /00:39\.5/);
 });
 
@@ -155,5 +155,5 @@ test("roi screen exposes keyboard access for roi canvas", () => {
 
   assert.match(markup, /<canvas id="roiCanvas"[^>]*tabindex="0"/);
   assert.match(markup, /aria-describedby="roiCanvasHelp"/);
-  assert.match(markup, /use the arrow keys to move the ROI/i);
+  assert.match(markup, /use the arrow keys to move the region/i);
 });

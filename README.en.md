@@ -21,6 +21,8 @@ Download the file for your operating system from GitHub Releases.
 The default public release is a standalone build.
 It is intended to run without requiring a separate Python installation because the frozen backend runtime is bundled into the app.
 
+The current public installers are unsigned. On Windows, SmartScreen may show an unknown publisher warning until Windows code signing is introduced.
+
 ## Launch
 
 1. Open the app.

@@ -16,7 +16,7 @@ test("roi rail drops the workbench footer and keeps only the step guidance", () 
   const markup = renderProcessRail(state, getProcessRailItems(state));
 
   assert.doesNotMatch(markup, /WORKBENCH STATUS|Ready now|지금 준비된 항목|준비 상태/);
-  assert.match(markup, /대표 프레임을 불러온 뒤 ROI를 잡고 다음으로/);
+  assert.match(markup, /대표 프레임을 불러온 뒤 악보 영역을 잡고 다음으로/);
 });
 
 test("review rail footer renders output paths in a dedicated wrapping block", () => {
@@ -54,24 +54,14 @@ test("process rail exposes the current step with aria-current", () => {
   assert.match(markup, /data-step="export" aria-current="step"/);
 });
 
-test("context lane uses definition-list semantics for fact groups and escapes dynamic source text", () => {
+test("source context lane stays hidden to avoid duplicating the source screen", () => {
   const state = createInitialSessionState();
   state.ui.locale = "en";
   state.ui.activeStep = "source";
-  state.source.filePath = "/tmp/<unsafe>&/capture.mp4";
-  state.source.displayName = "<img src=x onerror=alert(1)>";
-  state.source.metadata = {
-    resolutionLabel: "1920x1080",
-    durationLabel: "01:24",
-  };
 
   const markup = renderContextLane(state);
 
-  assert.match(markup, /<dl class="inspector-grid">/);
-  assert.match(markup, /<dl class="inspector-list">/);
-  assert.match(markup, /&lt;img src=x onerror=alert\(1\)&gt;/);
-  assert.match(markup, /\/tmp\/&lt;unsafe&gt;&amp;/);
-  assert.doesNotMatch(markup, /<strong><img/);
+  assert.equal(markup, "");
 });
 
 test("shell renderers escape dynamic summaries and path text before injecting HTML", () => {

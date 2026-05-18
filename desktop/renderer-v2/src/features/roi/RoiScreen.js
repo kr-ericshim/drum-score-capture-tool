@@ -24,16 +24,16 @@ function getPendingStatusSuffix(locale) {
 
 function getCanvasHelp(locale) {
   if (locale === "ko") {
-    return "Tab으로 ROI 캔버스에 포커스한 뒤, 방향키로 영역을 이동하세요. 1에서 4까지 숫자 키로 모서리를 선택하고, 0 키로 전체 이동으로 돌아갈 수 있습니다. Shift를 함께 누르면 더 크게 조절합니다.";
+    return "Tab으로 영역 편집 캔버스에 포커스한 뒤, 방향키로 영역을 이동하세요. 1에서 4까지 숫자 키로 모서리를 선택하고, 0 키로 전체 이동으로 돌아갈 수 있습니다. Shift를 함께 누르면 더 크게 조절합니다.";
   }
-  return "Tab to the ROI canvas, then use the arrow keys to move the ROI. Press 1 through 4 to pick a corner handle, press 0 to switch back to moving the whole ROI, and hold Shift for larger adjustments.";
+  return "Tab to the score-region canvas, then use the arrow keys to move the region. Press 1 through 4 to pick a corner handle, press 0 to switch back to moving the whole region, and hold Shift for larger adjustments.";
 }
 
 function getCanvasLabel(locale) {
   if (locale === "ko") {
-    return "ROI 편집 캔버스";
+    return "악보 영역 편집 캔버스";
   }
-  return "ROI editor canvas";
+  return "Score-region editor canvas";
 }
 
 export function buildRoiScreenModel(state) {

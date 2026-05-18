@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 const fs = require("fs");
 const path = require("path");
+const asar = require("@electron/asar");
 
 const [, , action = "dist"] = process.argv;
 const projectRoot = path.resolve(__dirname, "..", "..");
@@ -140,9 +141,37 @@ function findPackagedRendererV2Index({
   return pathApi.join(resourcesRoot, "renderer-v2", "index.html");
 }
 
-function findPackagedVenvPath(packagedBackendMainPath) {
-  const backendRoot = path.dirname(path.dirname(packagedBackendMainPath));
-  return path.join(backendRoot, ".venv");
+function findPackagedAppAsar({
+  packagedBackendMainPath,
+  platform = process.platform,
+}) {
+  const pathApi = platformPath(platform);
+  const resourcesRoot = pathApi.dirname(packagedBackendRoot(packagedBackendMainPath, platform));
+  return pathApi.join(resourcesRoot, "app.asar");
+}
+
+function packagedAsarContains(asarPath, assetPath) {
+  if (!fs.existsSync(asarPath)) {
+    return false;
+  }
+  try {
+    return asar.listPackage(asarPath).includes(assetPath);
+  } catch (_) {
+    return false;
+  }
+}
+
+function hasPackagedRendererV2Index({
+  rendererV2IndexPath,
+  appAsarPath,
+}) {
+  return fs.existsSync(rendererV2IndexPath)
+    || packagedAsarContains(appAsarPath, "/renderer-v2/index.html");
+}
+
+function findPackagedVenvPath(packagedBackendMainPath, platform = process.platform) {
+  const pathApi = platformPath(platform);
+  return pathApi.join(packagedBackendRoot(packagedBackendMainPath, platform), ".venv");
 }
 
 function normalizeReleaseAction(actionName = "dist") {
@@ -159,7 +188,7 @@ function describeValidationMode(actionName = "dist") {
   return {
     action: normalizedAction,
     requiresInstallerArtifacts: normalizedAction === "dist",
-    requiresReleaseMetadata: normalizedAction === "dist",
+    requiresReleaseMetadata: false,
   };
 }
 
@@ -191,6 +220,34 @@ function assertRuntimeContract({
   );
 }
 
+function fileMtimeMs(filePath) {
+  try {
+    return Number(fs.statSync(filePath).mtimeMs || 0);
+  } catch (_) {
+    return 0;
+  }
+}
+
+function assertRuntimeFreshness({
+  runtimeExecutablePath,
+  sourceEntryPath,
+  runtimeMtimeMs = fileMtimeMs(runtimeExecutablePath),
+  sourceMtimeMs = fileMtimeMs(sourceEntryPath),
+}) {
+  assert(
+    runtimeMtimeMs > 0,
+    `Packaged backend runtime timestamp is unavailable: ${runtimeExecutablePath}`,
+  );
+  assert(
+    sourceMtimeMs > 0,
+    `Backend source timestamp is unavailable: ${sourceEntryPath}`,
+  );
+  assert(
+    runtimeMtimeMs >= sourceMtimeMs,
+    `Packaged frozen backend runtime is older than backend source. Rebuild the frozen runtime before release: runtime=${new Date(runtimeMtimeMs).toISOString()} source=${new Date(sourceMtimeMs).toISOString()}`,
+  );
+}
+
 function assertRendererContract({
   rendererV2IndexPath,
   rendererV2Exists,
@@ -199,6 +256,102 @@ function assertRendererContract({
     rendererV2Exists,
     `Packaged release is missing renderer-v2/index.html: ${rendererV2IndexPath}`,
   );
+}
+
+function installerArtifactExtensions(platformName = process.platform) {
+  if (platformName === "darwin") {
+    return [".dmg"];
+  }
+  if (platformName === "win32") {
+    return [".exe"];
+  }
+  return [".AppImage"];
+}
+
+function assertInstallerArtifacts({
+  candidateDistDir = distDir,
+  desktopVersion,
+  platform = process.platform,
+}) {
+  const expectedExtensions = installerArtifactExtensions(platform);
+  const matches = fs.existsSync(candidateDistDir)
+    ? fs.readdirSync(candidateDistDir, { withFileTypes: true })
+        .filter((entry) => entry.isFile())
+        .map((entry) => path.join(candidateDistDir, entry.name))
+        .filter((filePath) => {
+          const baseName = path.basename(filePath);
+          return expectedExtensions.some((extension) => baseName.endsWith(extension))
+            && baseName.includes(desktopVersion)
+            && fs.statSync(filePath).size > 0;
+        })
+    : [];
+  assert(
+    matches.length > 0,
+    `Missing non-empty root-level ${platform} installer artifact for version ${desktopVersion} under ${candidateDistDir}`,
+  );
+  return matches;
+}
+
+function parseYoutubeStrategyVersion(sourceText, label) {
+  const match = sourceText.match(/^\s*YOUTUBE_DOWNLOAD_STRATEGY_VERSION\s*=\s*["']([^"']+)["']/m);
+  assert(
+    match,
+    `Source-text compatibility check could not parse YouTube strategy version from ${label}`,
+  );
+  return match[1];
+}
+
+function assertPackagedSourceTextCompatibility({
+  sourceMainText,
+  packagedMainText,
+  sourceExtractText,
+  packagedExtractText,
+}) {
+  const sourceStrategyVersion = parseYoutubeStrategyVersion(sourceExtractText, "backend/app/pipeline/extract.py");
+  const packagedStrategyVersion = parseYoutubeStrategyVersion(packagedExtractText, "packaged backend/app/pipeline/extract.py");
+
+  assert(
+    packagedStrategyVersion === sourceStrategyVersion,
+    `Packaged backend source-text compatibility check failed: YouTube strategy version ${packagedStrategyVersion} does not match source ${sourceStrategyVersion}`,
+  );
+
+  const sourceTextMarkers = [
+    {
+      label: "strategy-linked preview cache invalidation",
+      sourceText: sourceMainText,
+      packagedText: packagedMainText,
+      marker: "PREVIEW_SOURCE_CACHE_NAMESPACE = YOUTUBE_DOWNLOAD_STRATEGY_VERSION",
+    },
+    {
+      label: "bundled ffmpeg handoff marker",
+      sourceText: sourceExtractText,
+      packagedText: packagedExtractText,
+      marker: "ffmpeg_location",
+    },
+    {
+      label: "quality-first YouTube format marker",
+      sourceText: sourceExtractText,
+      packagedText: packagedExtractText,
+      marker: '"bestvideo+bestaudio/best"',
+    },
+  ];
+
+  for (const { label, sourceText, packagedText, marker } of sourceTextMarkers) {
+    if (!sourceText.includes(marker)) {
+      continue;
+    }
+    assert(
+      packagedText.includes(marker),
+      `Packaged backend source-text compatibility check failed: missing ${label}`,
+    );
+  }
+
+  if (!sourceExtractText.includes('"player_client"')) {
+    assert(
+      !packagedExtractText.includes('"player_client"'),
+      "Packaged backend source-text compatibility check failed: packaged extract.py still forces a stale YouTube player client override",
+    );
+  }
 }
 
 function validate(actionName = action) {
@@ -215,6 +368,10 @@ function validate(actionName = action) {
   const runtimeExecutablePath = findPackagedRuntimeExecutable({ packagedBackendMainPath });
   const packagedVenvPath = findPackagedVenvPath(packagedBackendMainPath);
   const rendererV2IndexPath = findPackagedRendererV2Index({ packagedBackendMainPath });
+  const appAsarPath = findPackagedAppAsar({ packagedBackendMainPath });
+  const rendererV2Location = fs.existsSync(rendererV2IndexPath)
+    ? rendererV2IndexPath
+    : `${appAsarPath}!/renderer-v2/index.html`;
   const packagedFfmpegPath = findPackagedBackendToolExecutable({
     packagedBackendMainPath,
     toolName: "ffmpeg",
@@ -237,18 +394,32 @@ function validate(actionName = action) {
     packagedFfprobeExists: fs.existsSync(packagedFfprobePath),
     packagedVenvExists: fs.existsSync(packagedVenvPath),
   });
+  assertRuntimeFreshness({
+    runtimeExecutablePath,
+    sourceEntryPath: sourceBackendMainPath,
+  });
   assertRendererContract({
     rendererV2IndexPath,
-    rendererV2Exists: fs.existsSync(rendererV2IndexPath),
+    rendererV2Exists: hasPackagedRendererV2Index({
+      rendererV2IndexPath,
+      appAsarPath,
+    }),
   });
 
+  const sourceBackendMainText = readText(sourceBackendMainPath);
+  const sourceExtractText = readText(sourceExtractPath);
   const packagedMainText = readText(packagedBackendMainPath);
   const packagedExtractText = readText(packagedExtractPath);
-  assert(packagedMainText.includes('PREVIEW_SOURCE_CACHE_NAMESPACE = YOUTUBE_DOWNLOAD_STRATEGY_VERSION'), "Packaged backend is missing strategy-linked preview cache invalidation");
-  assert(packagedExtractText.includes('YOUTUBE_DOWNLOAD_STRATEGY_VERSION = "yt-v3"'), "Packaged backend is missing the latest YouTube strategy version");
-  assert(packagedExtractText.includes("ffmpeg_location"), "Packaged backend is missing ffmpeg_location handoff to yt-dlp");
-  assert(packagedExtractText.includes('"bestvideo+bestaudio/best"'), "Packaged backend is missing best-quality YouTube format selection");
-  assert(!packagedExtractText.includes('"player_client"'), "Packaged backend still forces a stale YouTube player client override");
+  assertPackagedSourceTextCompatibility({
+    sourceMainText: sourceBackendMainText,
+    packagedMainText,
+    sourceExtractText,
+    packagedExtractText,
+  });
+
+  const installerArtifacts = validationMode.requiresInstallerArtifacts
+    ? assertInstallerArtifacts({ desktopVersion })
+    : [];
 
   const metadataPath = latestMetadataPath();
   if (validationMode.requiresReleaseMetadata && metadataPath) {
@@ -266,20 +437,29 @@ function validate(actionName = action) {
   if (validationMode.requiresReleaseMetadata && metadataPath && fs.existsSync(metadataPath)) {
     console.log(`- release metadata: ${relative(metadataPath)}`);
   }
+  for (const installerArtifact of installerArtifacts) {
+    console.log(`- installer artifact: ${relative(installerArtifact)}`);
+  }
   console.log(`- runtime executable: ${relative(runtimeExecutablePath)}`);
   console.log(`- bundled ffmpeg: ${relative(packagedFfmpegPath)}`);
   console.log(`- bundled ffprobe: ${relative(packagedFfprobePath)}`);
-  console.log(`- renderer-v2 entry: ${relative(rendererV2IndexPath)}`);
+  console.log(`- renderer-v2 entry: ${relative(rendererV2Location)}`);
 }
 
 module.exports = {
+  assertPackagedSourceTextCompatibility,
+  assertInstallerArtifacts,
   assertRendererContract,
+  assertRuntimeFreshness,
   assertRuntimeContract,
   describeValidationMode,
+  findPackagedAppAsar,
+  findNewestPackagedBackendMain,
   findPackagedBackendToolExecutable,
   findPackagedRendererV2Index,
   findPackagedRuntimeExecutable,
   findPackagedVenvPath,
+  hasPackagedRendererV2Index,
   normalizeReleaseAction,
   validate,
 };

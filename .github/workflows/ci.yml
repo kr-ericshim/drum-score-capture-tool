@@ -6,7 +6,14 @@ on:
 
 jobs:
   validate:
-    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-14
+          - windows-latest
+
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout
@@ -31,22 +38,20 @@ jobs:
         working-directory: desktop
         run: npm ci
 
-      - name: Run backend pagination tests
-        run: PYTHONPATH=backend python backend/tests/test_sheet_finalize.py
-
-      - name: Run backend ROI health tests
-        run: |
-          if [ -f backend/tests/test_roi_health.py ]; then
-            PYTHONPATH=backend python backend/tests/test_roi_health.py
-          else
-            echo "Skipping ROI health tests because backend/tests/test_roi_health.py is not present on this branch."
-          fi
+      - name: Run backend tests
+        shell: bash
+        run: PYTHONPATH=backend python -m unittest discover -s backend/tests -p 'test_*.py'
 
       - name: Verify renderer-v2
         working-directory: desktop
         run: npm run verify:renderer-v2
 
+      - name: Run desktop node tests
+        working-directory: desktop
+        run: npm run test:desktop-node
+
       - name: Verify release docs exist
+        shell: bash
         run: |
           test -f LICENSE
           test -f README.md
@@ -54,3 +59,5 @@ jobs:
           test -f README.ko.md
           test -f docs/reports/2026-03-09-github-production-readiness-report.md
           test -f docs/release/github-release-runbook.md
+          test -f docs/release/final-production-checklist.md
+          test -f docs/release/release-notes-v0.1.27.md

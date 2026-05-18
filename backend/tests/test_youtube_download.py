@@ -161,6 +161,29 @@ class DownloadYoutubeTests(unittest.TestCase):
         )
         self.assertEqual(FakeYoutubeDL.seen_opts[0]["remote_components"], ["ejs:github"])
 
+    def test_download_ignores_prepare_progress_callback_failures(self):
+        FakeYoutubeDL.plans = [{"ext": "webm"}]
+        logs = []
+
+        def broken_callback(_update):
+            raise RuntimeError("renderer disconnected")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.object(extract, "YoutubeDL", FakeYoutubeDL), patch.object(
+                extract,
+                "_probe_download_resolution",
+                return_value=(1920, 1080),
+            ):
+                output = extract._download_youtube(
+                    "https://example.com/watch?v=abc",
+                    Path(tmpdir),
+                    logger=logs.append,
+                    progress_callback=broken_callback,
+                )
+                self.assertTrue(output.exists())
+
+        self.assertTrue(any("progress callback failed" in line for line in logs))
+
     def test_progress_hook_maps_downloading_state_to_determinate_progress(self):
         updates = []
         logs = []
@@ -221,3 +244,27 @@ class DownloadYoutubeTests(unittest.TestCase):
 
         self.assertGreaterEqual(len(progress_logs), 2)
         self.assertGreaterEqual(len(postprocess_logs), 2)
+
+    def test_progress_hooks_tolerate_callback_exceptions(self):
+        logs = []
+
+        def broken_callback(_update):
+            raise RuntimeError("renderer disconnected")
+
+        progress_hook = extract._build_youtube_progress_hook(
+            progress_callback=broken_callback,
+            logger=logs.append,
+        )
+        postprocess_hook = extract._build_youtube_postprocessor_hook(
+            progress_callback=broken_callback,
+            logger=logs.append,
+        )
+
+        progress_hook({"status": "downloading", "downloaded_bytes": 42, "total_bytes": 100})
+        progress_hook({"status": "finished"})
+        postprocess_hook({"status": "started", "postprocessor": "FFmpegMergerPP"})
+        postprocess_hook({"status": "finished", "postprocessor": "FFmpegMergerPP"})
+
+        self.assertTrue(any("progress callback failed" in line for line in logs))
+        self.assertTrue(any("yt-dlp progress" in line for line in logs))
+        self.assertTrue(any("yt-dlp postprocess" in line for line in logs))

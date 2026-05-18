@@ -153,9 +153,10 @@ export function buildSourceScreenModel(state) {
     prepareLogs: Array.isArray(state.source.prepareLogs) ? state.source.prepareLogs : [],
     prepareDisabled: state.source.prepareStatus === "loading" || !isLikelyYoutubeUrl(state.source.youtubeUrl),
     youtubeUrlValid: isLikelyYoutubeUrl(state.source.youtubeUrl),
-    showQualityGate: /low resolution|resolved to/i.test(String(state.source.prepareErrorDetail || "")),
+    showQualityGate: ["error", "failed"].includes(state.source.prepareStatus)
+      && /low resolution|resolved to/i.test(String(state.source.prepareErrorDetail || "")),
     showPrepareStatus: state.source.prepareStatus !== "idle" || (Array.isArray(state.source.prepareLogs) && state.source.prepareLogs.length > 0),
-    error: state.source.error || "",
+    error: state.source.prepareStatus === "loading" ? "" : state.source.error || "",
     errorDetail: state.source.prepareErrorDetail || "",
   };
 }
@@ -163,7 +164,7 @@ export function buildSourceScreenModel(state) {
 function getRegistryColumns(locale) {
   return [
     { key: "filename", label: t("source.registryFilename", { locale }) },
-    { key: "path", label: t("source.registryPath", { locale }) },
+    { key: "source", label: t("source.registrySource", { locale }) },
     { key: "resolution", label: t("source.registryRes", { locale }) },
     { key: "duration", label: t("source.registryLength", { locale }) },
     { key: "action", label: t("source.registryAction", { locale }) },
@@ -172,6 +173,16 @@ function getRegistryColumns(locale) {
 
 function renderRegistryCell(column, content) {
   return `<td data-column="${escapeHtml(column.key)}" data-column-label="${escapeHtml(column.label)}">${content}</td>`;
+}
+
+function registrySourceLabel(item, locale) {
+  if (item.youtubeUrl) {
+    return t("source.originYoutube", { locale });
+  }
+  if (item.sourceOrigin === "prepared") {
+    return t("source.originPrepared", { locale });
+  }
+  return t("source.originLocal", { locale });
 }
 
 function renderRegistryRows(model) {
@@ -192,7 +203,7 @@ function renderRegistryRows(model) {
     return `
       <tr class="registry-row${selected ? " is-selected" : ""}" data-selected="${selected ? "true" : "false"}">
         ${renderRegistryCell(columns[0], escapeHtml(item.displayName || fileName(item.filePath) || "source.mp4"))}
-        ${renderRegistryCell(columns[1], escapeHtml(item.directory || t("source.directoryMissing", { locale: model.locale })))}
+        ${renderRegistryCell(columns[1], escapeHtml(registrySourceLabel(item, model.locale)))}
         ${renderRegistryCell(columns[2], escapeHtml(item.resolutionLabel || t("source.registryUnknown", { locale: model.locale })))}
         ${renderRegistryCell(columns[3], escapeHtml(item.durationLabel || t("source.registryUnknown", { locale: model.locale })))}
         ${renderRegistryCell(columns[4], actionMarkup)}
@@ -217,7 +228,7 @@ export function renderSourceScreen(state) {
       </header>
       <div class="source-workbench">
         <section class="source-ingest panel" data-stitch-region="source-ingest" data-drop-zone="source-ingest">
-          <div class="ingest-icon">+</div>
+          <div class="ingest-icon" aria-hidden="true">+</div>
           <div class="panel-heading source-ingest-heading">
             <span class="panel-kicker">${escapeHtml(t("source.ingestKicker", { locale: model.locale }))}</span>
             <h2>${escapeHtml(t("source.ingestTitle", { locale: model.locale }))}</h2>
@@ -283,17 +294,18 @@ export function renderSourceScreen(state) {
                 <p>${escapeHtml(t("source.qualityGateBody", { locale: model.locale, replacements: { detail: model.errorDetail } }))}</p>
               </div>
             ` : ""}
-            <div id="${logId}" class="source-prepare-log" data-role="youtube-log" aria-live="polite">
-              <strong>${escapeHtml(t("source.youtubeLogTitle", { locale: model.locale }))}</strong>
-              <pre>${escapeHtml(model.prepareLogs.length ? model.prepareLogs.join("\n") : t("source.youtubeIdleLog", { locale: model.locale }))}</pre>
-            </div>
+            ${model.showPrepareStatus ? `
+              <details id="${logId}" class="source-prepare-log" data-role="youtube-log" ${["error", "failed"].includes(model.prepareStatus) ? "open" : ""}>
+                <summary>${escapeHtml(t("source.youtubeLogTitle", { locale: model.locale }))}</summary>
+                <pre>${escapeHtml(model.prepareLogs.length ? model.prepareLogs.join("\n") : t("source.youtubeIdleLog", { locale: model.locale }))}</pre>
+              </details>
+            ` : ""}
           </div>
         </section>
         <section class="source-registry panel" data-stitch-region="source-registry">
           <div class="panel-heading">
             <span class="panel-kicker">${escapeHtml(t("source.registryKicker", { locale: model.locale }))}</span>
             <h2>${escapeHtml(t("source.registryTitle", { locale: model.locale }))}</h2>
-            <p>${escapeHtml(t("source.registryBody", { locale: model.locale }))}</p>
             <p>${escapeHtml(t("source.registryRegistered", { locale: model.locale, replacements: { count: model.registryItems.length } }))}</p>
           </div>
           <div class="registry-table-wrap">

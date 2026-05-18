@@ -1,6 +1,6 @@
 # Testing Patterns
 
-**Analysis Date:** 2026-04-17
+**Analysis Date:** 2026-05-18
 
 ## Test Framework
 
@@ -25,9 +25,9 @@ cd desktop && npm run verify:renderer-v2   # Renderer-v2 tests + structural cont
 
 ## Test Inventory
 
-- Current backend inventory: 17 test files under `backend/tests/`.
+- Current backend inventory: 22 test files under `backend/tests/`.
 - Current desktop inventory: 7 test files under `desktop/tests/`.
-- Current renderer-v2 inventory: 13 test files under `desktop/renderer-v2/src/tests/`.
+- Current renderer-v2 inventory: 16 test files under `desktop/renderer-v2/src/tests/`.
 
 Representative backend files:
 - `backend/tests/test_review_export.py`
@@ -38,7 +38,8 @@ Representative backend files:
 
 Representative desktop files:
 - `desktop/tests/preload-auth.test.mjs`
-- `desktop/tests/status-ui.test.mjs`
+- `desktop/tests/main-startup-smoke.test.mjs`
+- `desktop/tests/validate-packaged-release.test.mjs`
 - `desktop/tests/workflow-shell.test.mjs`
 - `desktop/tests/validate-packaged-release.test.mjs`
 
@@ -81,12 +82,19 @@ desktop/tests/
 desktop/renderer-v2/src/tests/
   api.test.js
   app-runtime-flows.test.js
+  archive-modal.test.js
   context-lane.test.js
+  export-header-modal.test.js
   export-screen.test.js
+  i18n.test.js
+  process-rail.test.js
   review-screen.test.js
+  roi-editor.test.js
+  roi-screen.test.js
   session-selectors.test.js
   source-controller.test.js
   source-screen.test.js
+  step-guards.test.js
   stitch-fidelity.test.js
   ...
 ```
@@ -233,7 +241,7 @@ function createReviewState() {
 **Unit Tests:**
 - Backend pure/helper coverage includes validation, layout, ROI health, and youtube download helper behavior in files such as `backend/tests/test_source_validation.py`, `backend/tests/test_layout_profiles.py`, `backend/tests/test_extract_preview_frame.py`, and `backend/tests/test_youtube_download.py`.
 - Renderer-v2 unit tests cover selectors, renderers, locale helpers, and controller behavior in `desktop/renderer-v2/src/tests/session-selectors.test.js`, `source-screen.test.js`, `export-screen.test.js`, `review-screen.test.js`, `i18n.test.js`, and `source-controller.test.js`.
-- Legacy desktop unit tests cover narrow modules like `desktop/tests/status-ui.test.mjs`, `desktop/tests/job-api-auth.test.mjs`, and `desktop/tests/build-profile-policy.test.mjs`.
+- Desktop unit tests cover Electron/preload/entry, workflow shell, build-profile policy, and packaged release validation under `desktop/tests/`.
 
 **Integration Tests:**
 - Backend integration-style tests assemble realistic job folders and real `JobStore` instances, then patch only outer services. See `backend/tests/test_review_export.py`, `backend/tests/test_job_api_contract.py`, `backend/tests/test_source_prepare_jobs.py`, and `backend/tests/test_preview_source_cache.py`.
@@ -295,7 +303,6 @@ assert.throws(
 - No backend HTTP-level API suite exists. `backend/tests/test_api_auth.py` and `backend/tests/test_source_validation.py` call helper functions directly, but there is no `TestClient` coverage for middleware, response models, CORS behavior, or route wiring in `backend/app/main.py`.
 - No browser-level or Electron window-level E2E coverage exists. Renderer-v2 tests stub `window`, `document`, and root nodes in files like `desktop/renderer-v2/src/tests/app-runtime-flows.test.js`, so real DOM layout, CSS behavior, and event behavior inside Chromium are not exercised.
 - Coverage metrics are not measured or enforced. Large orchestrators such as `backend/app/main.py` and `desktop/renderer-v2/src/app/App.js` have meaningful test coverage around selected flows, but there is no quantitative guardrail for untested branches.
-- Legacy renderer coverage is selective. `desktop/tests/` covers entry, preload, auth headers, status rendering, workflow shell, and packaging, but modules such as `desktop/renderer/modules/roi-controller.js`, `desktop/renderer/modules/video-range-picker.js`, and `desktop/renderer/modules/runtime-status-ui.js` have no direct dedicated tests.
 - Full external-tool integration is mostly mocked. Backend tests patch `YoutubeDL`, ffmpeg helpers, and pipeline functions rather than running a real end-to-end capture job from source ingest through export. Use extra manual verification when changing `backend/app/pipeline/extract.py`, `backend/app/pipeline/upscale.py`, or packaged runtime behavior.
 
 ---

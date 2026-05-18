@@ -48,9 +48,10 @@ jobs:
           python -m pip install -r backend/requirements-build.txt
 
       - name: Run backend test suite
-        if: runner.os != 'Windows'
         shell: bash
-        run: PYTHONPATH=backend python -m unittest discover -s backend/tests -p 'test_*.py'
+        env:
+          PYTHONPATH: backend
+        run: python -m unittest discover -s backend/tests -p 'test_*.py'
 
       - name: Build frozen backend runtime
         shell: bash
@@ -87,6 +88,11 @@ jobs:
         working-directory: desktop
         run: npm ci
 
+      - name: Smoke test desktop startup contract
+        working-directory: desktop
+        shell: bash
+        run: npm run test:desktop-smoke
+
       - name: Verify renderer-v2
         working-directory: desktop
         shell: bash
@@ -95,17 +101,50 @@ jobs:
       - name: Run desktop node tests
         working-directory: desktop
         shell: bash
-        run: node --test tests/*.test.mjs
+        run: npm run test:desktop-node
 
       - name: Build release artifacts
         working-directory: desktop
         run: npm run dist:release
+
+      - name: Smoke test packaged Electron app
+        working-directory: desktop
+        run: npm run smoke:packaged-electron
+
+      - name: Smoke test packaged backend runtime
+        working-directory: desktop
+        run: npm run smoke:packaged-runtime
+
+      - name: Verify release upload assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          artifacts=( ${{ matrix.artifact_glob }} )
+          if [ "${#artifacts[@]}" -eq 0 ]; then
+            echo "No release upload assets matched: ${{ matrix.artifact_glob }}" >&2
+            exit 1
+          fi
+          version="${GITHUB_REF_NAME#v}"
+          for artifact in "${artifacts[@]}"; do
+            if [ ! -s "$artifact" ]; then
+              echo "Release upload asset is missing or empty: $artifact" >&2
+              exit 1
+            fi
+            case "$artifact" in
+              *"$version"*) ;;
+              *)
+                echo "Release upload asset does not include version $version: $artifact" >&2
+                exit 1
+                ;;
+            esac
+            ls -lh "$artifact"
+          done
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
             ${{ matrix.artifact_glob }}
-            dist/*.blockmap
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

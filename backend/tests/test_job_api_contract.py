@@ -8,12 +8,156 @@ import numpy as np
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from app import main
 from app.job_store import Job, JobStatus, JobStore
 from app.main import _run_job, crop_capture, review_export
+from app.pipeline.acceleration import RuntimeAcceleration
 from app.schemas import CaptureCropRequest, JobCreate, JobReviewExportRequest
 
 
 class TestJobApiContract(unittest.TestCase):
+    def test_direct_youtube_job_persists_source_identity_and_hydrates_libraries(self):
+        class RecordingExecutor:
+            def __init__(self):
+                self.submitted = []
+
+            def submit(self, fn, *args):
+                self.submitted.append((fn, args))
+
+        def write_image(path: Path) -> Path:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            image = np.full((24, 48, 3), 255, dtype=np.uint8)
+            cv2.imwrite(str(path), image)
+            return path
+
+        with tempfile.TemporaryDirectory() as td:
+            jobs_root = Path(td) / "jobs"
+            jobs_root.mkdir(parents=True, exist_ok=True)
+            store = JobStore(jobs_root)
+            executor = RecordingExecutor()
+            prepared_video = jobs_root / "_preview_source" / "yt-v3" / "abc123" / "downloads" / "lesson.mp4"
+            prepared_video.parent.mkdir(parents=True, exist_ok=True)
+            prepared_video.write_bytes(b"video")
+            (prepared_video.parent / "source.json").write_text(
+                '{"source_key":"https://www.youtube.com/watch?v=abc12345678","video_title":"URL Flow Lesson"}',
+                encoding="utf-8",
+            )
+
+            accel = RuntimeAcceleration(
+                opencv_mode="cpu",
+                cuda_device_count=0,
+                opencl_available=False,
+                opencl_enabled=False,
+                ffmpeg_hwaccel_flags=[],
+                ffmpeg_mode_order=["cpu"],
+                ffmpeg_scale_vt_available=False,
+                hat_available=False,
+                hat_device="none",
+                hat_reason="test",
+                cpu_name="test-cpu",
+                gpu_name=None,
+            )
+
+            def fake_extract_frames(**kwargs):
+                kwargs["runtime_info"]["source_video"] = str(prepared_video)
+                return [write_image(Path(kwargs["workspace"]) / "frame_0001.png")]
+
+            def fake_rectify_frames(**kwargs):
+                return [write_image(Path(kwargs["workspace"]) / "rectified_0001.png")]
+
+            def fake_stitch_pages(**kwargs):
+                return [write_image(Path(kwargs["workspace"]) / "page_0001.png")]
+
+            def fake_upscale_frames(**kwargs):
+                return [write_image(Path(kwargs["workspace"]) / "upscaled_0001.png")]
+
+            def fake_export_frames(**kwargs):
+                workspace = Path(kwargs["workspace"])
+                image_path = write_image(workspace / "page_0001.png")
+                pdf_path = workspace / "sheet_export.pdf"
+                pdf_path.write_bytes(b"%PDF-1.4\n% youtube flow\n")
+                return {
+                    "images": [str(image_path)],
+                    "pdf": str(pdf_path),
+                    "raw_frames": [],
+                    "page_diagnostics": [],
+                }
+
+            payload = JobCreate(
+                source_type="youtube",
+                youtube_url="https://youtu.be/abc12345678",
+                source_identity={
+                    "kind": "youtube",
+                    "key": "https://www.youtube.com/watch?v=abc12345678",
+                    "display_name": "URL Flow Lesson",
+                },
+                options={
+                    "detect": {
+                        "roi": [[0, 0], [48, 0], [48, 24], [0, 24]],
+                    },
+                    "export": {
+                        "formats": ["pdf"],
+                    },
+                },
+            )
+
+            with (
+                patch.object(main, "jobs_root", jobs_root),
+                patch.object(main, "job_store", store),
+                patch.object(main, "executor", executor),
+                patch.object(main, "_get_or_prepare_cached_youtube_video", return_value={
+                    "video_path": prepared_video,
+                    "from_cache": True,
+                    "video_title": "URL Flow Lesson",
+                    "source_key": "https://www.youtube.com/watch?v=abc12345678",
+                }),
+                patch.object(main, "_analyze_roi_health", return_value={"risk_level": "info", "diagnostics": []}),
+                patch.object(main, "get_runtime_acceleration", return_value=accel),
+                patch.object(main, "extract_frames", side_effect=fake_extract_frames),
+                patch.object(main, "detect_sheet_regions", return_value=[{"frame_path": "frame_0001.png"}]),
+                patch.object(main, "rectify_frames", side_effect=fake_rectify_frames),
+                patch.object(main, "select_review_candidates", return_value=[]),
+                patch.object(main, "stitch_pages", side_effect=fake_stitch_pages),
+                patch.object(main, "upscale_frames", side_effect=fake_upscale_frames),
+                patch.object(main, "export_frames", side_effect=fake_export_frames),
+                patch.object(main, "_probe_video_metadata", return_value=(1920, 1080, 252.0)),
+                patch.object(main, "_probe_video_resolution", return_value=(1920, 1080)),
+            ):
+                response = main.create_job(payload)
+                self.assertEqual(len(executor.submitted), 1)
+                main._run_job(response.job_id, payload)
+
+                job = store.get(response.job_id)
+                self.assertIsNotNone(job)
+                self.assertEqual(job.status, JobStatus.DONE)
+                self.assertEqual(job.source_type, "youtube")
+                self.assertEqual(job.youtube_url, "https://www.youtube.com/watch?v=abc12345678")
+                self.assertEqual(job.result.get("source_video_path"), str(prepared_video))
+                self.assertTrue(Path(job.result.get("pdf", "")).exists())
+
+                job_json = jobs_root / response.job_id / "job.json"
+                self.assertTrue(job_json.exists())
+                self.assertIn("URL Flow Lesson", job_json.read_text(encoding="utf-8"))
+
+                local = main.local_media_registry()
+                archive = main.archive_library()
+
+            local_match = next(
+                item
+                for item in local.items
+                if item.youtube_url == "https://www.youtube.com/watch?v=abc12345678"
+            )
+            self.assertEqual(local_match.display_name, "URL Flow Lesson")
+            self.assertTrue(local_match.has_score)
+            self.assertEqual(local_match.youtube_url, "https://www.youtube.com/watch?v=abc12345678")
+            archive_match = next(
+                item
+                for item in archive.items
+                if item.source_key == "https://www.youtube.com/watch?v=abc12345678"
+            )
+            self.assertEqual(archive_match.source_kind, "youtube")
+            self.assertEqual(archive_match.source_key, "https://www.youtube.com/watch?v=abc12345678")
+
     def test_run_job_uses_stored_export_options_for_document_header(self):
         with tempfile.TemporaryDirectory() as td:
             jobs_root = Path(td)

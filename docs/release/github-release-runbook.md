@@ -10,6 +10,8 @@ The workflow YAML below must stay aligned with:
 - `.github/workflows/release.yml`
 - `desktop/scripts/run-builder.js`
 - `desktop/scripts/validate-packaged-release.js`
+- `desktop/scripts/smoke-packaged-electron.js`
+- `desktop/scripts/smoke-packaged-runtime.js`
 
 ## Release Defaults
 
@@ -36,10 +38,13 @@ backend/.venv/bin/pip install -r backend/requirements-build.txt
 
 cd desktop
 npm ci
-npm run check:renderer-syntax
-npm run check:locale-init
-node --test tests/*.test.mjs
-npm run pack:release
+npm run test:desktop-smoke
+npm run verify:renderer-v2
+npm run test:desktop-node
+npm run test:packaged-release
+npm run dist:release
+npm run smoke:packaged-electron
+npm run smoke:packaged-runtime
 ```
 
 4. Commit the release changes
@@ -66,65 +71,7 @@ git push origin v0.1.0
 
 ## CI Workflow
 
-The committed `.github/workflows/ci.yml` should continue to match this content:
-
-```yaml
-name: CI
-
-on:
-  push:
-  pull_request:
-
-jobs:
-  validate:
-    runs-on: macos-14
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: desktop/package-lock.json
-
-      - name: Install backend dependencies
-        run: python -m pip install -r backend/requirements.txt
-
-      - name: Install desktop dependencies
-        working-directory: desktop
-        run: npm ci
-
-      - name: Run backend pagination tests
-        run: PYTHONPATH=backend python backend/tests/test_sheet_finalize.py
-
-      - name: Run backend ROI health tests
-        run: PYTHONPATH=backend python backend/tests/test_roi_health.py
-
-      - name: Check renderer syntax
-        working-directory: desktop
-        run: npm run check:renderer-syntax
-
-      - name: Check locale bootstrap policy
-        working-directory: desktop
-        run: npm run check:locale-init
-
-      - name: Verify release docs exist
-        run: |
-          test -f LICENSE
-          test -f README.md
-          test -f README.en.md
-          test -f README.ko.md
-          test -f docs/reports/2026-03-09-github-production-readiness-report.md
-          test -f docs/release/github-release-runbook.md
-```
+The authoritative CI definition is `.github/workflows/ci.yml`. Do not keep a copied YAML block in this runbook; it drifts too easily. Before tagging a release, confirm the workflow still runs the backend suite, `verify:renderer-v2`, and desktop node tests on both `macos-14` and `windows-latest`.
 
 ## Release Workflow
 
@@ -182,43 +129,84 @@ jobs:
 
       - name: Run backend test suite
         shell: bash
-        run: PYTHONPATH=backend python -m unittest discover -s backend/tests -p 'test_*.py'
+        env:
+          PYTHONPATH: backend
+        run: python -m unittest discover -s backend/tests -p 'test_*.py'
+
+      - name: Build frozen backend runtime
+        shell: bash
+        run: |
+          python backend/scripts/build_frozen_backend.py
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            test -f backend/runtime/drumsheet-backend/drumsheet-backend.exe
+          else
+            test -f backend/runtime/drumsheet-backend/drumsheet-backend
+          fi
+
+      - name: Smoke test frozen backend
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/drumsheet-jobs"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            BACKEND_BIN="backend/runtime/drumsheet-backend/drumsheet-backend.exe"
+          else
+            BACKEND_BIN="backend/runtime/drumsheet-backend/drumsheet-backend"
+          fi
+          DRUMSHEET_PORT=8123 DRUMSHEET_JOBS_DIR="$RUNNER_TEMP/drumsheet-jobs" "$BACKEND_BIN" > "$RUNNER_TEMP/drumsheet-backend.log" 2>&1 &
+          BACKEND_PID=$!
+          trap 'kill $BACKEND_PID >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 18); do
+            sleep 5
+            if curl -sf http://127.0.0.1:8123/health >/dev/null; then
+              exit 0
+            fi
+          done
+          cat "$RUNNER_TEMP/drumsheet-backend.log"
+          exit 1
 
       - name: Install desktop dependencies
         working-directory: desktop
         run: npm ci
 
-      - name: Check renderer syntax
+      - name: Smoke test desktop startup contract
         working-directory: desktop
         shell: bash
-        run: npm run check:renderer-syntax
+        run: npm run test:desktop-smoke
+
+      - name: Verify renderer-v2
+        working-directory: desktop
+        shell: bash
+        run: npm run verify:renderer-v2
 
       - name: Run desktop node tests
         working-directory: desktop
         shell: bash
-        run: node --test tests/*.test.mjs
-
-      - name: Verify locale bootstrap policy
-        working-directory: desktop
-        run: npm run check:locale-init
+        run: npm run test:desktop-node
 
       - name: Build release artifacts
         working-directory: desktop
         run: npm run dist:release
+
+      - name: Smoke test packaged Electron app
+        working-directory: desktop
+        run: npm run smoke:packaged-electron
+
+      - name: Smoke test packaged backend runtime
+        working-directory: desktop
+        run: npm run smoke:packaged-runtime
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
             ${{ matrix.artifact_glob }}
-            dist/*.blockmap
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
 ## Locale Bootstrap Verification
 
-The workflow checks `desktop/scripts/check-locale-init.js`.
+The workflow runs `npm run verify:renderer-v2`, which includes `desktop/scripts/check-locale-init.js`.
 
 It verifies:
 
@@ -228,11 +216,18 @@ It verifies:
 - everything else resolves to `en`
 - renderer `i18n.js` applies the same policy
 
+## Packaged Backend Source-Text Checks
+
+`desktop/scripts/validate-packaged-release.js` still checks a few packaged backend source markers because current release packages intentionally ship the backend source tree next to the frozen runtime. Treat these as source-package compatibility and stale-copy checks only.
+
+Packaged behavior is gated in two layers: `npm run smoke:packaged-electron` starts the generated Electron app and waits for its backend to expose `/health` and `/runtime`; `npm run smoke:packaged-runtime` starts the backend executable from the generated `dist/` payload, reads `/runtime`, and extracts a preview frame from a generated local video.
+
 ## Unsigned Release Notes
 
 - current production release is intentionally unsigned
 - this avoids accidental local certificate auto-discovery
 - macOS arm64 builds can still be produced in this mode, but Gatekeeper or trust warnings should be expected until signing and notarization are introduced
+- Windows x64 installers can still be produced in this mode, but SmartScreen or publisher trust warnings should be expected until Windows code signing is introduced
 - public install docs must include the exact `xattr` command below
 - if a user reports that macOS blocked the DMG or app, document this workaround:
 

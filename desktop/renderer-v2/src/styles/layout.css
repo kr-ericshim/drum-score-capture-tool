@@ -56,6 +56,7 @@
   display: none;
 }
 
+.app-shell[data-step="source"] .workspace-shell,
 .app-shell[data-step="export"] .workspace-shell {
   grid-template-columns: 204px minmax(0, 1fr);
 }
@@ -180,6 +181,7 @@
     grid-template-columns: 190px minmax(0, 1fr) 228px;
   }
 
+  .app-shell[data-step="source"] .workspace-shell,
   .app-shell[data-step="export"] .workspace-shell {
     grid-template-columns: 190px minmax(0, 1fr);
   }
@@ -212,6 +214,7 @@
     max-height: 280px;
   }
 
+  .app-shell[data-step="source"] .workspace-shell,
   .app-shell[data-step="export"] .workspace-shell {
     grid-template-columns: 184px minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
@@ -259,6 +262,7 @@
   }
 
   .workspace-shell,
+  .app-shell[data-step="source"] .workspace-shell,
   .app-shell[data-step="export"] .workspace-shell,
   .app-shell[data-step="roi"] .workspace-shell {
     grid-template-columns: minmax(0, 1fr);

@@ -16,14 +16,17 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "check:renderer-syntax": "node --check renderer/app.js && node --check renderer/modules/i18n.js && node --check renderer/modules/job-api.js && node --check renderer/modules/messages.js && node --check renderer/modules/runtime-status-ui.js && node --check renderer/modules/status-ui.js && node --check renderer/modules/video-range-picker.js",
     "check:renderer-v2": "node scripts/check-renderer-v2.js",
     "check:locale-init": "node scripts/check-locale-init.js",
     "measure:renderer-footprint": "node scripts/measure-renderer-v2-baseline.js",
+    "test:desktop-smoke": "node --test tests/main-startup-smoke.test.mjs",
     "test:packaged-release": "node --test tests/validate-packaged-release.test.mjs",
     "test:renderer-entry": "node --test tests/renderer-entry.test.cjs",
     "test:workflow-shell": "node --test tests/workflow-shell.test.mjs",
+    "test:desktop-node": "node --test tests/*.test.mjs tests/*.test.cjs",
     "test:renderer-v2": "node --test renderer-v2/src/tests/*.test.js",
+    "smoke:packaged-runtime": "node scripts/smoke-packaged-runtime.js",
+    "smoke:packaged-electron": "node scripts/smoke-packaged-electron.js",
     "verify:renderer-v2": "npm run test:renderer-entry && npm run test:workflow-shell && npm run test:renderer-v2 && npm run check:renderer-v2 && npm run check:locale-init",
     "pack": "node scripts/run-builder.js pack release",
     "pack:lean": "node scripts/run-builder.js pack lean",
@@ -36,9 +39,9 @@
     "dist:compact": "node scripts/run-builder.js dist compact",
     "dist:release": "node scripts/run-builder.js dist release"
   },
-  "dependencies": {},
   "devDependencies": {
-    "electron": "^37.2.0",
+    "@electron/asar": "^3.4.1",
+    "electron": "^39.8.6",
     "electron-builder": "^26.1.0",
     "ffmpeg-static": "^5.3.0",
     "ffprobe-static": "^3.1.0"

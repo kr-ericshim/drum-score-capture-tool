@@ -1,6 +1,7 @@
 # Codebase Concerns
 
 **Analysis Date:** 2026-04-17
+**Last Updated:** 2026-05-18
 
 ## Tech Debt
 
@@ -10,62 +11,57 @@
 - Impact: Small feature changes cut across unrelated concerns, raise merge-conflict risk, and make regressions hard to localize.
 - Fix approach: Split route handlers from job orchestration, cache/services, and file-resolution helpers so unit boundaries match behavior boundaries.
 
-**Dual renderer stacks with duplicated workflow logic:**
-- Issue: The app still carries the legacy renderer in `desktop/renderer/` while the default path resolves to `desktop/renderer-v2/index.html` when present.
-- Files: `desktop/renderer-entry.js`, `desktop/renderer/app.js`, `desktop/renderer/modules/job-api.js`, `desktop/renderer/modules/i18n.js`, `desktop/renderer-v2/src/app/App.js`, `desktop/renderer-v2/src/lib/api.js`, `desktop/renderer-v2/src/lib/i18n.js`
-- Impact: API contract, locale, and workflow fixes need to land in two UI implementations, which increases drift and doubles the regression surface.
-- Fix approach: Either retire the legacy renderer or move shared client/state/i18n logic behind version-neutral modules with one contract.
+**Legacy renderer stack retired:**
+- Status: Mitigated 2026-05-18. `desktop/renderer/` and legacy-only desktop tests were removed, and `desktop/renderer-entry.js` resolves `renderer-v2/index.html` as the only product UI.
+- Residual risk: Historic docs and old planning artifacts may still mention the retired renderer for context, but runtime and release verification now target renderer-v2 only.
 
-**Regression fixtures are mixed into runtime cache paths:**
-- Issue: backend regression tests read sample assets from `backend/jobs/<uuid>/...`, which is the same tree used for live job artifacts and preview caches.
-- Files: `backend/tests/test_stitch_regression.py`, `backend/tests/test_sheet_finalize.py`, `backend/app/main.py`, `.gitignore`
-- Impact: Test data is easy to delete with cache cleanup, hard to version safely, and tightly coupled to local workstation state instead of tracked fixtures.
-- Fix approach: Move immutable samples into a versioned `backend/tests/fixtures/` tree and keep runtime cache directories disposable.
+**Regression fixtures are guarded against runtime cache coupling:**
+- Status: Mitigated 2026-05-18. Current backend tests synthesize temporary job trees or use synthetic image data, and `backend/tests/test_fixture_isolation.py` now fails if future backend tests reference the runtime `backend/jobs` tree directly.
+- Residual risk: Desktop renderer tests still contain sample display paths that look like `backend/jobs/...`, but they do not read runtime artifacts.
 
-**Release validation is coupled to packaged source text:**
-- Issue: post-build validation checks exact source strings inside packaged Python files instead of validating behavior through public interfaces.
+**Release validation still includes packaged source-text compatibility checks:**
+- Status: Partially mitigated 2026-05-18. The validator now treats source-text checks as current-source vs packaged-source compatibility markers, while backend behavior is covered by unit tests and frozen-runtime smoke.
+- Issue: Post-build validation still reads packaged Python source because release packages intentionally ship the backend source tree next to the frozen runtime.
 - Files: `desktop/scripts/validate-packaged-release.js`, `backend/app/main.py`, `backend/app/pipeline/extract.py`
-- Impact: Safe refactors can break release builds even when runtime behavior is still correct, and the package contract now depends on duplicated source files being shipped next to the frozen runtime.
-- Fix approach: Validate the packaged executable and HTTP/API behavior directly, and remove source-text assertions that are only proxy signals.
+- Impact: Safe refactors are less likely to break on hardcoded strings now, but the package contract still depends on duplicated source files being shipped next to the frozen runtime.
+- Fix approach: Decide whether packaged Python fallback remains supported, then replace source-package checks with packaged executable/API behavior checks and trim source-only files from release bundles.
 
 ## Known Bugs
 
-**Cache clear can corrupt active YouTube prepare jobs:**
-- Symptoms: Cache cleanup can delete `_preview_source` and `_preview_source_jobs` artifacts while a source-prepare job is still running, leaving stale in-memory status and missing files on disk.
+**Cache clear/source-prepare race is fixed and covered:**
+- Status: Fixed before 2026-05-18 and covered by `backend/tests/test_source_prepare_jobs.py`.
+- Previous symptoms: Cache cleanup could delete `_preview_source` and `_preview_source_jobs` artifacts while a source-prepare job was still running, leaving stale in-memory status and missing files on disk.
 - Files: `backend/app/main.py`, `backend/app/job_store.py`
-- Trigger: Call `/maintenance/clear-cache` while `/preview/source-jobs` work created by `create_preview_source_job()` is active.
-- Workaround: Do not run cache cleanup during YouTube prepare; restart the backend or desktop app if a prepare job becomes stuck after cleanup.
+- Current behavior: `/maintenance/clear-cache` returns `409` while capture/export or source-prepare jobs are active, clears both job stores when idle, and shares a maintenance lock with new capture/source-prepare job creation so cache deletion cannot interleave with new job persistence.
 
-**Renderer-v2 regressions can bypass CI and release workflows:**
-- Symptoms: Changes under `desktop/renderer-v2/src/` can merge without the workflow failing, even though renderer-v2 is the default UI path.
+**Renderer-v2 CI/release coverage is now enforced:**
+- Status: Fixed. CI and release workflows both run `npm run verify:renderer-v2`.
+- Previous symptoms: Changes under `desktop/renderer-v2/src/` could merge without the workflow failing, even though renderer-v2 is the default UI path.
 - Files: `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `desktop/package.json`, `desktop/renderer-entry.js`
-- Trigger: Modify renderer-v2 behavior without manually running `cd desktop && npm run verify:renderer-v2`.
-- Workaround: Run `npm run verify:renderer-v2` locally before release or review.
 
-**Backend regression tests depend on ignored local artifacts:**
-- Symptoms: Clean clones or freshly provisioned CI environments do not have the required image fixtures, so tests that assert those files exist can fail immediately.
-- Files: `backend/tests/test_stitch_regression.py`, `backend/tests/test_sheet_finalize.py`, `.gitignore`
-- Trigger: Run the backend suite on a machine that does not already contain the ignored `backend/jobs/...` sample directories.
-- Workaround: Preserve the local `backend/jobs/` fixture directories on developer machines until the samples are moved into tracked test fixtures.
+**Backend regression tests are isolated from ignored local artifacts:**
+- Status: Mitigated 2026-05-18 by the fixture isolation guard and full backend-suite verification with `DRUMSHEET_JOBS_DIR` pointed at a fresh temporary directory.
+- Files: `backend/tests/test_fixture_isolation.py`, `backend/tests/test_sheet_finalize.py`
 
 ## Security Considerations
 
 **Unescaped HTML rendering in the Electron renderer:**
-- Risk: Renderer-v2 builds markup with template strings and writes it via `innerHTML`, while interpolated values include file names, file paths, job messages, YouTube log lines, and backend error text.
+- Risk: Renderer-v2 still builds markup with template strings and writes it via `innerHTML`, so new dynamic fields must be escaped before interpolation.
 - Files: `desktop/renderer-v2/src/app/App.js`, `desktop/renderer-v2/src/ui/shell/AppShell.js`, `desktop/renderer-v2/src/features/source/SourceScreen.js`, `desktop/renderer-v2/src/features/review/ReviewScreen.js`, `desktop/renderer-v2/src/features/export/ExportScreen.js`, `desktop/preload.js`
-- Current mitigation: `desktop/main.js` enables `contextIsolation` and disables `nodeIntegration`.
-- Recommendations: Escape all dynamic strings before interpolation or stop using `innerHTML` for stateful renderer updates.
+- Current mitigation: `desktop/main.js` enables `contextIsolation` and disables `nodeIntegration`; active renderer-v2 surfaces use `escapeHtml` / `escapeAttr` or local escape helpers for user/backend-controlled values, with regression tests covering source, review, export, process rail, and profile rows.
+- Recommendation: Keep adding focused escaping tests whenever a new dynamic renderer-v2 field is introduced.
 
-**Session token is accepted and emitted through query strings:**
-- Risk: Protected asset URLs append `?token=...`, which increases exposure through logs, devtools, copied URLs, and any injected markup that can read rendered DOM.
-- Files: `backend/app/main.py`, `desktop/renderer-v2/src/lib/api.js`, `desktop/renderer/modules/job-api.js`, `desktop/preload.js`
-- Current mitigation: The token is random per launch and the backend binds to loopback by default through `backend/run.py`.
-- Recommendations: Keep auth in headers only, or proxy asset reads through Electron IPC so renderer image/video requests do not need token-bearing URLs.
+**Session token leakage through query strings:**
+- Status: Mitigated 2026-05-18 after legacy renderer retirement.
+- Risk: Token-bearing URLs can leak through logs, browser history, and developer tools if future code reintroduces query-string auth.
+- Files: `backend/app/main.py`, `desktop/renderer-v2/src/lib/api.js`, `desktop/preload.js`
+- Current mitigation: Backend protected routes authenticate only through `X-DrumSheet-Token`; renderer-v2 preview images are fetched through `readJobAsset()` / header-authenticated fetch and rendered as `blob:` URLs; blob URLs are revoked on stale preview responses, preview replacement, and app destroy.
+- Recommendation: Keep query-token rejection covered by backend tests and keep protected renderer-v2 assets behind header-authenticated fetches.
 
 **Packaged app ships more backend surface than it executes:**
 - Risk: Release packaging includes the backend source tree plus the frozen runtime, even though packaged launch uses the executable path when present.
 - Files: `desktop/package.json`, `desktop/electron-builder.config.js`, `desktop/main.js`
-- Current mitigation: `desktop/scripts/validate-packaged-release.js` checks that the frozen runtime exists and `.venv` is absent.
+- Current mitigation: `desktop/scripts/validate-packaged-release.js` checks that the frozen runtime exists, is at least as fresh as the backend source, `.venv` is absent, and packaged backend source-text compatibility markers match current source.
 - Recommendations: Trim packaged backend contents to the runtime assets actually used by `desktop/main.js` and keep source-only files out of release bundles.
 
 ## Performance Bottlenecks
@@ -94,7 +90,7 @@
 - Files: `backend/app/pipeline/stitch.py`, `backend/app/pipeline/sheet_finalize.py`, `backend/app/pipeline/layout_profiles.py`
 - Why fragile: The pipeline depends on many thresholded image heuristics such as overlap scoring, near-duplicate filtering, whitespace slicing, and page-turn detection.
 - Safe modification: Treat threshold changes as regression-prone; add or refresh fixture-backed tests before altering overlap, dedupe, or page-fill behavior.
-- Test coverage: Coverage exists, but it mixes synthetic images with local `backend/jobs/...` samples instead of a clean tracked fixture corpus.
+- Test coverage: Coverage exists and backend tests are guarded against direct runtime `backend/jobs` fixture reads.
 
 **YouTube prepare and cache flow:**
 - Files: `backend/app/pipeline/extract.py`, `backend/app/main.py`, `desktop/renderer-v2/src/features/source/sourceController.js`
@@ -106,7 +102,7 @@
 - Files: `desktop/main.js`, `desktop/scripts/run-builder.js`, `desktop/scripts/validate-packaged-release.js`, `backend/scripts/build_frozen_backend.py`
 - Why fragile: Runtime staging, backend executable discovery, ffmpeg staging, builder profiles, and validator assumptions all have to line up exactly across Node and Python.
 - Safe modification: Change one path contract at a time and update the validator in the same patch.
-- Test coverage: Validation is mostly file-presence and string-match based; there is no packaged UI smoke test in CI.
+- Test coverage: Validation now includes runtime freshness, frozen backend `/health` smoke in release CI, renderer-v2 verification, and no-GUI Electron startup smoke; full packaged click-through remains manual.
 
 ## Scaling Limits
 
@@ -115,10 +111,10 @@
 - Limit: Additional jobs queue behind the current task, which increases wait time and makes the app feel stalled under repeated retries or batch use.
 - Scaling path: Make concurrency explicit in the product model, or add configurable worker counts and queue visibility instead of silently serializing everything.
 
-**Artifact retention is unbounded until manual cleanup:**
-- Current capacity: The app keeps outputs, preview caches, source-prepare metadata, and exported review artifacts under `backend/jobs/` until `/maintenance/clear-cache` is called.
-- Limit: Long-lived environments accumulate disk usage and slow maintenance operations, while the same tree is also used by some regression tests.
-- Scaling path: Separate test fixtures from runtime artifacts and add TTL, quota, or per-job cleanup policies.
+**Artifact retention remains partly manual after preview cleanup:**
+- Current capacity: The app keeps outputs, source-prepare metadata, and exported review artifacts under `backend/jobs/` until `/maintenance/clear-cache` is called; preview-frame workspaces now have bounded request-triggered retention.
+- Limit: Long-lived environments can still accumulate completed job outputs and source caches.
+- Scaling path: Add explicit retention policy for completed exports and source caches, and keep runtime artifacts separate from tests.
 
 ## Dependencies at Risk
 
@@ -147,43 +143,44 @@
 - Files: `backend/app/job_store.py`, `backend/app/main.py`, `desktop/renderer-v2/src/app/App.js`
 - Blocks: Reliable recovery for long downloads, long exports, and interrupted desktop sessions.
 
-**No packaged end-to-end renderer smoke automation:**
-- Problem: Release automation validates the backend executable and artifact metadata, but not the packaged Electron UI flow from file selection through export.
-- Files: `.github/workflows/release.yml`, `desktop/scripts/validate-packaged-release.js`, `desktop/main.js`, `desktop/preload.js`
-- Blocks: Confident detection of renderer/preload/backend integration regressions before shipping installers.
+**Packaged end-to-end renderer smoke remains manual:**
+- Status: Partially mitigated 2026-05-18. Release automation now runs `npm run test:desktop-smoke`, which mocks Electron/backend startup and verifies renderer-v2 loading, isolated preload settings, IPC auth channels, and backend health polling.
+- Remaining gap: It still does not install or launch the real packaged app and click through file selection -> ROI -> export.
+- Files: `.github/workflows/release.yml`, `desktop/tests/main-startup-smoke.test.mjs`, `desktop/scripts/validate-packaged-release.js`, `desktop/main.js`, `desktop/preload.js`
+- Blocks: Full confidence that packaged GUI behavior matches manual smoke expectations before shipping installers.
 
 ## Test Coverage Gaps
 
-**Maintenance endpoints are untested:**
-- What's not tested: `/maintenance/clear-cache` and `/maintenance/cache-usage`, including interactions with `_preview_source_jobs` and `_preview_source`.
+**Maintenance endpoints have focused regression coverage:**
+- Status: Mitigated 2026-05-18. `/maintenance/clear-cache` is covered for active source-prepare blocking and creation serialization; `/maintenance/cache-usage` is covered for isolated job roots, recursive byte totals, disappearing files during scan, and a representative nested artifact tree.
+- What's still not tested: Hard performance budgets for very large production artifact trees.
 - Files: `backend/app/main.py`
-- Risk: The current cache-clear/source-prepare race can persist unnoticed, and future cleanup changes can silently break job persistence.
-- Priority: High
-
-**Renderer-v2 checks are not part of GitHub workflows:**
-- What's not tested: The renderer-v2 Node test suite and structural checks in `desktop/renderer-v2/src/tests/` and `desktop/scripts/check-renderer-v2.js`.
-- Files: `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `desktop/package.json`, `desktop/renderer-v2/src/tests/app-runtime-flows.test.js`
-- Risk: The default UI can regress without CI or release blockers.
-- Priority: High
-
-**Legacy-only locale/syntax checks leave the active UI uncovered:**
-- What's not tested: renderer-v2 locale bootstrap and syntax by the current release guard scripts.
-- Files: `desktop/scripts/check-locale-init.js`, `desktop/package.json`, `desktop/renderer/modules/i18n.js`, `desktop/renderer-v2/src/lib/i18n.js`
-- Risk: Locale or markup regressions in renderer-v2 can ship even when the legacy-only checks still pass.
-- Priority: High
-
-**Security-sensitive rendering paths have no escaping tests:**
-- What's not tested: Malicious file names, YouTube URLs, backend error strings, and prepare logs rendered through template-string HTML.
-- Files: `desktop/renderer-v2/src/app/App.js`, `desktop/renderer-v2/src/features/source/SourceScreen.js`, `desktop/renderer-v2/src/features/review/ReviewScreen.js`
-- Risk: Markup breakage or injection issues can slip into packaged builds.
-- Priority: High
-
-**Windows release builds do not run the backend suite:**
-- What's not tested: The backend test suite on the Windows runner that actually produces the Windows installer.
-- Files: `.github/workflows/release.yml`
-- Risk: Windows-only runtime or path issues can survive until manual smoke testing.
+- Risk: Future cache accounting or retention changes can still become slow at very large scale, but correctness regressions are now covered.
 - Priority: Medium
+
+**Renderer-v2 checks are part of GitHub workflows:**
+- Status: Fixed. The renderer-v2 Node test suite and structural checks are part of CI and release workflows through `npm run verify:renderer-v2`.
+- Files: `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `desktop/package.json`, `desktop/renderer-v2/src/tests/app-runtime-flows.test.js`
+- Priority: Closed
+
+**Renderer-v2 locale/syntax checks cover the active UI:**
+- Status: Fixed. `npm run verify:renderer-v2` includes renderer-v2 tests, structural parsing, and `check:locale-init`.
+- Files: `desktop/scripts/check-locale-init.js`, `desktop/package.json`, `desktop/renderer-v2/src/lib/i18n.js`
+- Priority: Closed
+
+**Security-sensitive rendering paths need continued escaping coverage:**
+- Status: Partially mitigated. Renderer-v2 has focused escaping tests for several user/backend-controlled fields, including source, review, export, process rail, and processing-profile rows.
+- What's still not exhaustively tested: Every future dynamic field rendered through template-string HTML.
+- Files: `desktop/renderer-v2/src/app/App.js`, `desktop/renderer-v2/src/features/source/SourceScreen.js`, `desktop/renderer-v2/src/features/review/ReviewScreen.js`
+- Risk: New unescaped template interpolations can still slip in without a test.
+- Priority: Medium
+
+**Windows release builds run the backend suite:**
+- Status: Fixed 2026-05-18. The release workflow now runs backend `unittest` discovery on both Windows and macOS after installing `backend/requirements-build.txt`.
+- Files: `.github/workflows/release.yml`, `backend/requirements-build.txt`, `backend/requirements.txt`, `backend/tests/`
+- Residual risk: This catches Windows unit-level path/runtime regressions before packaging, but the real packaged Windows GUI flow still depends on frozen-backend smoke checks and manual installer smoke testing.
+- Priority: Closed
 
 ---
 
-*Concerns audit: 2026-04-17*
+*Concerns audit: 2026-04-17; remediation notes updated 2026-05-18*

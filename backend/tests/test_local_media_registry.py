@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from app import main
 from app.job_store import Job, JobStatus, JobStore, SourcePrepareJob, SourcePrepareStore
 from app.main import local_media_registry
 
@@ -172,6 +173,7 @@ class TestLocalMediaRegistry(unittest.TestCase):
                 patch("app.main.job_store", job_store),
                 patch("app.main.source_prepare_store", prepare_store),
                 patch("app.main._probe_video_metadata", return_value=(1920, 1080, 252.0)),
+                patch("app.main._probe_video_resolution", return_value=(1920, 1080)),
             ):
                 response = local_media_registry()
 
@@ -223,6 +225,7 @@ class TestLocalMediaRegistry(unittest.TestCase):
                 patch("app.main.job_store", job_store),
                 patch("app.main.source_prepare_store", prepare_store),
                 patch("app.main._probe_video_metadata", return_value=(1920, 1080, 252.0)),
+                patch("app.main._probe_video_resolution", return_value=(1920, 1080)),
             ):
                 response = local_media_registry()
 
@@ -230,6 +233,66 @@ class TestLocalMediaRegistry(unittest.TestCase):
             self.assertEqual(response.items[0].source_path, str(cache_source.resolve()))
             self.assertEqual(response.items[0].display_name, "Direct YouTube Lesson")
             self.assertEqual(response.items[0].youtube_url, "https://www.youtube.com/watch?v=abc123")
+            self.assertEqual(response.items[0].pdf_path, str(pdf_path.resolve()))
+
+    def test_local_media_registry_hydrates_direct_youtube_job_from_cache_entry(self):
+        with tempfile.TemporaryDirectory() as td:
+            jobs_root = Path(td) / "jobs"
+            jobs_root.mkdir(parents=True, exist_ok=True)
+
+            youtube_url = "https://youtu.be/cacheonly"
+            with patch("app.main.jobs_root", jobs_root):
+                cache_dir = main._preview_source_cache_workspace(youtube_url)
+            cache_source = cache_dir / "downloads" / "cache-only.mp4"
+            cache_source.parent.mkdir(parents=True, exist_ok=True)
+            cache_source.write_bytes(b"video")
+            (cache_source.parent / "source.json").write_text(
+                '{"source_key":"https://www.youtube.com/watch?v=cacheonly","video_title":"Cache Only Lesson"}',
+                encoding="utf-8",
+            )
+
+            export_dir = jobs_root / "job-cache-only" / "export"
+            export_dir.mkdir(parents=True, exist_ok=True)
+            pdf_path = export_dir / "sheet_export.pdf"
+            pdf_path.write_bytes(b"%PDF")
+
+            job_store = JobStore(jobs_root)
+            job_store.create(
+                Job(
+                    id="job-cache-only",
+                    source_type="youtube",
+                    file_path=None,
+                    youtube_url=youtube_url,
+                    options={},
+                    artifact_dir=str(jobs_root / "job-cache-only"),
+                    source_identity={
+                        "kind": "youtube",
+                        "key": youtube_url,
+                    },
+                    status=JobStatus.DONE,
+                    result={
+                        "output_dir": str(export_dir),
+                        "pdf": str(pdf_path),
+                    },
+                    updated_at=30.0,
+                )
+            )
+
+            prepare_store = SourcePrepareStore(jobs_root / "_preview_source_jobs")
+
+            with (
+                patch("app.main.jobs_root", jobs_root),
+                patch("app.main.job_store", job_store),
+                patch("app.main.source_prepare_store", prepare_store),
+                patch("app.main._probe_video_metadata", return_value=(1920, 1080, 252.0)),
+                patch("app.main._probe_video_resolution", return_value=(1920, 1080)),
+            ):
+                response = local_media_registry()
+
+            self.assertEqual(len(response.items), 1)
+            self.assertEqual(response.items[0].source_path, str(cache_source.resolve()))
+            self.assertEqual(response.items[0].display_name, "Cache Only Lesson")
+            self.assertEqual(response.items[0].youtube_url, "https://www.youtube.com/watch?v=cacheonly")
             self.assertEqual(response.items[0].pdf_path, str(pdf_path.resolve()))
 
 

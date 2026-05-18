@@ -29,3 +29,4 @@ Then open the app again.
 ## Known Limitation
 
 - The macOS app is not Apple-signed or notarized. Public install instructions must continue to include the `xattr` workaround above.
+- The Windows installer is not code-signed yet. SmartScreen or unknown publisher warnings are expected until Windows signing is added.

@@ -36,12 +36,14 @@ function renderArchiveList(items, locale) {
       ${items.map((item) => {
         const completedAt = formatCompletedAt(item.completedAt, locale);
         return `
-          <button class="archive-row" type="button" data-action="select-archive-item" data-source-key="${escapeAttr(item.sourceKey)}">
-            <span class="archive-row-copy">
-              <strong>${escapeHtml(item.displayName || item.sourceKey)}</strong>
-              <span>${completedAt || t("archive.completedUnknown", { locale })}</span>
-            </span>
-          </button>
+          <div role="listitem">
+            <button class="archive-row" type="button" data-action="select-archive-item" data-source-key="${escapeAttr(item.sourceKey)}">
+              <span class="archive-row-copy">
+                <strong>${escapeHtml(item.displayName || item.sourceKey)}</strong>
+                <span>${completedAt || t("archive.completedUnknown", { locale })}</span>
+              </span>
+            </button>
+          </div>
         `;
       }).join("")}
     </div>

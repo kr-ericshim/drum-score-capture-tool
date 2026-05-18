@@ -1,5 +1,7 @@
 const fs = require("fs");
 
+const RUNTIME_STALE_GRACE_MS = 60 * 1000;
+
 function fileMtimeMs(filePath = "") {
   if (!filePath) {
     return 0;
@@ -18,7 +20,11 @@ function decidePackagedBackendLaunchMode({
 } = {}) {
   const runtimeMtimeMs = fileMtimeMs(runtimeExecutablePath);
   const sourceMtimeMs = fileMtimeMs(sourceEntryPath);
-  const staleRuntime = Boolean(runtimeMtimeMs && sourceMtimeMs && sourceMtimeMs > runtimeMtimeMs);
+  const staleRuntime = Boolean(
+    runtimeMtimeMs &&
+    sourceMtimeMs &&
+    sourceMtimeMs - runtimeMtimeMs > RUNTIME_STALE_GRACE_MS,
+  );
 
   if (staleRuntime && pythonAvailable) {
     return {
@@ -42,4 +48,5 @@ function decidePackagedBackendLaunchMode({
 module.exports = {
   decidePackagedBackendLaunchMode,
   fileMtimeMs,
+  RUNTIME_STALE_GRACE_MS,
 };

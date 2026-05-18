@@ -9,7 +9,8 @@ const { resolveRendererIndexPath } = require("./renderer-entry");
 
 const BACKEND_PORT = Number(process.env.DRUMSHEET_PORT || 8000);
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
-const BACKEND_SESSION_TOKEN = crypto.randomBytes(24).toString("hex");
+const BACKEND_SESSION_TOKEN = String(process.env.DRUMSHEET_SESSION_TOKEN || "").trim()
+  || crypto.randomBytes(24).toString("hex");
 
 let mainWindow = null;
 let backendProcess = null;

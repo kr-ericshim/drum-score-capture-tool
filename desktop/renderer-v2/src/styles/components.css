@@ -1303,7 +1303,7 @@
   font-weight: 600;
 }
 
-.registry-row td[data-column="path"] {
+.registry-row td[data-column="filename"] {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
@@ -1458,7 +1458,7 @@
 
 .segmented-row {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
   gap: 8px;
 }
 
@@ -1605,6 +1605,7 @@
 .export-profile-row,
 .rail-summary-row {
   display: flex;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   padding: 10px 12px;
@@ -1629,6 +1630,7 @@
   font-weight: 600;
   text-align: right;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .export-preview-figure {
@@ -1892,6 +1894,27 @@
   text-align: center;
 }
 
+.review-empty {
+  display: grid;
+  gap: 6px;
+  width: min(520px, 100%);
+  padding: 18px;
+  border: 1px dashed var(--line-accent-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface-panel);
+  color: var(--text-2);
+}
+
+.review-empty strong {
+  color: var(--text-1);
+  font-size: 14px;
+}
+
+.review-empty p {
+  margin: 0;
+  font-size: 13px;
+}
+
 .review-card {
   display: grid;
   gap: 10px;
@@ -1924,19 +1947,6 @@
 .review-card.is-focused .review-card-figure {
   border-color: var(--accent-2);
   box-shadow: 0 0 0 1px var(--line-accent-soft);
-}
-
-.review-card-tag {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  padding: 3px 6px;
-  border-radius: var(--radius-sm);
-  background: var(--accent);
-  color: var(--text-inverse);
-  font-family: var(--sans);
-  font-size: 10px;
-  font-weight: 700;
 }
 
 .review-card-meta {

@@ -46,12 +46,44 @@ function formatExportProgressStatus({ currentStep, message, locale, runStatus })
   return label === stepKey ? fallback : label;
 }
 
+const SETTING_LABELS = {
+  ko: {
+    auto: "자동",
+    balanced: "균형",
+    bottom_bar: "하단 악보",
+    full_scroll: "전체 화면",
+    performance: "성능 우선",
+    quality: "품질 우선",
+  },
+  en: {
+    auto: "Auto",
+    balanced: "Balanced",
+    bottom_bar: "Bottom score",
+    full_scroll: "Full frame",
+    performance: "Performance",
+    quality: "Quality",
+  },
+};
+
+function formatSettingValue(value, fallback, locale = "en") {
+  const rawValue = String(value || fallback || "").trim();
+  const normalized = rawValue.toLowerCase();
+  const labels = SETTING_LABELS[locale] || SETTING_LABELS.en;
+  return labels[normalized] || rawValue;
+}
+
 function buildProfileRows(state) {
   const locale = state.ui.locale || "en";
   return [
     { label: t("export.captureFps", { locale }), value: "1 FPS" },
-    { label: t("export.pageFill", { locale }), value: String(state.exportConfig.pageFillMode || "performance").toUpperCase() },
-    { label: t("export.layoutHint", { locale }), value: String(state.exportConfig.layoutHint || "auto").toUpperCase() },
+    {
+      label: t("export.pageFill", { locale }),
+      value: formatSettingValue(state.exportConfig.pageFillMode, "performance", locale),
+    },
+    {
+      label: t("export.layoutHint", { locale }),
+      value: formatSettingValue(state.exportConfig.layoutHint, "auto", locale),
+    },
   ];
 }
 
@@ -229,6 +261,10 @@ export function renderExportScreen(state) {
                 <input data-action="toggle-format" data-format="png" type="checkbox" ${checked(model.formats, "png")} ${formatInputsDisabled ? "disabled" : ""} />
                 <span>${t("export.pngMatrix", { locale: model.locale })}</span>
               </label>
+              <label class="segment ${checked(model.formats, "jpg") ? "is-active" : ""}">
+                <input data-action="toggle-format" data-format="jpg" type="checkbox" ${checked(model.formats, "jpg")} ${formatInputsDisabled ? "disabled" : ""} />
+                <span>${t("export.jpgImages", { locale: model.locale })}</span>
+              </label>
             </div>
             ${model.metadata.helperText ? `<p class="panel-note export-metadata-hint">${safeMetadataHelper}</p>` : ""}
           </section>
@@ -240,8 +276,8 @@ export function renderExportScreen(state) {
             <div class="export-profile-list">
               ${model.profileRows.map((item) => `
                 <div class="export-profile-row">
-                  <span>${item.label}</span>
-                  <strong>${item.value}</strong>
+                  <span>${escapeHtml(item.label)}</span>
+                  <strong>${escapeHtml(item.value)}</strong>
                 </div>
               `).join("")}
             </div>
@@ -275,7 +311,7 @@ export function renderExportScreen(state) {
             ${model.previewSource
               ? model.hasCropPreview
                 ? `<div class="export-preview-figure export-preview-crop" style="--crop-x:${model.cropBounds.x}; --crop-y:${model.cropBounds.y}; --crop-w:${model.cropBounds.width}; --crop-h:${model.cropBounds.height}; --image-w:${model.sourceWidth}; --image-h:${model.sourceHeight};">
-                    <img src="${safePreviewSource}" alt="${safeFileNameAttr} roi preview" loading="lazy" />
+                    <img src="${safePreviewSource}" alt="${safeFileNameAttr} score region preview" loading="lazy" />
                     <span class="export-preview-badge">${model.roiSummary}</span>
                   </div>`
                 : `<div class="export-preview-figure">
@@ -340,7 +376,7 @@ export function renderExportScreen(state) {
                     ${model.metadata.validation.bpm ? `<small class="export-metadata-field-error">${safeBpmError}</small>` : ""}
                   </label>
                 </div>
-                <div class="export-metadata-row export-metadata-row-split">
+                <div class="export-metadata-row">
                   <label class="export-metadata-field">
                     <span>${escapeHtml(model.metadata.dateLabel)}</span>
                     <input

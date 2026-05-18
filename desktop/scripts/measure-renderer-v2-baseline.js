@@ -20,6 +20,16 @@ function walkFiles(dir) {
 }
 
 function summarizeRenderer(label, rootDir) {
+  if (!fs.existsSync(rootDir)) {
+    return {
+      label,
+      rootDir,
+      fileCount: 0,
+      totalBytes: 0,
+      totalKiB: 0,
+      retired: true,
+    };
+  }
   const files = walkFiles(rootDir).filter((filePath) => /\.(css|html|js|mjs|cjs)$/i.test(filePath));
   const totalBytes = files.reduce((sum, filePath) => sum + fs.statSync(filePath).size, 0);
 
@@ -35,18 +45,14 @@ function summarizeRenderer(label, rootDir) {
 const desktopDir = path.join(__dirname, "..");
 const legacy = summarizeRenderer("legacy-renderer", path.join(desktopDir, "renderer"));
 const rendererV2 = summarizeRenderer("renderer-v2", path.join(desktopDir, "renderer-v2"));
-const deltaBytes = rendererV2.totalBytes - legacy.totalBytes;
-const deltaKiB = Number((deltaBytes / 1024).toFixed(2));
 
 console.log(
   JSON.stringify(
     {
       measuredAt: new Date().toISOString(),
-      note: "Static renderer footprint only. Runtime startup and idle memory still require a GUI smoke harness.",
+      note: "Static active-renderer footprint only. The legacy renderer is retired; packaged GUI launch and idle memory still require a real Electron smoke harness.",
       legacy,
       rendererV2,
-      deltaBytes,
-      deltaKiB,
     },
     null,
     2,

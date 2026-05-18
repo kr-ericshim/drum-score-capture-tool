@@ -11,7 +11,7 @@
 - `backend/app/main.py` is both the HTTP API layer and the orchestration layer. There are no FastAPI router submodules; route handlers and background job runners live in the same file.
 - `backend/app/pipeline/*.py` modules are processing stages, not API handlers. They transform files in a per-job workspace under `DRUMSHEET_JOBS_DIR` (`backend/jobs` by default).
 - `desktop/renderer-v2/src/app/App.js` implements a unidirectional UI flow around a single in-memory session store in `desktop/renderer-v2/src/app/session/store.js`.
-- The repository still contains a legacy renderer in `desktop/renderer/`. `desktop/renderer-entry.js` prefers `desktop/renderer-v2/index.html` and falls back to `desktop/renderer/index.html`.
+- `desktop/renderer-entry.js` resolves only `desktop/renderer-v2/index.html`; the legacy renderer has been retired from the product path.
 
 ## Layers
 
@@ -27,7 +27,7 @@
 - Location: `desktop/preload.js`
 - Contains: `contextBridge.exposeInMainWorld("drumSheetAPI", ...)`, backend state subscriptions, session token exposure, API base exposure.
 - Depends on: `ipcRenderer`, synchronous IPC channels `get-app-version` and `get-session-token`, async IPC handlers registered in `desktop/main.js`.
-- Used by: `desktop/renderer-v2/src/app/bridge.js`, `desktop/renderer-v2/src/lib/api.js`, and the legacy renderer through `window.drumSheetAPI`.
+- Used by: `desktop/renderer-v2/src/app/bridge.js` and `desktop/renderer-v2/src/lib/api.js`.
 
 **Renderer V2 Application:**
 - Purpose: Drive the source -> ROI -> export -> review workflow in the browser context.
@@ -36,19 +36,12 @@
 - Depends on: `window.drumSheetAPI`, backend HTTP endpoints in `backend/app/main.py`, DOM APIs, local feature modules.
 - Used by: `desktop/renderer-v2/index.html`.
 
-**Legacy Renderer:**
-- Purpose: Preserve the earlier DOM-driven UI and keep the fallback entrypoint working.
-- Location: `desktop/renderer/app.js`, `desktop/renderer/modules/`
-- Contains: monolithic workflow controller plus helper modules for API access, ROI editing, runtime status, and i18n.
-- Depends on: `window.drumSheetAPI`, backend HTTP endpoints, DOM structure in `desktop/renderer/index.html`.
-- Used by: `desktop/renderer-entry.js` when `DRUMSHEET_RENDERER` forces legacy mode or when `renderer-v2` is unavailable.
-
 **Backend API and Job Orchestration:**
 - Purpose: Validate requests, guard access, persist jobs, and run long-lived processing work outside the request thread.
 - Location: `backend/app/main.py`, `backend/app/schemas.py`, `backend/app/job_store.py`
 - Contains: FastAPI app creation, middleware, request/response schemas, `Job` and `SourcePrepareJob` persistence, background job submission, artifact path guards.
 - Depends on: FastAPI, Pydantic, `ThreadPoolExecutor`, processing stages in `backend/app/pipeline/`.
-- Used by: Both renderers via HTTP, Electron startup health checks in `desktop/main.js`.
+- Used by: renderer-v2 via HTTP and Electron startup health checks in `desktop/main.js`.
 
 **Processing Pipeline:**
 - Purpose: Convert a local video or downloaded YouTube source into captured pages and exported files.
@@ -68,7 +61,7 @@
 
 **Application Startup:**
 
-1. `desktop/main.js` creates the `BrowserWindow`, resolves the renderer HTML with `resolveRendererIndexPath()` from `desktop/renderer-entry.js`, and loads either `desktop/renderer-v2/index.html` or `desktop/renderer/index.html`.
+1. `desktop/main.js` creates the `BrowserWindow`, resolves the renderer HTML with `resolveRendererIndexPath()` from `desktop/renderer-entry.js`, and loads `desktop/renderer-v2/index.html`.
 2. The same file launches the backend either by spawning `backend/run.py` with Python in development or a bundled executable under `backend/runtime/drumsheet-backend/` when packaged.
 3. `desktop/main.js` polls `GET /health` on the FastAPI app in `backend/app/main.py` until ready, then emits backend state through IPC.
 4. `desktop/preload.js` exposes `apiBase`, `apiToken`, and the small IPC bridge to the renderer through `window.drumSheetAPI`.
@@ -158,11 +151,6 @@
 - Triggers: `<script type="module" src="./src/main.js">` in `desktop/renderer-v2/index.html`
 - Responsibilities: Create the app and wire accessibility affordances such as the skip link focus behavior.
 
-**Legacy Renderer Bootstrap:**
-- Location: `desktop/renderer/app.js`
-- Triggers: `desktop/renderer/index.html` when selected by `desktop/renderer-entry.js`
-- Responsibilities: Run the earlier DOM-centric workflow and legacy module set.
-
 **Release Builders:**
 - Location: `desktop/scripts/run-builder.js`, `backend/scripts/build_frozen_backend.py`
 - Triggers: `npm run pack*`, `npm run dist*`
@@ -186,7 +174,7 @@
 
 **Validation:** Schema-level validation lives in `backend/app/schemas.py`. File containment and artifact safety checks live in helper functions inside `backend/app/main.py`. Frontend guards such as `isRectValid()` and `canRunExport()` in `desktop/renderer-v2/src/app/session/` block impossible actions before a request is sent.
 
-**Authentication:** The application uses a session token generated in `desktop/main.js`, exposed through `desktop/preload.js`, and attached by `desktop/renderer-v2/src/lib/api.js` or `desktop/renderer/modules/job-api.js` as `X-DrumSheet-Token` or a `token` query parameter. `backend/app/main.py` enforces it for every path except `/health`.
+**Authentication:** The application uses a session token generated in `desktop/main.js`, exposed through `desktop/preload.js`, and attached by `desktop/renderer-v2/src/lib/api.js` as `X-DrumSheet-Token`. `backend/app/main.py` enforces it for every path except `/health` and rejects query-string tokens on protected routes.
 
 ---
 

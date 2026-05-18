@@ -104,7 +104,7 @@ export function renderContextLane(state) {
     return "";
   }
   if (state.ui.activeStep === "source") {
-    return renderSourceLane(state);
+    return "";
   }
   if (state.ui.activeStep === "roi") {
     return "";

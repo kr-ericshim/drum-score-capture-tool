@@ -10,8 +10,8 @@ function fileBaseName(filePath = "") {
   return normalized.split("/").pop() || normalized;
 }
 
-function fileTitleFromPath(filePath = "") {
-  const baseName = fileBaseName(filePath).trim();
+function fileTitleFromName(fileName = "") {
+  const baseName = String(fileName || "").trim();
   if (!baseName) {
     return "";
   }
@@ -19,6 +19,10 @@ function fileTitleFromPath(filePath = "") {
     return baseName;
   }
   return baseName.replace(/\.[^.]+$/, "");
+}
+
+function fileTitleFromPath(filePath = "") {
+  return fileTitleFromName(fileBaseName(filePath));
 }
 
 function padDatePart(value) {
@@ -45,6 +49,21 @@ function normalizeOptionalText(value) {
   return normalizeUnicodeText(value).trim();
 }
 
+function cleanDocumentTitle(value) {
+  let title = normalizeOptionalText(value);
+  if (!title) {
+    return "";
+  }
+  title = title
+    .replace(/^\s*\[[^\]]+\]\s*/u, "")
+    .replace(/\s*[|｜]\s*[^|｜]+$/u, "")
+    .replace(/\s*[（(][^()（）]*(?:★|☆)[^()（）]*[)）]\s*/gu, " ")
+    .replace(/\b(?:score\s*book|sheet\s*lessons?|tutorial|drum\s*cover)\b/giu, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return title || normalizeOptionalText(value);
+}
+
 function compareableHeaderValue(value) {
   if (value === null || value === undefined) {
     return "";
@@ -64,9 +83,10 @@ function normalizeBpmValue(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-export function createDocumentHeaderState(sourceFilePath = "", today = new Date()) {
+export function createDocumentHeaderState(sourceFilePath = "", today = new Date(), sourceDisplayName = "") {
+  const displayTitle = cleanDocumentTitle(sourceDisplayName);
   return {
-    title: fileTitleFromPath(sourceFilePath),
+    title: displayTitle || fileTitleFromPath(sourceFilePath),
     performer: "",
     bpm: null,
     date: formatDocumentDate(today),
@@ -135,8 +155,9 @@ export function createExportMetadataModalState(
   sourceFilePath = "",
   today = new Date(),
   documentHeader = createDocumentHeaderState(sourceFilePath, today),
+  sourceDisplayName = "",
 ) {
-  const fallbackHeader = createDocumentHeaderState(sourceFilePath, today);
+  const fallbackHeader = createDocumentHeaderState(sourceFilePath, today, sourceDisplayName);
   const confirmed = normalizeDocumentHeader(documentHeader, fallbackHeader);
   return {
     isOpen: false,
@@ -152,8 +173,8 @@ export function createExportMetadataModalState(
   };
 }
 
-export function createInitialExportConfig(sourceFilePath = "", today = new Date()) {
-  const documentHeader = createDocumentHeaderState(sourceFilePath, today);
+export function createInitialExportConfig(sourceFilePath = "", today = new Date(), sourceDisplayName = "") {
+  const documentHeader = createDocumentHeaderState(sourceFilePath, today, sourceDisplayName);
   return {
     formats: DEFAULT_FORMATS.slice(),
     outputDir: "",
@@ -167,7 +188,7 @@ export function createInitialExportConfig(sourceFilePath = "", today = new Date(
     pdfPath: "",
     error: "",
     documentHeader,
-    metadataModal: createExportMetadataModalState(sourceFilePath, today, documentHeader),
+    metadataModal: createExportMetadataModalState(sourceFilePath, today, documentHeader, sourceDisplayName),
   };
 }
 

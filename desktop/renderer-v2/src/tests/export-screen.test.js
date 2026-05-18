@@ -120,6 +120,30 @@ test("export screen locks format toggles while an export is already running", ()
   assert.match(markup, /data-format="png" type="checkbox" checked disabled/);
 });
 
+test("export screen exposes jpg output without enabling it by default", () => {
+  const state = createInitialSessionState();
+  state.ui.locale = "en";
+  state.source.filePath = "/tmp/practice.mp4";
+  state.source.displayName = "practice.mp4";
+  state.roi.appliedRect = [
+    [0, 0],
+    [320, 0],
+    [320, 180],
+    [0, 180],
+  ];
+
+  const defaultMarkup = renderExportScreen(state);
+
+  assert.match(defaultMarkup, /data-format="jpg" type="checkbox"/);
+  assert.match(defaultMarkup, /JPG images/);
+  assert.doesNotMatch(defaultMarkup, /data-format="jpg" type="checkbox" checked/);
+
+  state.exportConfig.formats = ["jpg"];
+  const selectedMarkup = renderExportScreen(state);
+
+  assert.match(selectedMarkup, /data-format="jpg" type="checkbox" checked/);
+});
+
 test("export screen clamps overshoot progress before rendering", () => {
   const state = createInitialSessionState();
   state.source.displayName = "practice.mp4";
@@ -159,7 +183,7 @@ test("export screen removes decorative controls that are not part of the real fl
   assert.doesNotMatch(markup, /class="path-more"/);
   assert.doesNotMatch(markup, /export-preview-tools/);
   assert.doesNotMatch(markup, /Sheet Density|Binarization Threshold/);
-  assert.match(markup, /Processing Profile|처리 프로파일/);
+  assert.match(markup, /Current Profile|현재 기준/);
 });
 
 test("export screen stays preview-first and avoids generic dashboard copy", () => {
@@ -178,7 +202,7 @@ test("export screen stays preview-first and avoids generic dashboard copy", () =
   const markup = renderExportScreen(state);
 
   assert.match(markup, /Preview first/);
-  assert.match(markup, /ROI Preview|출력 전 미리보기/);
+  assert.match(markup, /Area Preview|영역 미리보기/);
   assert.doesNotMatch(markup, /SYSTEM STATUS|INSPECTION VIEW|UTILITY RAIL/i);
 });
 
@@ -289,11 +313,11 @@ test("export screen keeps metadata inputs off the left stack until the modal ope
   const closedMarkup = renderExportScreen(state);
 
   assert.doesNotMatch(closedMarkup, /data-action="update-export-metadata"/);
-  assert.match(closedMarkup, /PDF 첫 페이지 상단에만 반영됩니다\.|Applies only to the first PDF page\./);
+  assert.match(closedMarkup, /PDF 첫 페이지에 반영됩니다\.|Shown on the first PDF page\./);
 
   state.exportConfig.formats = ["png"];
   const pngOnlyMarkup = renderExportScreen(state);
-  assert.doesNotMatch(pngOnlyMarkup, /PDF 첫 페이지 상단에만 반영됩니다\.|Applies only to the first PDF page\./);
+  assert.doesNotMatch(pngOnlyMarkup, /PDF 첫 페이지에 반영됩니다\.|Shown on the first PDF page\./);
 
   state.exportConfig.formats = ["pdf"];
   state.exportConfig.metadataModal.isOpen = true;
@@ -310,7 +334,7 @@ test("export screen keeps metadata inputs off the left stack until the modal ope
   assert.match(openMarkup, /class="export-preview-workbench"/);
   assert.match(openMarkup, /class="export-metadata-overlay"/);
   assert.match(openMarkup, /data-action="update-export-metadata"/);
-  assert.match(openMarkup, /PDF 첫 페이지 상단에만 반영됩니다\.|Applies only to the first PDF page\./);
+  assert.match(openMarkup, /PDF 첫 페이지에 반영됩니다\.|Shown on the first PDF page\./);
 });
 
 test("export screen surfaces export-start failures inside the metadata modal", () => {
@@ -369,4 +393,26 @@ test("export screen escapes dynamic filename, path, and status text before rende
   assert.match(markup, /&lt;script&gt;alert\(&quot;dir&quot;\)&lt;\/script&gt;/);
   assert.match(markup, /&lt;img src=x onerror=alert\(1\)&gt;/);
   assert.match(markup, /alt="&quot;&gt;&lt;svg\/onload=alert\(1\)&gt; representative frame"/);
+});
+
+test("export screen escapes dynamic processing profile values before rendering", () => {
+  const state = createInitialSessionState();
+  state.ui.locale = "en";
+  state.source.filePath = "/tmp/practice.mp4";
+  state.source.displayName = "practice.mp4";
+  state.roi.appliedRect = [
+    [0, 0],
+    [320, 0],
+    [320, 180],
+    [0, 180],
+  ];
+  state.exportConfig.pageFillMode = '<img src=x onerror=alert("fill")>';
+  state.exportConfig.layoutHint = '<script>alert("layout")</script>';
+
+  const markup = renderExportScreen(state);
+
+  assert.doesNotMatch(markup, /<img src=x onerror=alert\("fill"\)>/);
+  assert.doesNotMatch(markup, /<script>alert\("layout"\)<\/script>/);
+  assert.match(markup, /&lt;img src=x onerror=alert\(&quot;fill&quot;\)&gt;/);
+  assert.match(markup, /&lt;script&gt;alert\(&quot;layout&quot;\)&lt;\/script&gt;/);
 });

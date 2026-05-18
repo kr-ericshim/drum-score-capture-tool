@@ -191,10 +191,10 @@ export function mountRoiEditor({ image, canvas, input, initialPoints = null, onD
   function setRect(nextPoints, emitChange = true) {
     if (!isValidRect(nextPoints)) {
       rect = {
-        x1: Math.round(canvas.width * 0.1),
-        y1: Math.round(canvas.height * 0.1),
-        x2: Math.round(canvas.width * 0.9),
-        y2: Math.round(canvas.height * 0.9),
+        x1: Math.round(canvas.width * 0.04),
+        y1: Math.round(canvas.height * 0.74),
+        x2: Math.round(canvas.width * 0.96),
+        y2: Math.round(canvas.height * 0.98),
       };
     } else {
       rect = pointsToRect(nextPoints, canvas.width, canvas.height);

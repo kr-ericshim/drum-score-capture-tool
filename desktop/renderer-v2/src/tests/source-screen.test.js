@@ -47,11 +47,11 @@ test("source screen keeps only the real file-pick action", () => {
   assert.match(markup, /data-action="select-source-file"/);
   assert.doesNotMatch(markup, /SCAN DIRECTORY|폴더 스캔/);
   assert.doesNotMatch(markup, /<button[^>]*>LOAD<\/button>/);
-  assert.match(markup, /현재 작업 중|In progress/);
+  assert.match(markup, /현재 선택|Current/);
   assert.match(markup, /입력|Input/);
 });
 
-test("source registry reflects the actual selected file directory instead of a placeholder path", () => {
+test("source registry keeps internal paths out of the visible column model", () => {
   const state = createInitialSessionState();
   state.source.filePath = "/Users/tester/Videos/song.mp4";
   state.source.displayName = "song.mp4";
@@ -59,7 +59,9 @@ test("source registry reflects the actual selected file directory instead of a p
 
   const markup = renderSourceScreen(state);
 
-  assert.match(markup, /\/Users\/tester\/Videos\//);
+  assert.match(markup, /data-column="source"/);
+  assert.match(markup, /로컬|Local/);
+  assert.doesNotMatch(markup, /data-column="path"/);
   assert.doesNotMatch(markup, /\/local\/session\//);
   assert.doesNotMatch(markup, /session_capture\.mp4/);
 });
@@ -87,8 +89,29 @@ test("source registry renders persisted items with reload actions on inactive ro
   assert.match(markup, /data-source-origin="prepared"/);
   assert.match(markup, /data-youtube-url="https:\/\/www\.youtube\.com\/watch\?v=cache-a"/);
   assert.match(markup, />Reopen</);
+  assert.match(markup, />YouTube</);
   assert.match(markup, /1920x1080/);
   assert.match(markup, /04:12/);
+});
+
+test("source registry labels completed youtube jobs by their user-facing origin", () => {
+  const state = createInitialSessionState();
+  state.ui.locale = "ko";
+  state.source.registryItems = [
+    {
+      filePath: "/Users/tester/Library/Application Support/DrumSheet/jobs/youtube-cache.webm",
+      displayName: "Bon Jovi Drum Cover",
+      resolutionLabel: "1920x1080",
+      durationLabel: "03:49",
+      sourceOrigin: "job",
+      youtubeUrl: "https://www.youtube.com/watch?v=demo",
+    },
+  ];
+
+  const markup = renderSourceScreen(state);
+
+  assert.match(markup, />YouTube</);
+  assert.doesNotMatch(markup, />로컬</);
 });
 
 test("source registry exposes per-cell column labels for narrow-width restyling", () => {
@@ -118,7 +141,7 @@ test("source registry exposes per-cell column labels for narrow-width restyling"
 
   const markup = renderSourceScreen(state);
   const filenameLabel = t("source.registryFilename", { locale: "en" });
-  const pathLabel = t("source.registryPath", { locale: "en" });
+  const sourceLabel = t("source.registrySource", { locale: "en" });
   const resLabel = t("source.registryRes", { locale: "en" });
   const lengthLabel = t("source.registryLength", { locale: "en" });
   const actionLabel = t("source.registryAction", { locale: "en" });
@@ -126,14 +149,14 @@ test("source registry exposes per-cell column labels for narrow-width restyling"
   assert.match(markup, /<th scope="col" data-column="filename">/);
   assert.match(markup, /<th scope="col" data-column="action">/);
   assert.match(markup, new RegExp(`data-column="filename" data-column-label="${escapeRegExp(filenameLabel)}"`));
-  assert.match(markup, new RegExp(`data-column="path" data-column-label="${escapeRegExp(pathLabel)}"`));
+  assert.match(markup, new RegExp(`data-column="source" data-column-label="${escapeRegExp(sourceLabel)}"`));
   assert.match(markup, new RegExp(`data-column="resolution" data-column-label="${escapeRegExp(resLabel)}"`));
   assert.match(markup, new RegExp(`data-column="duration" data-column-label="${escapeRegExp(lengthLabel)}"`));
   assert.match(markup, new RegExp(`data-column="action" data-column-label="${escapeRegExp(actionLabel)}"`));
   assert.match(markup, /<tr class="registry-row is-selected"[^>]*data-selected="true"/);
   assert.match(markup, /<tr class="registry-row"[^>]*data-selected="false"/);
   assert.match(markup, /data-action="load-registry-source"/);
-  assert.match(markup, />In progress</);
+  assert.match(markup, />Current</);
 });
 
 test("source screen renders english helper copy when locale is en", () => {
@@ -147,14 +170,14 @@ test("source screen renders english helper copy when locale is en", () => {
   assert.doesNotMatch(markup, /현재 1차 플로우는|로컬 영상 불러오기/);
 });
 
-test("source screen renders youtube controls and preparation log region", () => {
+test("source screen renders youtube controls without an idle preparation log", () => {
   const state = createInitialSessionState();
 
   const markup = renderSourceScreen(state);
 
   assert.match(markup, /YouTube|유튜브/i);
   assert.match(markup, /prepare-source-youtube/);
-  assert.match(markup, /youtube-log|source-prepare-log|Preparation Log|준비 로그/i);
+  assert.doesNotMatch(markup, /youtube-log|source-prepare-log|Preparation Log|준비 로그/i);
   assert.match(markup, /type="url"/);
   assert.match(markup, /inputmode="url"/);
 });
@@ -166,8 +189,8 @@ test("source screen marks the ingest card as a drag-and-drop target with helper 
   const markup = renderSourceScreen(state);
 
   assert.match(markup, /data-drop-zone="source-ingest"/);
-  assert.match(markup, /You can also drag a video file here to import it right away\./);
-  assert.match(markup, /Drop now to import it immediately\./);
+  assert.match(markup, /Drag a video here/);
+  assert.match(markup, /Drop to open\./);
 });
 
 test("source screen gives the youtube field an explicit accessible label", () => {
@@ -192,7 +215,7 @@ test("source screen only adds the invalid-url note to the youtube field descript
   assert.match(markup, /aria-describedby="sourceYoutubeHint sourceYoutubeNote"/);
   assert.doesNotMatch(markup, /aria-describedby="[^"]*sourceYoutubeLog/);
   assert.match(markup, /id="sourceYoutubeNote"/);
-  assert.match(markup, /id="sourceYoutubeLog"/);
+  assert.doesNotMatch(markup, /id="sourceYoutubeLog"/);
 });
 
 test("source screen escapes user-controlled values before inserting markup", () => {
@@ -223,7 +246,7 @@ test("source screen escapes user-controlled values before inserting markup", () 
   assert.doesNotMatch(markup, /xssattr="1"/);
 });
 
-test("source screen disables youtube prepare while loading and shows low-quality warning copy", () => {
+test("source screen disables youtube prepare while loading without stale low-quality warning copy", () => {
   const state = createInitialSessionState();
   state.ui.locale = "en";
   state.source.prepareStatus = "loading";
@@ -238,7 +261,27 @@ test("source screen disables youtube prepare while loading and shows low-quality
   const markup = renderSourceScreen(state);
 
   assert.match(markup, /prepare-source-youtube\" disabled/);
-  assert.match(markup, /low-resolution warning|quality gate|640x360/i);
+  assert.match(markup, /youtube-log|source-prepare-log|Preparation Log|준비 로그/i);
+  assert.match(markup, /<details[^>]+class="source-prepare-log"/);
+  assert.doesNotMatch(markup, /<details[^>]+class="source-prepare-log"[^>]+open/);
+  assert.doesNotMatch(markup, /role="alert"/);
+  assert.doesNotMatch(markup, /low-resolution warning|quality gate|YouTube preparation stopped/i);
+  assert.match(markup, /640x360/i);
+});
+
+test("source screen shows low-quality guidance for failed youtube preparation errors", () => {
+  const state = createInitialSessionState();
+  state.ui.locale = "en";
+  state.source.youtubeUrl = "https://youtu.be/demo";
+  state.source.prepareStatus = "error";
+  state.source.prepareErrorDetail = "low resolution 640x360";
+  state.source.error = "YouTube preparation stopped because only a low-resolution video was available: low resolution 640x360";
+
+  const markup = renderSourceScreen(state);
+
+  assert.match(markup, /source-quality-gate/);
+  assert.match(markup, /<details[^>]+class="source-prepare-log"[^>]+open/);
+  assert.match(markup, /640x360/);
 });
 
 test("source screen renders determinate youtube progress with stage summary", () => {

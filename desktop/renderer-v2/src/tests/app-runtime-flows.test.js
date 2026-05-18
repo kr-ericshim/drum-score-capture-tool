@@ -371,48 +371,90 @@ const PREVIEW_CANDIDATES = [
 
 test("late preview response is ignored after frameTime changes within the same source session", async () => {
   installBrowserStubs();
+  const revokedUrls = [];
+  const previousRevokeObjectUrl = globalThis.URL.revokeObjectURL;
+  globalThis.URL.revokeObjectURL = (url) => {
+    revokedUrls.push(String(url));
+  };
   const preview = deferred();
   const root = createRoot();
-  const app = createApp(root, {
-    exposeTestApi: true,
-    readVideoMetadata: async () => ({ durationSec: 120, durationLabel: "02:00", resolutionLabel: "1920x1080" }),
-    api: {
-      requestPreviewFrame: () => preview.promise,
-      createJob: async () => "job-1",
-      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
-      reviewExport: async () => ({}),
-    },
-  });
+  try {
+    const app = createApp(root, {
+      exposeTestApi: true,
+      readVideoMetadata: async () => ({ durationSec: 120, durationLabel: "02:00", resolutionLabel: "1920x1080" }),
+      api: {
+        requestPreviewFrame: () => preview.promise,
+        createJob: async () => "job-1",
+        getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+        reviewExport: async () => ({}),
+      },
+    });
 
-  app.debug.setState((next) => {
-    next.source.filePath = "/tmp/source-a.mp4";
-    next.source.displayName = "source-a.mp4";
-    next.source.metadata = { durationSec: 120 };
-    next.ui.activeStep = "roi";
-    next.roi.frameTime = 5;
-    next.roi.frameTimeLabel = "00:05.0";
-    return next;
-  });
+    app.debug.setState((next) => {
+      next.source.filePath = "/tmp/source-a.mp4";
+      next.source.displayName = "source-a.mp4";
+      next.source.metadata = { durationSec: 120 };
+      next.ui.activeStep = "roi";
+      next.roi.frameTime = 5;
+      next.roi.frameTimeLabel = "00:05.0";
+      return next;
+    });
 
-  const pending = root.dispatchAction("load-preview-frame");
-  await flush();
+    const pending = root.dispatchAction("load-preview-frame");
+    await flush();
 
-  root.dispatchInput({
-    id: "frameTimeSlider",
-    value: "10",
-    dataset: {},
-  });
+    root.dispatchInput({
+      id: "frameTimeSlider",
+      value: "10",
+      dataset: {},
+    });
 
-  preview.resolve({
-    imagePath: "/tmp/preview-old.png",
-    sourcePath: "/tmp/preview-old.png",
-    diagnostics: [{ code: "old" }],
-  });
-  await pending;
-  await flush();
+    preview.resolve({
+      imagePath: "blob:preview-old",
+      sourcePath: "/tmp/preview-old.png",
+      diagnostics: [{ code: "old" }],
+    });
+    await pending;
+    await flush();
 
-  assert.ok(app.debug);
-  assert.equal(app.debug.getState().roi.previewImage, "");
+    assert.ok(app.debug);
+    assert.equal(app.debug.getState().roi.previewImage, "");
+    assert.deepEqual(revokedUrls, ["blob:preview-old"]);
+  } finally {
+    globalThis.URL.revokeObjectURL = previousRevokeObjectUrl;
+  }
+});
+
+test("destroy revokes the active protected preview blob url", () => {
+  installBrowserStubs();
+  const revokedUrls = [];
+  const previousRevokeObjectUrl = globalThis.URL.revokeObjectURL;
+  globalThis.URL.revokeObjectURL = (url) => {
+    revokedUrls.push(String(url));
+  };
+  const root = createRoot();
+  try {
+    const app = createApp(root, {
+      exposeTestApi: true,
+      api: {
+        requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+        createJob: async () => "job-1",
+        getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+        reviewExport: async () => ({}),
+      },
+    });
+
+    app.debug.setState((next) => {
+      next.roi.previewImage = "blob:active-preview";
+      return next;
+    });
+
+    app.destroy();
+
+    assert.deepEqual(revokedUrls, ["blob:active-preview"]);
+  } finally {
+    globalThis.URL.revokeObjectURL = previousRevokeObjectUrl;
+  }
 });
 
 test("frameTime changes clear stale preview, roi, and downstream export state immediately", () => {
@@ -1772,6 +1814,85 @@ test("export after prepared youtube submits a file-backed payload without inheri
   assert.equal(seenPayload.file_path, "/tmp/cache/youtube.mp4");
   assert.equal(app.debug.getState().roi.frameTime, 60);
   assert.equal(seenPayload.options.extract.start_sec, 0);
+});
+
+test("youtube url flow exports with youtube identity and refreshes the media registry", async () => {
+  installBrowserStubs();
+  let seenPayload = null;
+  const root = createRoot();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+      createJob: async (payload) => {
+        seenPayload = payload;
+        return "job-yt";
+      },
+      getJob: async () => ({
+        job_id: "job-yt",
+        status: "done",
+        progress: 1,
+        current_step: "done",
+        message: "",
+        result: {
+          images: ["/tmp/export/page_0001.png"],
+          output_dir: "/tmp/export",
+          pdf: "/tmp/export/sheet_export.pdf",
+          source_video_path: "/tmp/cache/youtube.mp4",
+        },
+      }),
+      getLocalMediaRegistry: async () => ({
+        items: [
+          {
+            filePath: "/tmp/cache/youtube.mp4",
+            displayName: "Take Five Drum Lesson",
+            directory: "/tmp/cache",
+            resolutionLabel: "1920x1080",
+            durationLabel: "04:12",
+            hasScore: true,
+            sourceOrigin: "job",
+            youtubeUrl: "https://www.youtube.com/watch?v=abc12345678",
+          },
+        ],
+      }),
+      getArchiveLibrary: async () => ({ items: [] }),
+      reviewExport: async () => ({}),
+    },
+  });
+
+  app.debug.setState((next) => {
+    next.source.sourceType = "youtube";
+    next.source.youtubeUrl = "https://www.youtube.com/watch?v=abc12345678";
+    next.source.filePath = "/tmp/cache/youtube.mp4";
+    next.source.displayName = "Take Five Drum Lesson";
+    next.source.preparedFromYouTube = true;
+    next.source.archiveSourceKind = "youtube";
+    next.source.archiveSourceKey = "https://www.youtube.com/watch?v=abc12345678";
+    next.source.archiveDisplayName = "Take Five Drum Lesson";
+    next.source.metadata = { durationSec: 252, durationLabel: "04:12", resolutionLabel: "1920x1080" };
+    next.roi.appliedRect = ROI_RECT;
+    next.exportConfig.formats = ["png"];
+    next.ui.activeStep = "export";
+    return next;
+  });
+
+  await root.dispatchAction("run-export");
+  await flush();
+  await flush();
+
+  assert.equal(seenPayload.source_type, "file");
+  assert.equal(seenPayload.file_path, "/tmp/cache/youtube.mp4");
+  assert.deepEqual(seenPayload.source_identity, {
+    kind: "youtube",
+    key: "https://www.youtube.com/watch?v=abc12345678",
+    display_name: "Take Five Drum Lesson",
+  });
+
+  const state = app.debug.getState();
+  assert.equal(state.ui.activeStep, "review");
+  assert.equal(state.source.registryItems.length, 1);
+  assert.equal(state.source.registryItems[0].hasScore, true);
+  assert.equal(state.source.registryItems[0].youtubeUrl, "https://www.youtube.com/watch?v=abc12345678");
 });
 
 test("buildJobPayload includes archive source identity for prepared youtube sources", () => {

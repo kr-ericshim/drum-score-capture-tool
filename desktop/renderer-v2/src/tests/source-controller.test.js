@@ -28,6 +28,8 @@ function createController(overrides = {}) {
     resetDownstream(next) {
       next.roi.previewImage = "";
       next.exportConfig.jobId = "";
+      next.exportConfig.documentHeader.title = next.source.displayName || next.source.archiveDisplayName || "";
+      next.exportConfig.metadataModal.draft.title = next.exportConfig.documentHeader.title;
       next.review.pages = [];
     },
     baseName(filePath) {
@@ -308,4 +310,17 @@ test("controller seeds three representative preview candidates after local file 
   assert.equal(state.roi.selectedPreviewCandidateId, "preview-candidate-2");
   assert.equal(state.roi.frameTime, state.roi.previewCandidates[1].sec);
   assert.equal(state.roi.frameTimeLabel, state.roi.previewCandidates[1].label);
+});
+
+test("controller keeps reopened registry display names available for export metadata defaults", async () => {
+  const { store, controller } = createController();
+
+  await controller.selectLocalFile("/tmp/cache/unAynsH6ml4.mkv", {
+    displayName: "Bon Jovi - It's My Lifeㅣ드럼커버ㅣ드럼악보",
+  });
+
+  const state = store.getState();
+  assert.equal(state.source.displayName, "Bon Jovi - It's My Lifeㅣ드럼커버ㅣ드럼악보");
+  assert.equal(state.exportConfig.documentHeader.title, "Bon Jovi - It's My Lifeㅣ드럼커버ㅣ드럼악보");
+  assert.equal(state.exportConfig.metadataModal.draft.title, "Bon Jovi - It's My Lifeㅣ드럼커버ㅣ드럼악보");
 });

@@ -1033,8 +1033,9 @@ test("confirm-export-metadata closes the modal and surfaces backend ROI failure 
   assert.equal(state.exportConfig.metadataModal.isOpen, false);
   assert.equal(state.exportConfig.jobId, "job-1");
   assert.equal(state.exportConfig.runStatus, "error");
-  assert.match(state.exportConfig.error, /unsafe/i);
-  assert.match(root.querySelector("#stagePane")?.innerHTML || "", /ROI is unsafe for capture/i);
+  assert.match(state.exportConfig.error, /score region|악보 영역/i);
+  assert.doesNotMatch(root.querySelector("#stagePane")?.innerHTML || "", /ROI is unsafe for capture/i);
+  assert.match(root.querySelector("#stagePane")?.innerHTML || "", /score region|악보 영역/i);
 });
 
 test("confirm-export-metadata surfaces a blocking error when export prerequisites disappear after the modal opens", async () => {
@@ -1080,8 +1081,8 @@ test("confirm-export-metadata surfaces a blocking error when export prerequisite
   assert.equal(createJobCalls, 0);
   assert.equal(state.exportConfig.runStatus, "idle");
   assert.equal(state.exportConfig.metadataModal.isOpen, true);
-  assert.match(state.exportConfig.error, /ROI|대표 프레임/i);
-  assert.match(root.querySelector("#stagePane")?.innerHTML || "", /ROI|대표 프레임/i);
+  assert.match(state.exportConfig.error, /score region|대표 프레임/i);
+  assert.match(root.querySelector("#stagePane")?.innerHTML || "", /score region|대표 프레임/i);
 });
 
 test("confirm-export-metadata blocks blank titles before job creation", async () => {
@@ -1258,7 +1259,7 @@ test("rendered metadata modal uses paper-surface classes and responsive row hook
   assert.match(markup, /class="export-metadata-overlay"/);
   assert.match(markup, /class="export-metadata-modal export-metadata-sheet"/);
   assert.match(markup, /class="export-metadata-grid"/);
-  assert.match(markup, /class="export-metadata-row export-metadata-row-split"/);
+  assert.match(markup, /data-field="title"[\s\S]*?<div class="export-metadata-row export-metadata-row-split">[\s\S]*?data-field="performer"[\s\S]*?data-field="bpm"/);
   assert.match(markup, /class="export-metadata-actions"/);
   assert.match(markup, /class="export-metadata-discard"/);
 });

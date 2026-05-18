@@ -85,6 +85,21 @@ function isSupportedVideoPath(filePath = "") {
   return SUPPORTED_VIDEO_EXTENSIONS.has(fileExtension(normalized));
 }
 
+function formatExportJobMessage(message, { status = "", locale = "en" } = {}) {
+  const raw = String(message || "").trim();
+  if (!raw) {
+    return "";
+  }
+  const detail = raw.replace(/^job failed:\s*/i, "").trim();
+  if (String(status || "").toLowerCase() === "error") {
+    if (/roi is unsafe|unsafe for capture|score region|representative frame/i.test(detail)) {
+      return t("export.failedRegionUnsafe", { locale });
+    }
+    return detail || t("export.failed", { locale });
+  }
+  return raw;
+}
+
 function dataTransferHasFiles(dataTransfer) {
   if (!dataTransfer) {
     return false;
@@ -377,6 +392,14 @@ function focusExportRunButton(stagePane) {
   }
 }
 
+function releasePreviewImageUrl(value) {
+  const url = String(value || "");
+  if (!url.startsWith("blob:") || typeof globalThis.URL?.revokeObjectURL !== "function") {
+    return;
+  }
+  globalThis.URL.revokeObjectURL(url);
+}
+
 export function createApp(root, dependencies = {}) {
   const runtimeBridge = dependencies.bridge || bridge;
   const readMetadata = dependencies.readVideoMetadata || readVideoMetadata;
@@ -448,7 +471,13 @@ export function createApp(root, dependencies = {}) {
   const runtimeGuards = createRuntimeGuards();
 
   function setState(updater) {
-    store.setState(updater);
+    const previousPreviewImage = String(store.getState().roi?.previewImage || "");
+    const nextState = store.setState(updater);
+    const nextPreviewImage = String(nextState.roi?.previewImage || "");
+    if (previousPreviewImage && previousPreviewImage !== nextPreviewImage) {
+      releasePreviewImageUrl(previousPreviewImage);
+    }
+    return nextState;
   }
 
   function getSelectedPreviewCandidate(state = store.getState()) {
@@ -459,7 +488,12 @@ export function createApp(root, dependencies = {}) {
     return (state.roi.previewCandidates || []).find((candidate) => candidate.id === selectedId) || null;
   }
 
+  function sourceDocumentDisplayName(source = store.getState().source) {
+    return String(source?.displayName || source?.archiveDisplayName || "").trim();
+  }
+
   function resetDownstream(next) {
+    const sourceDisplayName = sourceDocumentDisplayName(next.source);
     next.roi = {
       frameTime: 0,
       frameTimeLabel: "00:00.0",
@@ -475,7 +509,7 @@ export function createApp(root, dependencies = {}) {
       status: "idle",
       error: "",
     };
-    next.exportConfig = createInitialExportConfig(next.source.filePath);
+    next.exportConfig = createInitialExportConfig(next.source.filePath, new Date(), sourceDisplayName);
     next.review = {
       pages: [],
       selectedPageIds: [],
@@ -502,17 +536,18 @@ export function createApp(root, dependencies = {}) {
   }
 
   function invalidateExportReviewState(next) {
-    const currentExportConfig = next.exportConfig || createInitialExportConfig(next.source.filePath);
-    const fallbackDocumentHeader = createDocumentHeaderState(next.source.filePath);
+    const sourceDisplayName = sourceDocumentDisplayName(next.source);
+    const currentExportConfig = next.exportConfig || createInitialExportConfig(next.source.filePath, new Date(), sourceDisplayName);
+    const fallbackDocumentHeader = createDocumentHeaderState(next.source.filePath, new Date(), sourceDisplayName);
     const documentHeader = normalizeDocumentHeader(currentExportConfig.documentHeader, fallbackDocumentHeader);
-    const nextExportConfig = createInitialExportConfig(next.source.filePath, new Date());
+    const nextExportConfig = createInitialExportConfig(next.source.filePath, new Date(), sourceDisplayName);
     nextExportConfig.formats = Array.isArray(currentExportConfig.formats)
       ? currentExportConfig.formats.slice()
       : nextExportConfig.formats;
     nextExportConfig.pageFillMode = currentExportConfig.pageFillMode || nextExportConfig.pageFillMode;
     nextExportConfig.layoutHint = currentExportConfig.layoutHint || nextExportConfig.layoutHint;
     nextExportConfig.documentHeader = documentHeader;
-    nextExportConfig.metadataModal = createExportMetadataModalState(next.source.filePath, new Date(), documentHeader);
+    nextExportConfig.metadataModal = createExportMetadataModalState(next.source.filePath, new Date(), documentHeader, sourceDisplayName);
     next.exportConfig = nextExportConfig;
     resetReviewState(next);
   }
@@ -865,12 +900,16 @@ export function createApp(root, dependencies = {}) {
     const locale = store.getState().ui.locale || "en";
     const pages = deriveCapturePages(job.result || {}, locale);
     setState((next) => {
+      const displayMessage = formatExportJobMessage(job.message, {
+        status: job.status,
+        locale: next.ui.locale,
+      });
       next.exportConfig.jobId = job.job_id;
       next.exportConfig.runStatus = job.status === "done" ? "done" : job.status === "error" ? "error" : "running";
       next.exportConfig.progress = Number(job.progress || 0);
       next.exportConfig.currentStep = String(job.current_step || "");
-      next.exportConfig.message = String(job.message || "");
-      next.exportConfig.error = job.status === "error" ? String(job.message || t("export.failed", { locale: next.ui.locale })) : "";
+      next.exportConfig.message = displayMessage;
+      next.exportConfig.error = job.status === "error" ? displayMessage || t("export.failed", { locale: next.ui.locale }) : "";
       next.exportConfig.outputDir = String(job.result?.output_dir || "");
       next.exportConfig.pdfPath = String(job.result?.pdf || "");
       next.review.pages = pages;
@@ -1147,6 +1186,7 @@ export function createApp(root, dependencies = {}) {
         startSec: state.roi.frameTime || 0,
       });
       if (!runtimeGuards.isCurrentPreview(previewToken)) {
+        releasePreviewImageUrl(preview.imagePath);
         return;
       }
       setState((next) => {
@@ -1217,12 +1257,13 @@ export function createApp(root, dependencies = {}) {
     const roi = state.roi.appliedRect;
     const layoutHint = inferLayoutHintFromRoi(roi);
     const formats = Array.isArray(state.exportConfig.formats) ? state.exportConfig.formats : [];
-    const fallbackDocumentHeader = createDocumentHeaderState(state.source.filePath);
+    const fallbackDisplayName = sourceDocumentDisplayName(state.source);
+    const fallbackDocumentHeader = createDocumentHeaderState(state.source.filePath, new Date(), fallbackDisplayName);
     const documentHeader = normalizeDocumentHeader(state.exportConfig.documentHeader, fallbackDocumentHeader);
     const sourceIdentity = {
       kind: state.source.archiveSourceKind || "file",
       key: state.source.archiveSourceKey || state.source.filePath,
-      display_name: state.source.archiveDisplayName || state.source.displayName || fallbackDocumentHeader.title,
+      display_name: fallbackDisplayName || fallbackDocumentHeader.title,
     };
     return {
       source_type: "file",
@@ -1285,7 +1326,8 @@ export function createApp(root, dependencies = {}) {
 
   function openExportMetadataModal() {
     const state = store.getState();
-    const fallbackDocumentHeader = createDocumentHeaderState(state.source.filePath);
+    const sourceDisplayName = sourceDocumentDisplayName(state.source);
+    const fallbackDocumentHeader = createDocumentHeaderState(state.source.filePath, new Date(), sourceDisplayName);
     const confirmedHeader = normalizeDocumentHeader(state.exportConfig.documentHeader, fallbackDocumentHeader);
     setState((next) => {
       next.exportConfig.error = "";
@@ -1293,6 +1335,7 @@ export function createApp(root, dependencies = {}) {
         next.source.filePath,
         new Date(),
         confirmedHeader,
+        sourceDocumentDisplayName(next.source),
       );
       next.exportConfig.metadataModal.isOpen = true;
       return next;
@@ -1324,6 +1367,7 @@ export function createApp(root, dependencies = {}) {
         next.source.filePath,
         new Date(),
         next.exportConfig.documentHeader,
+        sourceDocumentDisplayName(next.source),
       );
       return next;
     });
@@ -1337,7 +1381,12 @@ export function createApp(root, dependencies = {}) {
     }
     const nextValue = sanitizeDocumentHeaderDraftField(field, value);
     setState((next) => {
-      const currentModal = next.exportConfig.metadataModal || createExportMetadataModalState(next.source.filePath);
+      const currentModal = next.exportConfig.metadataModal || createExportMetadataModalState(
+        next.source.filePath,
+        new Date(),
+        createDocumentHeaderState(next.source.filePath, new Date(), sourceDocumentDisplayName(next.source)),
+        sourceDocumentDisplayName(next.source),
+      );
       const draft = {
         ...currentModal.draft,
         [field]: nextValue,
@@ -1365,7 +1414,12 @@ export function createApp(root, dependencies = {}) {
     }
     const liveDraft = captureLiveExportMetadataDraft(shell.stagePane, modal.draft);
     setState((next) => {
-      const currentModal = next.exportConfig.metadataModal || createExportMetadataModalState(next.source.filePath);
+      const currentModal = next.exportConfig.metadataModal || createExportMetadataModalState(
+        next.source.filePath,
+        new Date(),
+        createDocumentHeaderState(next.source.filePath, new Date(), sourceDocumentDisplayName(next.source)),
+        sourceDocumentDisplayName(next.source),
+      );
       currentModal.draft = liveDraft;
       currentModal.dirty = isExportMetadataDirty(liveDraft, next.exportConfig.documentHeader);
       currentModal.showDiscardConfirm = false;
@@ -1463,11 +1517,17 @@ export function createApp(root, dependencies = {}) {
       });
       return;
     }
-    const fallbackDocumentHeader = createDocumentHeaderState(state.source.filePath);
+    const sourceDisplayName = sourceDocumentDisplayName(state.source);
+    const fallbackDocumentHeader = createDocumentHeaderState(state.source.filePath, new Date(), sourceDisplayName);
     const documentHeader = normalizeDocumentHeader(sanitizedDraft, fallbackDocumentHeader);
     setState((next) => {
       next.exportConfig.documentHeader = documentHeader;
-      const currentModal = next.exportConfig.metadataModal || createExportMetadataModalState(next.source.filePath, new Date(), documentHeader);
+      const currentModal = next.exportConfig.metadataModal || createExportMetadataModalState(
+        next.source.filePath,
+        new Date(),
+        documentHeader,
+        sourceDocumentDisplayName(next.source),
+      );
       currentModal.isOpen = true;
       currentModal.draft = { ...documentHeader };
       currentModal.dirty = false;
@@ -1491,6 +1551,7 @@ export function createApp(root, dependencies = {}) {
         next.source.filePath,
         new Date(),
         next.exportConfig.documentHeader,
+        sourceDocumentDisplayName(next.source),
       );
       return next;
     });
@@ -2008,6 +2069,7 @@ export function createApp(root, dependencies = {}) {
     destroy() {
       stopPolling();
       stopSourcePreparePolling();
+      releasePreviewImageUrl(store.getState().roi?.previewImage);
       destroyRoiEditor();
       unsubscribeStore?.();
       unsubscribeBackend?.();

@@ -161,6 +161,7 @@ def _download_youtube(url: str, workspace: Path, logger, progress_callback=None)
             "progress_mode": "indeterminate",
             "message": "checking stream metadata",
         },
+        logger=logger,
     )
     ffmpeg_bin = resolve_ffmpeg_bin(strict=False)
     ffmpeg_location = ""
@@ -226,6 +227,7 @@ def _download_youtube(url: str, workspace: Path, logger, progress_callback=None)
                     "progress_mode": "indeterminate",
                     "message": f"checking stream metadata ({name})",
                 },
+                logger=logger,
             )
             with YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
@@ -246,6 +248,7 @@ def _download_youtube(url: str, workspace: Path, logger, progress_callback=None)
                     "progress_mode": "indeterminate",
                     "message": "validating final source",
                 },
+                logger=logger,
             )
             if _is_low_quality_video(width=width, height=height):
                 logger(
@@ -264,10 +267,14 @@ def _download_youtube(url: str, workspace: Path, logger, progress_callback=None)
     raise RuntimeError(f"failed to download youtube source from {url}: {' | '.join(errors)}")
 
 
-def _emit_prepare_progress(progress_callback, update: Dict[str, object]) -> None:
+def _emit_prepare_progress(progress_callback, update: Dict[str, object], *, logger=None) -> None:
     if not progress_callback:
         return
-    progress_callback(dict(update or {}))
+    try:
+        progress_callback(dict(update or {}))
+    except Exception as exc:
+        if logger is not None:
+            logger(f"youtube progress callback failed: {exc}")
 
 
 def _build_youtube_progress_hook(*, progress_callback, logger):
@@ -425,28 +432,31 @@ def _build_youtube_progress_hook(*, progress_callback, logger):
                 message = f"{message} {percent_text}"
 
             if progress_callback is not None:
-                progress_callback(
+                _emit_prepare_progress(
+                    progress_callback,
                     {
                         "stage": "download",
                         "progress": progress,
                         "progress_mode": progress_mode,
                         "message": message,
-                    }
+                    },
+                    logger=logger,
                 )
             logger(f"yt-dlp progress: {message}")
             return
 
         if status == "finished":
             message = "youtube download finished"
-            if progress_callback is not None:
-                progress_callback(
-                    {
-                        "stage": "download",
-                        "progress": 1.0,
-                        "progress_mode": "determinate",
-                        "message": message,
-                    }
-                )
+            _emit_prepare_progress(
+                progress_callback,
+                {
+                    "stage": "download",
+                    "progress": 1.0,
+                    "progress_mode": "determinate",
+                    "message": message,
+                },
+                logger=logger,
+            )
             logger(f"yt-dlp progress: {message}")
 
     return _hook
@@ -468,15 +478,16 @@ def _build_youtube_postprocessor_hook(*, progress_callback, logger):
             progress = 1.0
             progress_mode = "determinate"
 
-        if progress_callback is not None:
-            progress_callback(
-                {
-                    "stage": "postprocess",
-                    "progress": progress,
-                    "progress_mode": progress_mode,
-                    "message": message,
-                }
-            )
+        _emit_prepare_progress(
+            progress_callback,
+            {
+                "stage": "postprocess",
+                "progress": progress,
+                "progress_mode": progress_mode,
+                "message": message,
+            },
+            logger=logger,
+        )
         logger(f"yt-dlp postprocess: {message}")
 
     return _hook

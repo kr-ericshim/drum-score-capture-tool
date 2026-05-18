@@ -67,6 +67,35 @@ test("archive modal renders detail actions from selected row", async () => {
   assert.doesNotMatch(markup, /role="listitem"/);
 });
 
+test("archive modal list rows expose list semantics", async () => {
+  const { renderArchiveModal } = await import("../features/archive/ArchiveModal.js");
+  const state = createInitialSessionState();
+  state.ui.locale = "en";
+  state.archive.isOpen = true;
+  state.archive.items = [
+    {
+      sourceKey: "source-1",
+      displayName: "Autumn Leaves",
+      completedAt: 1713526200,
+      pdfPath: "/tmp/autumn-leaves.pdf",
+      outputDir: "/tmp/autumn-leaves",
+    },
+    {
+      sourceKey: "source-2",
+      displayName: "Blue Rondo",
+      completedAt: 1713526200,
+      pdfPath: "/tmp/blue-rondo.pdf",
+      outputDir: "/tmp/blue-rondo",
+    },
+  ];
+
+  const markup = renderArchiveModal(state);
+
+  assert.match(markup, /class="archive-list" role="list"/);
+  assert.equal((markup.match(/role="listitem"/g) || []).length, 2);
+  assert.equal((markup.match(/data-action="select-archive-item"/g) || []).length, 2);
+});
+
 test("archive modal shows empty state and disables missing-path actions", async () => {
   const { renderArchiveModal } = await import("../features/archive/ArchiveModal.js");
   const emptyState = createInitialSessionState();

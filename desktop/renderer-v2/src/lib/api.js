@@ -2,26 +2,41 @@ function resolveApiBase() {
   return String(window?.drumSheetAPI?.apiBase || "http://127.0.0.1:8000");
 }
 
-function resolveApiToken() {
-  return String(window?.drumSheetAPI?.apiToken || "").trim();
-}
-
-function headers(extra = {}) {
-  const merged = { ...extra };
-  const token = resolveApiToken();
-  if (token) {
-    merged["X-DrumSheet-Token"] = token;
-  }
-  return merged;
-}
-
-function authorizedPath(pathname) {
+function apiPath(pathname) {
   const url = new URL(String(pathname || ""), resolveApiBase());
-  const token = resolveApiToken();
-  if (token) {
-    url.searchParams.set("token", token);
-  }
+  url.searchParams.delete("token");
   return url.toString();
+}
+
+function isJobsFilePath(pathname) {
+  const url = new URL(String(pathname || ""), resolveApiBase());
+  const base = new URL(resolveApiBase());
+  return url.origin === base.origin && url.pathname.startsWith("/jobs-files/");
+}
+
+async function readProtectedJobAsset(pathname) {
+  const bridgeReader = window?.drumSheetAPI?.readJobAsset;
+  if (typeof bridgeReader === "function" && isJobsFilePath(pathname)) {
+    return bridgeReader(pathname);
+  }
+
+  const response = await fetch(apiPath(pathname));
+  if (!response.ok) {
+    throw new Error("보호된 작업 파일을 불러오지 못했습니다.");
+  }
+  return {
+    bytes: await response.arrayBuffer(),
+    contentType: String(response.headers.get("content-type") || ""),
+  };
+}
+
+async function protectedImageUrl(pathname) {
+  if (typeof Blob !== "function" || typeof globalThis.URL?.createObjectURL !== "function") {
+    return apiPath(pathname);
+  }
+  const asset = await readProtectedJobAsset(pathname);
+  const blob = new Blob([asset.bytes], asset.contentType ? { type: asset.contentType } : undefined);
+  return globalThis.URL.createObjectURL(blob);
 }
 
 async function readJson(response, fallbackMessage) {
@@ -32,28 +47,48 @@ async function readJson(response, fallbackMessage) {
   throw new Error(String(error?.detail || fallbackMessage));
 }
 
+async function requestApiJson(pathname, options = {}, fallbackMessage) {
+  const bridgeRequest = window?.drumSheetAPI?.requestJson;
+  if (typeof bridgeRequest === "function") {
+    const result = await bridgeRequest(pathname, {
+      method: options.method || "GET",
+      body: options.body,
+    });
+    if (result?.ok) {
+      return result.data;
+    }
+    throw new Error(String(result?.data?.detail || fallbackMessage));
+  }
+
+  const response = await fetch(apiPath(pathname), {
+    method: options.method || "GET",
+    headers: options.headers,
+    body: options.body,
+  });
+  return readJson(response, fallbackMessage);
+}
+
 export async function requestPreviewFrame({ filePath, startSec }) {
-  const response = await fetch(`${resolveApiBase()}/preview/frame`, {
+  const data = await requestApiJson("/preview/frame", {
     method: "POST",
-    headers: headers({ "Content-Type": "application/json" }),
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       source_type: "file",
       file_path: filePath,
       start_sec: Number.isFinite(startSec) ? startSec : null,
     }),
-  });
-  const data = await readJson(response, "미리보기를 불러오지 못했습니다.");
+  }, "미리보기를 불러오지 못했습니다.");
   return {
-    imagePath: data.image_url ? authorizedPath(data.image_url) : data.image_path,
+    imagePath: data.image_url ? await protectedImageUrl(data.image_url) : data.image_path,
     sourcePath: data.image_path,
     diagnostics: Array.isArray(data.diagnostics) ? data.diagnostics : [],
   };
 }
 
 export async function requestPreviewRoiHealth({ sourceType = "file", filePath, youtubeUrl = "", startSec, roi }) {
-  const response = await fetch(`${resolveApiBase()}/preview/roi-health`, {
+  const data = await requestApiJson("/preview/roi-health", {
     method: "POST",
-    headers: headers({ "Content-Type": "application/json" }),
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       source_type: sourceType,
       file_path: filePath || null,
@@ -61,8 +96,7 @@ export async function requestPreviewRoiHealth({ sourceType = "file", filePath, y
       start_sec: Number.isFinite(startSec) ? startSec : null,
       roi: Array.isArray(roi) ? roi : [],
     }),
-  });
-  const data = await readJson(response, "ROI 상태를 점검하지 못했습니다.");
+  }, "악보 영역 상태를 점검하지 못했습니다.");
   return {
     riskLevel: String(data.risk_level || "info"),
     summary: String(data.summary || ""),
@@ -74,41 +108,36 @@ export async function requestPreviewRoiHealth({ sourceType = "file", filePath, y
 }
 
 export async function preparePreviewSource({ sourceType, filePath, youtubeUrl }) {
-  const response = await fetch(`${resolveApiBase()}/preview/source`, {
+  const data = await requestApiJson("/preview/source", {
     method: "POST",
-    headers: headers({ "Content-Type": "application/json" }),
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       source_type: sourceType,
       file_path: filePath || null,
       youtube_url: youtubeUrl || null,
     }),
-  });
-  const data = await readJson(response, "소스를 준비하지 못했습니다.");
+  }, "소스를 준비하지 못했습니다.");
   return {
     videoPath: data.video_path,
-    videoUrl: data.video_url ? authorizedPath(data.video_url) : "",
+    videoUrl: data.video_url ? apiPath(data.video_url) : "",
     fromCache: Boolean(data.from_cache),
     logLines: Array.isArray(data.log_lines) ? data.log_lines : [],
   };
 }
 
 export async function createPreviewSourceJob({ youtubeUrl }) {
-  const response = await fetch(`${resolveApiBase()}/preview/source-jobs`, {
+  const data = await requestApiJson("/preview/source-jobs", {
     method: "POST",
-    headers: headers({ "Content-Type": "application/json" }),
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       youtube_url: youtubeUrl || "",
     }),
-  });
-  const data = await readJson(response, "유튜브 준비 작업을 시작하지 못했습니다.");
+  }, "유튜브 준비 작업을 시작하지 못했습니다.");
   return String(data.job_id || "");
 }
 
 export async function getPreviewSourceJob(jobId) {
-  const response = await fetch(`${resolveApiBase()}/preview/source-jobs/${jobId}`, {
-    headers: headers(),
-  });
-  const data = await readJson(response, "유튜브 준비 상태를 불러오지 못했습니다.");
+  const data = await requestApiJson(`/preview/source-jobs/${jobId}`, {}, "유튜브 준비 상태를 불러오지 못했습니다.");
   const result = data.result || {};
   return {
     jobId: String(data.job_id || jobId || ""),
@@ -121,7 +150,7 @@ export async function getPreviewSourceJob(jobId) {
     logLines: Array.isArray(data.log_tail) ? data.log_tail : [],
     result: {
       videoPath: String(result.video_path || ""),
-      videoUrl: result.video_url ? authorizedPath(result.video_url) : "",
+      videoUrl: result.video_url ? apiPath(result.video_url) : "",
       fromCache: Boolean(result.from_cache),
       videoTitle: String(result.video_title || ""),
       sourceKey: String(result.source_key || ""),
@@ -130,10 +159,7 @@ export async function getPreviewSourceJob(jobId) {
 }
 
 export async function getLocalMediaRegistry() {
-  const response = await fetch(`${resolveApiBase()}/library/local-media`, {
-    headers: headers(),
-  });
-  const data = await readJson(response, "로컬 미디어 목록을 불러오지 못했습니다.");
+  const data = await requestApiJson("/library/local-media", {}, "로컬 미디어 목록을 불러오지 못했습니다.");
   return {
     items: Array.isArray(data.items)
       ? data.items.map((item) => ({
@@ -157,10 +183,7 @@ export async function getLocalMediaRegistry() {
 }
 
 export async function getArchiveLibrary() {
-  const response = await fetch(`${resolveApiBase()}/library/archive`, {
-    headers: headers(),
-  });
-  const data = await readJson(response, "보관함을 불러오지 못했습니다.");
+  const data = await requestApiJson("/library/archive", {}, "보관함을 불러오지 못했습니다.");
   return {
     items: Array.isArray(data.items)
       ? data.items.map((item) => ({
@@ -178,31 +201,26 @@ export async function getArchiveLibrary() {
 }
 
 export async function createJob(payload) {
-  const response = await fetch(`${resolveApiBase()}/jobs`, {
+  const data = await requestApiJson("/jobs", {
     method: "POST",
-    headers: headers({ "Content-Type": "application/json" }),
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
-  });
-  const data = await readJson(response, "작업 생성에 실패했습니다.");
+  }, "작업 생성에 실패했습니다.");
   return data.job_id;
 }
 
 export async function getJob(jobId) {
-  const response = await fetch(`${resolveApiBase()}/jobs/${jobId}`, {
-    headers: headers(),
-  });
-  return readJson(response, "작업 조회에 실패했습니다.");
+  return requestApiJson(`/jobs/${jobId}`, {}, "작업 조회에 실패했습니다.");
 }
 
 export async function reviewExport(jobId, { keepCaptures = [], keepImages = [], formats = [] } = {}) {
-  const response = await fetch(`${resolveApiBase()}/jobs/${jobId}/review-export`, {
+  return requestApiJson(`/jobs/${jobId}/review-export`, {
     method: "POST",
-    headers: headers({ "Content-Type": "application/json" }),
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       keep_captures: keepCaptures,
       keep_images: keepImages,
       formats,
     }),
-  });
-  return readJson(response, "검토 반영에 실패했습니다.");
+  }, "검토 반영에 실패했습니다.");
 }

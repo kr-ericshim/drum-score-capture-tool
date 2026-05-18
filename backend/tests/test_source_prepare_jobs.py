@@ -1,4 +1,5 @@
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -262,6 +263,55 @@ class TestSourcePrepareJobs(unittest.TestCase):
 
             self.assertEqual(response.cleared_jobs, 1)
             self.assertIsNone(prepare_store.get("prepare-running"))
+
+    def test_clear_cache_serializes_new_source_prepare_jobs(self):
+        with tempfile.TemporaryDirectory() as td:
+            jobs_root = Path(td) / "jobs"
+            jobs_root.mkdir(parents=True, exist_ok=True)
+            stale_dir = jobs_root / "stale-artifact"
+            stale_dir.mkdir(parents=True, exist_ok=True)
+            (stale_dir / "old.txt").write_text("old", encoding="utf-8")
+
+            job_store = JobStore(jobs_root)
+            prepare_store = SourcePrepareStore(jobs_root / "_preview_source_jobs")
+            executor = FakeExecutor()
+            original_remove_path = main._remove_path
+            started = threading.Event()
+            created = {}
+
+            def create_job_while_clear_is_running():
+                started.set()
+                created["response"] = main.create_preview_source_job(
+                    PreviewSourceJobCreateRequest(youtube_url="https://youtu.be/race")
+                )
+
+            worker = threading.Thread(target=create_job_while_clear_is_running)
+
+            def remove_path_with_racing_create(path):
+                if not started.is_set():
+                    worker.start()
+                    self.assertTrue(started.wait(1.0))
+                original_remove_path(path)
+
+            with (
+                patch.object(main, "jobs_root", jobs_root),
+                patch.object(main, "job_store", job_store),
+                patch.object(main, "source_prepare_store", prepare_store),
+                patch.object(main, "source_prepare_executor", executor),
+                patch.object(main, "_remove_path", side_effect=remove_path_with_racing_create),
+            ):
+                response = main.clear_cache()
+                worker.join(1.0)
+
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(response.cleared_paths, 2)
+            self.assertIn("response", created)
+            job_id = created["response"].job_id
+            job = prepare_store.get(job_id)
+            self.assertIsNotNone(job)
+            self.assertEqual(job.status, JobStatus.QUEUED)
+            self.assertTrue(Path(job.artifact_dir).exists())
+            self.assertEqual(len(executor.submissions), 1)
 
 
 if __name__ == "__main__":

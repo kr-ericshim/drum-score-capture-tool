@@ -6,7 +6,7 @@
 
 **Primary:**
 - Python 3.11 target runtime - backend API and processing pipeline in `backend/run.py`, `backend/app/main.py`, and `backend/app/pipeline/`. GitHub Actions pins Python 3.11 in `.github/workflows/ci.yml` and `.github/workflows/release.yml`.
-- JavaScript (Node.js + Electron) - desktop main process, preload bridge, legacy renderer, and renderer-v2 rewrite in `desktop/main.js`, `desktop/preload.js`, `desktop/renderer/`, and `desktop/renderer-v2/src/`.
+- JavaScript (Node.js + Electron) - desktop main process, preload bridge, and the active renderer-v2 UI in `desktop/main.js`, `desktop/preload.js`, and `desktop/renderer-v2/src/`.
 
 **Secondary:**
 - Bash - setup and optional runtime helpers in `backend/scripts/setup_hat_runtime.sh`, `backend/scripts/enable_hat_env.sh`, and top-level launch helpers such as `easy_setup_mac.command`.
@@ -31,7 +31,7 @@
 **Core:**
 - FastAPI `>=0.110.0` - local HTTP API and job orchestration in `backend/app/main.py`.
 - Electron `^37.2.0` - desktop shell, backend process manager, IPC bridge, and native dialogs in `desktop/main.js` and `desktop/preload.js`.
-- Vanilla browser JavaScript - both `desktop/renderer/app.js` and the ESM rewrite under `desktop/renderer-v2/src/` use direct DOM and `fetch`; no React, Vue, Svelte, or TypeScript framework is detected.
+- Vanilla browser JavaScript - the ESM renderer-v2 app under `desktop/renderer-v2/src/` uses direct DOM and `fetch`; no React, Vue, Svelte, or TypeScript framework is detected.
 
 **Testing:**
 - Python `unittest` - backend test suite in `backend/tests/`, invoked by `.github/workflows/release.yml` and the repo guidance in `README.md`.
@@ -62,7 +62,7 @@
 - Environment is shell/launcher driven. No checked-in `.env`, `.env.local`, or `.env.example` file was detected in the repository root during this scan.
 - Base backend runtime variables are read in `backend/run.py` and `backend/app/main.py`: `DRUMSHEET_HOST`, `DRUMSHEET_PORT`, `DRUMSHEET_JOBS_DIR`, `DRUMSHEET_SESSION_TOKEN`.
 - Binary/runtime resolution variables are read in `desktop/main.js` and `backend/app/pipeline/ffmpeg_runtime.py`: `DRUMSHEET_PYTHON_BIN`, `DRUMSHEET_NODE_BIN`, `DRUMSHEET_FFMPEG_BIN`, `DRUMSHEET_FFPROBE_BIN`.
-- Renderer/build selection variables are read in `desktop/renderer-entry.js`, `desktop/scripts/run-builder.js`, and `desktop/electron-builder.config.js`: `DRUMSHEET_RENDERER`, `DRUMSHEET_DIST_PROFILE`, `DRUMSHEET_ENABLE_SIGNING`, `CSC_IDENTITY_AUTO_DISCOVERY`.
+- Build profile variables are read in `desktop/scripts/run-builder.js` and `desktop/electron-builder.config.js`: `DRUMSHEET_DIST_PROFILE`, `DRUMSHEET_ENABLE_SIGNING`, `CSC_IDENTITY_AUTO_DISCOVERY`.
 - Acceleration and optional upscale variables are read in `backend/app/pipeline/acceleration.py`, `backend/app/pipeline/upscale.py`, and `backend/app/pipeline/hat_runtime.py`: `DRUMSHEET_HWACCEL`, `DRUMSHEET_OPENCV_ACCEL`, `DRUMSHEET_UPSCALE_ENGINE`, `DRUMSHEET_UPSCALE_SHARPEN`, and the `DRUMSHEET_HAT_*` variables.
 
 **Build:**

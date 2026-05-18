@@ -5,9 +5,9 @@
 ## APIs & External Services
 
 **Local Service Boundary:**
-- FastAPI backend over loopback HTTP - the Electron app starts a local service at `http://127.0.0.1:${DRUMSHEET_PORT}` and the renderers call it with `fetch`.
-  - SDK/Client: browser `fetch` in `desktop/renderer-v2/src/lib/api.js` and `desktop/renderer/app.js`; Electron health checks in `desktop/main.js`
-  - Auth: `DRUMSHEET_SESSION_TOKEN`, generated in `desktop/main.js`, exposed by `desktop/preload.js`, and enforced in `backend/app/main.py` via `X-DrumSheet-Token` or a `token` query parameter
+- FastAPI backend over loopback HTTP - the Electron app starts a local service at `http://127.0.0.1:${DRUMSHEET_PORT}` and renderer-v2 calls it with `fetch`.
+  - SDK/Client: browser `fetch` in `desktop/renderer-v2/src/lib/api.js`; Electron health checks in `desktop/main.js`
+  - Auth: `DRUMSHEET_SESSION_TOKEN`, generated in `desktop/main.js`, exposed by `desktop/preload.js`, and enforced in `backend/app/main.py` via `X-DrumSheet-Token`
 
 **Media Source Acquisition:**
 - YouTube download via `yt-dlp` - `backend/app/pipeline/extract.py` downloads and normalizes `youtube` sources before frame extraction.

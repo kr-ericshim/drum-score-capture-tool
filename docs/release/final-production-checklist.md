@@ -16,14 +16,19 @@ Use this checklist immediately before cutting a public release for Drum Sheet Ca
 - [ ] `PYTHONPATH=backend backend/.venv/bin/python -m unittest discover -s backend/tests -p 'test_*.py'`
 - [ ] `backend/.venv/bin/pip install -r backend/requirements-build.txt`
 - [ ] `cd desktop && npm ci`
-- [ ] `cd desktop && node --test tests/*.test.mjs`
+- [ ] `cd desktop && npm run test:desktop-smoke`
+- [ ] `cd desktop && npm run test:desktop-node`
 - [ ] `cd desktop && npm run test:packaged-release`
-- [ ] `cd desktop && npm run check:renderer-syntax`
-- [ ] `cd desktop && npm run check:locale-init`
+- [ ] `cd desktop && npm run verify:renderer-v2`
 - [ ] Optional preflight only: `cd desktop && npm run pack:release`
+- [ ] After `pack:release` or `dist:release`: `cd desktop && npm run smoke:packaged-electron`
+- [ ] After `pack:release` or `dist:release`: `cd desktop && npm run smoke:packaged-runtime`
 - [ ] Required for any public installer build: `cd desktop && npm run dist:release`
-- [ ] Treat `pack:release` as unpacked-app validation only; it does not prove DMG/installer generation or `latest*.yml` output.
+- [ ] Treat `pack:release` as unpacked-app validation only; it does not prove DMG/installer generation.
 - [ ] Confirm packaged artifact validation passes at the end of the build logs, including frozen backend runtime plus bundled `ffmpeg`/`ffprobe` detection.
+- [ ] Confirm packaged Electron smoke starts the generated app and reaches `/health` plus `/runtime`.
+- [ ] Confirm packaged runtime smoke starts the backend executable from `dist/`, reads `/runtime`, and extracts a preview frame from a generated local video.
+- [ ] Treat `test:desktop-smoke` as a no-GUI Electron startup contract only; full packaged app behavior still requires the manual smoke test below.
 
 ## Manual Smoke Test
 
@@ -33,8 +38,8 @@ Use this checklist immediately before cutting a public release for Drum Sheet Ca
 - [ ] Local video import works.
 - [ ] YouTube URL import works.
 - [ ] Preview frame loads.
-- [ ] ROI can be selected and adjusted.
-- [ ] ROI health diagnostics appear and are understandable.
+- [ ] Score region can be selected and adjusted.
+- [ ] The selected score-area preview appears before export.
 - [ ] Full run completes without user-facing errors.
 - [ ] Export works for PNG.
 - [ ] Export works for JPG.
@@ -50,10 +55,9 @@ Use this checklist immediately before cutting a public release for Drum Sheet Ca
 - [ ] If `pack:release` was used as preflight, only expect unpacked packaged-app output (for example `.app` or `win-unpacked`).
 - [ ] macOS installer artifact exists in `dist/` as a DMG after `dist:release`.
 - [ ] Windows installer artifact exists in `dist/` as an installer after `dist:release`.
-- [ ] `dist/latest-mac.yml` or `dist/latest.yml` exists after `dist:release` when release metadata is expected.
 - [ ] Packaged app includes `backend/runtime/drumsheet-backend/...` plus bundled `backend/bin/ffmpeg` and `backend/bin/ffprobe`, and does not include a packaged `.venv`.
 - [ ] Packaged backend version matches source version.
-- [ ] Packaged backend still includes the expected YouTube download strategy and ffmpeg handoff checks.
+- [ ] Packaged backend source-text compatibility checks match the current backend YouTube strategy markers; backend tests, frozen-runtime smoke, and packaged-runtime smoke remain the behavior gates.
 
 ## Release Operations
 

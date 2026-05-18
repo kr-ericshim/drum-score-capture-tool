@@ -28,6 +28,21 @@ test("review apply action stays disabled without a job id even when pages are se
   assert.match(markup, /data-action="apply-review"[^>]*disabled/);
 });
 
+test("review screen shows an explicit empty state when no captures are available", () => {
+  const state = createReviewState();
+  state.ui.locale = "en";
+  state.review.pages = [];
+  state.review.selectedPageIds = [];
+  state.review.focusedPageId = "";
+
+  const markup = renderReviewScreen(state);
+
+  assert.match(markup, /No captures to review yet\./);
+  assert.match(markup, /Run an export and the captured pages will appear here\./);
+  assert.match(markup, /class="review-empty" role="status"/);
+  assert.doesNotMatch(markup, /<article class="review-card/);
+});
+
 test("review apply action stays disabled while review export is running", () => {
   const state = createReviewState();
   state.exportConfig.jobId = "job-1";
@@ -105,6 +120,7 @@ test("review screen removes decorative review controls outside the real flow", (
 
   assert.doesNotMatch(markup, /Add Frame|RECROP|ZOOM/);
   assert.doesNotMatch(markup, /mode-switch/);
+  assert.doesNotMatch(markup, /review-card-tag/);
   assert.doesNotMatch(markup, /결과 폴더 열기/);
   assert.match(markup, /data-action="apply-review"/);
 });
@@ -116,9 +132,10 @@ test("review screen uses capture-selection language instead of page-curation wor
 
   const markup = renderReviewScreen(state);
 
-  assert.match(markup, /Review capture selection/);
-  assert.match(markup, /Keep/);
+  assert.match(markup, /Choose Captures/);
+  assert.match(markup, /Include/);
   assert.match(markup, /Regenerate from selected captures/);
+  assert.doesNotMatch(markup, /Candidate/);
   assert.doesNotMatch(markup, /DASHBOARD|WORKBENCH|INSPECTION VIEW/i);
   assert.doesNotMatch(markup, /Review captured pages|Keep selected pages|Page curation/i);
 });
@@ -165,7 +182,7 @@ test("review screen reports applied kept count from the selected cards", () => {
   const markup = renderReviewScreen(state);
 
   assert.match(markup, /3개 캡처 유지됨/);
-  assert.match(markup, /유지 3 \/ 3/);
+  assert.match(markup, /포함 3 \/ 3/);
 });
 
 test("review screen applied summary stays aligned with selected cards when keptCount drifts", () => {
@@ -192,8 +209,8 @@ test("review screen applied summary stays aligned with selected cards when keptC
   const markup = renderReviewScreen(state);
 
   assert.match(markup, /1개 캡처 유지됨/);
-  assert.match(markup, /유지 1 \/ 2/);
-  assert.doesNotMatch(markup, /3개 캡처 유지됨|유지 3 \/ 2/);
+  assert.match(markup, /포함 1 \/ 2/);
+  assert.doesNotMatch(markup, /3개 캡처 유지됨|포함 3 \/ 2/);
 });
 
 test("review screen escapes dynamic review text before inserting markup", () => {

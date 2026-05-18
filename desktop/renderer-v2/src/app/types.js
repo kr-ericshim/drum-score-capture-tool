@@ -2,7 +2,7 @@ export const STEP_ORDER = ["source", "roi", "export", "review"];
 
 export const STEP_LABELS = {
   source: "Source",
-  roi: "ROI",
+  roi: "Region",
   export: "Export",
   review: "Review",
 };

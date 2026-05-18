@@ -1,5 +1,5 @@
 ---
-status: investigating
+status: resolved
 trigger: "You are diagnosing the Score Capture Program in /Users/ericshim/Documents/myproject/score_capture_program. Scope: backend job orchestration, persistence, source preparation, pipeline/export contracts, restart behavior, and filesystem truth across the whole flow. Diagnose only; do not edit. Find concrete backend-side failure modes or incomplete implementation seams that the frontend may not reveal immediately. Read at minimum: .planning/codebase/ARCHITECTURE.md, backend/app/main.py, backend/app/job_store.py, backend/app/schemas.py, backend/app/pipeline/extract.py, backend/app/pipeline/export.py, backend/tests/test_job_store_persistence.py, backend/tests/test_source_prepare_jobs.py, backend/tests/test_job_api_contract.py, backend/tests/test_review_export.py, backend/tests/test_review_export_refinalization.py, backend/tests/test_sheet_finalize.py, backend/tests/test_archive_library.py. Return only concrete findings with severity, exact file refs, reproduction path, and current test blind spots. Use marker '## DEBUG COMPLETE'."
 created: 2026-04-19T12:03:06Z
 updated: 2026-04-19T12:24:30Z
@@ -56,7 +56,16 @@ started: Not specified; proactive diagnosis request.
 
 ## Resolution
 
-root_cause:
-fix:
-verification:
-files_changed: []
+root_cause: Backend lifecycle code had several uncovered seams around optional YouTube progress callbacks, cache-clear/source-prepare synchronization, transient preview workspace retention, and direct YouTube job hydration into the media registry.
+fix: Current code now tolerates missing YouTube progress callbacks, blocks cache clear while capture/export or source-prepare jobs are active, serializes cache deletion with new capture/source-prepare job creation, clears both job stores when idle, hydrates direct YouTube jobs through cached/source result paths, deletes ROI-health temp workspaces immediately, and bounds preview-frame workspaces with request-triggered count plus TTL pruning so returned preview images remain loadable.
+verification: Current verification on 2026-05-18 passed the full backend suite with `DRUMSHEET_JOBS_DIR` pointed at a fresh temporary directory, plus targeted preview/source/cache/local-media tests and renderer-v2 verification. Cache-clear coverage includes both already-running source-prepare jobs and the concurrent create-during-clear interleaving.
+files_changed:
+  - backend/app/main.py
+  - backend/app/pipeline/extract.py
+  - backend/tests/test_youtube_download.py
+  - backend/tests/test_source_prepare_jobs.py
+  - backend/tests/test_local_media_registry.py
+  - backend/tests/test_extract_preview_frame.py
+  - backend/tests/test_fixture_isolation.py
+  - desktop/renderer-entry.js
+  - desktop/tests/renderer-entry.test.cjs

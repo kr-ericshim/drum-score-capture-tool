@@ -69,6 +69,36 @@ class TestPreviewSourceCache(unittest.TestCase):
             self.assertEqual(resolved, cached_video)
             prepare_source.assert_not_called()
 
+    def test_cache_progress_callback_failure_does_not_abort_cache_hit(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            jobs_root = Path(tmp_dir) / "jobs"
+            jobs_root.mkdir(parents=True, exist_ok=True)
+            url = "https://example.com/watch?v=abc"
+            logs = []
+
+            def broken_progress_callback(_update):
+                raise RuntimeError("ui progress closed")
+
+            with patch.object(main, "jobs_root", jobs_root):
+                cache_dir = main._preview_source_cache_workspace(url)
+                cached_video = cache_dir / "cached.mp4"
+                cached_video.write_bytes(b"cached-video")
+
+                with patch.object(main, "_probe_video_resolution", return_value=(1920, 1080)), patch.object(
+                    main,
+                    "prepare_preview_source",
+                ) as prepare_source:
+                    resolved, from_cache = main._get_or_prepare_cached_youtube_video(
+                        url,
+                        logger=logs.append,
+                        progress_callback=broken_progress_callback,
+                    )
+
+            self.assertTrue(from_cache)
+            self.assertEqual(resolved, cached_video)
+            self.assertTrue(any("progress callback failed" in log for log in logs))
+            prepare_source.assert_not_called()
+
     def test_cache_hit_prefers_highest_resolution_video(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             jobs_root = Path(tmp_dir) / "jobs"

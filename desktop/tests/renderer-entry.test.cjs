@@ -18,7 +18,7 @@ test("loads renderer-v2 by default when it exists", () => {
   assert.equal(rendererPath, path.join(baseDir, "renderer-v2", "index.html"));
 });
 
-test("falls back to the legacy renderer when explicitly requested", () => {
+test("keeps renderer-v2 even when legacy is explicitly requested", () => {
   const baseDir = path.join("/tmp", "desktop");
 
   const rendererPath = resolveRendererIndexPath({
@@ -29,10 +29,10 @@ test("falls back to the legacy renderer when explicitly requested", () => {
     },
   });
 
-  assert.equal(rendererPath, path.join(baseDir, "renderer", "index.html"));
+  assert.equal(rendererPath, path.join(baseDir, "renderer-v2", "index.html"));
 });
 
-test("falls back to the legacy renderer when renderer-v2 is missing", () => {
+test("keeps renderer-v2 as the only product entry when renderer-v2 is missing", () => {
   const baseDir = path.join("/tmp", "desktop");
 
   const rendererPath = resolveRendererIndexPath({
@@ -43,5 +43,5 @@ test("falls back to the legacy renderer when renderer-v2 is missing", () => {
     },
   });
 
-  assert.equal(rendererPath, path.join(baseDir, "renderer", "index.html"));
+  assert.equal(rendererPath, path.join(baseDir, "renderer-v2", "index.html"));
 });

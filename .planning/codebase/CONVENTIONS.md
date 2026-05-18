@@ -9,7 +9,6 @@
 - Backend test files use `test_<feature>.py` in `backend/tests/`, for example `backend/tests/test_review_export.py` and `backend/tests/test_source_prepare_jobs.py`.
 - Renderer-v2 screen and shell view files use `PascalCase` filenames. Add new screens in the style of `desktop/renderer-v2/src/features/source/SourceScreen.js`, `desktop/renderer-v2/src/features/review/ReviewScreen.js`, and `desktop/renderer-v2/src/ui/shell/TopBar.js`.
 - Renderer-v2 controllers, state modules, helpers, and library modules use `camelCase` filenames. Follow `desktop/renderer-v2/src/features/source/sourceController.js`, `desktop/renderer-v2/src/app/session/runtimeSafety.js`, and `desktop/renderer-v2/src/lib/api.js`.
-- Legacy renderer modules also use `camelCase` filenames under `desktop/renderer/modules/`, for example `desktop/renderer/modules/job-api.js` and `desktop/renderer/modules/video-range-picker.js`.
 - Desktop Node tests use `*.test.mjs` or `*.test.cjs` in `desktop/tests/`. Renderer-v2 tests use `*.test.js` in `desktop/renderer-v2/src/tests/`.
 
 **Functions:**
@@ -34,12 +33,12 @@
 - No formatter configuration file is checked in. `rg --files` found no `.eslintrc*`, `eslint.config.*`, `.prettierrc*`, `prettier.config.*`, `biome.json`, `.editorconfig`, `pytest.ini`, or `tsconfig.json` at the repository root.
 - Preserve the existing manual formatting rather than introducing a new style tool.
 - Python uses 4-space indentation and typed signatures in service and pipeline code. See `backend/run.py`, `backend/app/main.py`, and `backend/app/pipeline/export.py`.
-- JavaScript uses 2-space indentation, semicolons, double-quoted strings, and explicit `.js` import extensions. See `desktop/renderer-v2/src/app/App.js`, `desktop/renderer-v2/src/features/source/SourceScreen.js`, and `desktop/renderer/modules/job-api.js`.
+- JavaScript uses 2-space indentation, semicolons, double-quoted strings, and explicit `.js` import extensions. See `desktop/renderer-v2/src/app/App.js`, `desktop/renderer-v2/src/features/source/SourceScreen.js`, and `desktop/renderer-v2/src/lib/api.js`.
 - Multi-line objects and arrays prefer trailing commas in JS and conventional hanging indentation in Python. Follow nearby formatting instead of rewrapping large blocks.
 
 **Linting:**
 - No repo-wide lint step is defined for Python.
-- Desktop verification relies on syntax and structure checks instead of ESLint. `desktop/package.json` defines `check:renderer-syntax` and `check:renderer-v2`.
+- Desktop verification relies on syntax and structure checks instead of ESLint. `desktop/package.json` defines `check:renderer-v2` and `verify:renderer-v2`.
 - `desktop/scripts/check-renderer-v2.js` is a required contract check. It parses every `desktop/renderer-v2/src/**/*.js` file with `node --check` and asserts the presence or absence of required HTML/CSS markers in `renderer-v2`.
 - When adding renderer-v2 code, keep DOM markers, `data-action` hooks, and CSS class names stable enough for `desktop/scripts/check-renderer-v2.js` and the `desktop/renderer-v2/src/tests/*.test.js` suite.
 
@@ -75,7 +74,6 @@ except Exception as exc:
 - Backend long-running jobs record failure state in stores instead of printing directly. `backend/app/job_store.py` persists `status`, `message`, `error_code`, and truncated `log_tail`.
 - Renderer-v2 API adapters throw plain `Error` instances with localized, user-facing text. `desktop/renderer-v2/src/lib/api.js` centralizes failed response parsing in `readJson`.
 - Renderer-v2 controllers convert errors into state rather than letting them bubble into the DOM. `desktop/renderer-v2/src/features/source/sourceController.js` stores `prepareErrorDetail` and `error`, and screen renderers surface them through `.inline-error` elements with `role="alert"`.
-- Legacy renderer code follows the same guard-then-throw approach. `desktop/renderer/modules/job-api.js` rejects missing ROI, empty file paths, empty format selections, and failed HTTP responses with explicit user-readable messages.
 
 ## Validation
 
@@ -91,7 +89,6 @@ except Exception as exc:
 **Frontend state and payload validation:**
 - Renderer-v2 uses pure state guards before enabling actions. `desktop/renderer-v2/src/app/session/selectors.js` defines `isRectValid`, `getStepState`, `getAccessibleSteps`, and `getPrimaryAction`.
 - Renderer-v2 runtime race protection is explicit. `desktop/renderer-v2/src/app/session/runtimeSafety.js` uses version tokens such as `sourceSession`, `previewVersion`, and `exportVersion` to reject stale async results.
-- Legacy renderer payload assembly validates DOM input before sending API requests. `desktop/renderer/modules/job-api.js` uses `parseManualRoi`, `numberOrNull`, `checkedValue`, and `buildPayload` to reject bad UI state early.
 - Renderer-v2 screens derive disabled states from validation helpers rather than inline DOM checks. `desktop/renderer-v2/src/features/source/SourceScreen.js` disables YouTube preparation until `isLikelyYoutubeUrl` succeeds.
 
 ## Logging
@@ -112,7 +109,6 @@ except Exception as exc:
   - `backend/app/pipeline/extract.py` documents Windows single-frame preview fallbacks.
   - `backend/app/pipeline/sheet_finalize.py` explains page split heuristics and whitespace slicing tradeoffs.
   - `backend/app/pipeline/stitch.py` documents overlap confidence handling.
-  - `desktop/renderer/modules/job-api.js` has a single targeted comment explaining layout inference.
 
 **JSDoc/TSDoc:**
 - Not used.
@@ -163,7 +159,6 @@ export function createSourceController({
 **Barrel Files:** not used
 
 - Renderer-v2 modules export named functions and constants. No `export default` usage was detected under `desktop/renderer-v2/src/`.
-- Legacy renderer modules also prefer named exports in ESM files, for example `desktop/renderer/modules/job-api.js` and `desktop/renderer/modules/status-ui.js`.
 - CommonJS is reserved for Electron entry/build tooling and a small number of compatibility tests, such as `desktop/tests/renderer-entry.test.cjs` and `desktop/scripts/check-renderer-v2.js`.
 - Shared state is centralized in a single session shape in `desktop/renderer-v2/src/app/session/selectors.js` and mutated through `createStore` in `desktop/renderer-v2/src/app/session/store.js`.
 - Backend persistence concerns are centralized in `backend/app/job_store.py`; pipeline modules under `backend/app/pipeline/` stay mostly function-oriented and stateless outside filesystem workspaces.
