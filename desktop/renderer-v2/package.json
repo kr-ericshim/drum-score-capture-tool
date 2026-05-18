@@ -4,6 +4,6 @@
   "type": "module",
   "scripts": {
     "check": "node ../scripts/check-renderer-v2.js",
-    "test": "node --test src/tests/*.test.js"
+    "test": "node ../scripts/run-renderer-v2-tests.js"
   }
 }
