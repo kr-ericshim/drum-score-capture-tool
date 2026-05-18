@@ -62,7 +62,9 @@ class TestPreviewFrameExtraction(unittest.TestCase):
             with patch("app.pipeline.extract.resolve_ffmpeg_bin", return_value="ffmpeg"), patch(
                 "app.pipeline.extract.get_runtime_acceleration",
                 return_value=SimpleNamespace(ffmpeg_hwaccel_flags=[[]]),
-            ), patch("app.pipeline.extract.resolve_ffprobe_bin", return_value="ffprobe"), patch(
+            ), patch("app.pipeline.extract.platform.system", return_value="Darwin"), patch(
+                "app.pipeline.extract.resolve_ffprobe_bin", return_value="ffprobe"
+            ), patch(
                 "app.pipeline.extract.subprocess.run",
                 side_effect=fake_run,
             ), patch(
@@ -134,7 +136,10 @@ class TestPreviewFrameExtraction(unittest.TestCase):
             with patch("app.pipeline.extract.resolve_ffmpeg_bin", return_value="ffmpeg"), patch(
                 "app.pipeline.extract.get_runtime_acceleration",
                 return_value=SimpleNamespace(ffmpeg_hwaccel_flags=[[]]),
-            ), patch("app.pipeline.extract.subprocess.run", side_effect=fake_run):
+            ), patch("app.pipeline.extract.platform.system", return_value="Darwin"), patch(
+                "app.pipeline.extract.subprocess.run",
+                side_effect=fake_run,
+            ):
                 _extract_single_frame_with_ffmpeg(
                     source_video=source,
                     out_path=out_path,

@@ -52,6 +52,7 @@ class TestJobReviewCandidates(unittest.TestCase):
                 patch("app.main.jobs_root", jobs_root),
                 patch("app.main._analyze_roi_health", return_value={"summary": "ok", "diagnostics": []}),
                 patch("app.main.get_runtime_acceleration", return_value={}),
+                patch("app.main.resolve_ffmpeg_bin", return_value="ffmpeg"),
                 patch("app.main.runtime_public_info", return_value={}),
                 patch("app.main._detect_source_resolution", return_value=(0, 0)),
                 patch("app.main.extract_frames", return_value=[artifact_dir / "frames" / "frame_0001.png"]),
