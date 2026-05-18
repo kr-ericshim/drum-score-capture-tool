@@ -60,4 +60,4 @@ jobs:
           test -f docs/reports/2026-03-09-github-production-readiness-report.md
           test -f docs/release/github-release-runbook.md
           test -f docs/release/final-production-checklist.md
-          test -f docs/release/release-notes-v0.1.27.md
+          test -f docs/release/release-notes-v0.1.28.md
