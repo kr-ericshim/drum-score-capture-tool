@@ -121,6 +121,27 @@ test("hasPackagedRendererV2Index accepts renderer-v2 inside app.asar", async () 
   );
 });
 
+test("hasPackagedRendererV2Index accepts Windows-style paths inside app.asar", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "drumsheet-asar-"));
+  const appAsarPath = path.join(tempRoot, "app.asar");
+  fs.writeFileSync(appAsarPath, "");
+
+  const originalListPackage = asar.listPackage;
+  asar.listPackage = () => ["\\renderer-v2", "\\renderer-v2\\index.html"];
+
+  try {
+    assert.equal(
+      validator.hasPackagedRendererV2Index({
+        rendererV2IndexPath: path.join(tempRoot, "missing", "renderer-v2", "index.html"),
+        appAsarPath,
+      }),
+      true,
+    );
+  } finally {
+    asar.listPackage = originalListPackage;
+  }
+});
+
 test("findPackagedVenvPath resolves platform-specific packaged virtualenv paths", () => {
   assert.equal(
     validator.findPackagedVenvPath(

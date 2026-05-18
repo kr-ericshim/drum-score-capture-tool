@@ -150,12 +150,20 @@ function findPackagedAppAsar({
   return pathApi.join(resourcesRoot, "app.asar");
 }
 
+function normalizeAsarAssetPath(assetPath) {
+  const normalized = String(assetPath).replace(/\\/g, "/");
+  return normalized.startsWith("/") ? normalized : `/${normalized}`;
+}
+
 function packagedAsarContains(asarPath, assetPath) {
   if (!fs.existsSync(asarPath)) {
     return false;
   }
   try {
-    return asar.listPackage(asarPath).includes(assetPath);
+    const expectedAssetPath = normalizeAsarAssetPath(assetPath);
+    return asar
+      .listPackage(asarPath)
+      .some((entry) => normalizeAsarAssetPath(entry) === expectedAssetPath);
   } catch (_) {
     return false;
   }
