@@ -149,10 +149,20 @@ function wait(ms) {
 async function smokePackagedRuntime() {
   const packagedBackendMainPath = findNewestPackagedBackendMain();
   const runtimeExecutablePath = findPackagedRuntimeExecutable({ packagedBackendMainPath });
+  const packagedFfmpegPath = findPackagedBackendToolExecutable({
+    packagedBackendMainPath,
+    toolName: "ffmpeg",
+  });
+  const packagedFfprobePath = findPackagedBackendToolExecutable({
+    packagedBackendMainPath,
+    toolName: "ffprobe",
+  });
   assert(
     fs.existsSync(runtimeExecutablePath),
     `Packaged backend runtime is missing: ${runtimeExecutablePath}`,
   );
+  assert(fs.existsSync(packagedFfmpegPath), `Packaged ffmpeg is missing: ${packagedFfmpegPath}`);
+  assert(fs.existsSync(packagedFfprobePath), `Packaged ffprobe is missing: ${packagedFfprobePath}`);
 
   const jobsDir = fs.mkdtempSync(path.join(os.tmpdir(), "drumsheet-packaged-runtime-"));
   const logs = [];
@@ -162,6 +172,8 @@ async function smokePackagedRuntime() {
       DRUMSHEET_PORT: String(port),
       DRUMSHEET_JOBS_DIR: jobsDir,
       DRUMSHEET_SESSION_TOKEN: sessionToken,
+      DRUMSHEET_FFMPEG_BIN: packagedFfmpegPath,
+      DRUMSHEET_FFPROBE_BIN: packagedFfprobePath,
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
