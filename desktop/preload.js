@@ -43,6 +43,7 @@ async function requestJson(apiPath, options = {}) {
   const requestHeaders = hasBody ? { "Content-Type": "application/json" } : {};
   const response = await fetch(url.toString(), {
     method,
+    signal: AbortSignal.timeout(30000),
     headers: authenticatedHeaders(requestHeaders),
     body: hasBody ? String(options.body) : undefined,
   });
@@ -60,6 +61,7 @@ contextBridge.exposeInMainWorld("drumSheetAPI", {
   readJobAsset,
   requestJson,
   openPath: (targetPath) => ipcRenderer.invoke("open-path", targetPath),
+  savePdfAs: (options) => ipcRenderer.invoke("save-pdf-as", options),
   copyText: (text) => ipcRenderer.invoke("copy-text", text),
   setAlwaysOnTop: (enabled) => ipcRenderer.invoke("set-always-on-top", enabled),
   getAlwaysOnTop: () => ipcRenderer.invoke("get-always-on-top"),

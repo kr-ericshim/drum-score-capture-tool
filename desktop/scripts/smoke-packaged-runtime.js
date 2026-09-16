@@ -128,12 +128,24 @@ async function createFixtureVideo({ packagedBackendMainPath, jobsDir }) {
   assert(fs.existsSync(ffmpegPath), `Packaged ffmpeg is missing: ${ffmpegPath}`);
 
   const sourcePath = path.join(jobsDir, "packaged-smoke-source.mp4");
+  const drawing = ["color=c=white:size=640x360:rate=5:duration=1"];
+  for (const top of [80, 200]) {
+    for (let line = 0; line < 5; line += 1) {
+      drawing.push(`drawbox=x=60:y=${top + line * 10}:w=520:h=2:color=black:t=fill`);
+    }
+    for (let note = 0; note < 8; note += 1) {
+      const x = 90 + note * 60;
+      const y = top + 10 + (note % 3) * 10;
+      drawing.push(`drawbox=x=${x}:y=${y}:w=12:h=7:color=black:t=fill`);
+      drawing.push(`drawbox=x=${x + 10}:y=${y - 25}:w=2:h=30:color=black:t=fill`);
+    }
+  }
   await runCommand(ffmpegPath, [
     "-y",
     "-f",
     "lavfi",
     "-i",
-    "testsrc=size=640x360:rate=5:duration=1",
+    drawing.join(","),
     "-pix_fmt",
     "yuv420p",
     sourcePath,
@@ -224,8 +236,43 @@ async function smokePackagedRuntime() {
     assert(preview.data && preview.data.image_path, "/preview/frame did not return image_path");
     assert(fs.existsSync(preview.data.image_path), `Preview frame is missing: ${preview.data.image_path}`);
 
+    const created = await requestJson("POST", "/jobs", {
+      source_type: "file",
+      file_path: fixturePath,
+      options: {
+        extract: { fps: 1, start_sec: 0, end_sec: 0.8 },
+        detect: { roi: [[40, 40], [600, 40], [600, 300], [40, 300]], auto_fit: false },
+        rectify: { auto: false },
+        stitch: { enable: false },
+        upscale: { enable: false },
+        export: { formats: ["png", "pdf"] },
+      },
+    });
+    assert(created.statusCode === 200 && created.data.job_id, `Capture job creation failed: ${JSON.stringify(created)}`);
+    const jobDeadline = Date.now() + timeoutMs;
+    let completed = false;
+    while (Date.now() < jobDeadline) {
+      const status = await requestJson("GET", `/jobs/${created.data.job_id}`);
+      assert(status.statusCode === 200, `Capture status failed: ${JSON.stringify(status)}`);
+      assert(!["failed", "error", "cancelled"].includes(status.data.status), `Capture job failed: ${JSON.stringify(status.data)}`);
+      if (status.data.status === "done") {
+        completed = true;
+        break;
+      }
+      await wait(500);
+    }
+    assert(completed, "Timed out waiting for packaged capture/export job");
+    const files = await requestJson("GET", `/jobs/${created.data.job_id}/files`);
+    assert(files.statusCode === 200, `Capture files failed: ${JSON.stringify(files)}`);
+    assert(files.data.images?.length > 0, "Capture job returned no images");
+    for (const file of files.data.images) {
+      assert(fs.readFileSync(file).subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])), `Invalid PNG output: ${file}`);
+    }
+    assert(files.data.pdf && fs.readFileSync(files.data.pdf).subarray(0, 5).toString() === "%PDF-", "Capture job did not produce a PDF file");
+
     console.log("- runtime metadata: ok");
     console.log("- preview frame extraction: ok");
+    console.log("- synthetic score video capture and PNG/PDF export: ok");
   } catch (error) {
     const output = logs.join("").trim();
     if (output) {

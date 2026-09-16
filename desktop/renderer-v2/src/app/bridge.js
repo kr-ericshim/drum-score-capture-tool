@@ -13,6 +13,10 @@ export const bridge = {
   openPath(targetPath) {
     return window?.drumSheetAPI?.openPath?.(targetPath);
   },
+  savePdfAs(options) {
+    if (!window?.drumSheetAPI?.savePdfAs) return Promise.reject(new Error("Save PDF As requires the desktop app."));
+    return window.drumSheetAPI.savePdfAs(options);
+  },
   copyText(text) {
     return window?.drumSheetAPI?.copyText?.(text) || Promise.resolve(false);
   },

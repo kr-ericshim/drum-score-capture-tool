@@ -53,9 +53,9 @@ class TestCaptureCrop(unittest.TestCase):
                     )
 
             self.assertEqual(error.exception.status_code, 409)
-            self.assertEqual(error.exception.detail, "capture crop is unavailable after review export")
+            self.assertEqual(error.exception.detail, "edit the original capture, not an exported preview")
 
-    def test_capture_crop_rejects_original_capture_after_review_export(self):
+    def test_capture_crop_preserves_original_after_review_export(self):
         with tempfile.TemporaryDirectory() as td:
             jobs_root = Path(td)
             artifact_dir = jobs_root / "job-1"
@@ -88,18 +88,15 @@ class TestCaptureCrop(unittest.TestCase):
                 )
             )
 
+            before = capture_path.read_bytes()
             with patch("app.main.job_store", store):
-                with self.assertRaises(HTTPException) as error:
-                    crop_capture(
-                        "job-1",
-                        CaptureCropRequest(
-                            capture_path=str(capture_path),
-                            roi=[[10, 10], [120, 10], [120, 120], [10, 120]],
-                        ),
-                    )
-
-            self.assertEqual(error.exception.status_code, 409)
-            self.assertEqual(error.exception.detail, "capture crop is unavailable after review export")
+                response = crop_capture("job-1", CaptureCropRequest(capture_path=str(capture_path), roi=[[10, 10], [120, 10], [120, 120], [10, 120]]))
+                self.assertNotEqual(Path(response.capture_path), capture_path)
+                self.assertEqual((response.width, response.height), (110, 110))
+                self.assertEqual(capture_path.read_bytes(), before)
+                reset = crop_capture("job-1", CaptureCropRequest(capture_path=str(capture_path), roi=[]))
+                self.assertEqual(Path(reset.capture_path), capture_path.resolve())
+                self.assertEqual(store.get("job-1").result["capture_edits"], {})
 
 
 if __name__ == "__main__":

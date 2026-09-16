@@ -51,10 +51,13 @@ class TestPreviewFrameExtraction(unittest.TestCase):
             out_path = out_dir / "frame_000001.png"
             updates = []
 
-            def fake_popen(cmd, stdout=None, stderr=None, text=None):
+            def fake_capture_process(cmd, *, on_line):
                 self.assertIn("-progress", cmd)
                 self.assertIn("pipe:1", cmd)
-                return _FakeProgressProcess(out_path)
+                on_line("out_time=00:00:02.000000")
+                on_line("out_time=00:00:05.000000")
+                out_path.write_bytes(b"png")
+                return 0, ""
 
             def fake_run(cmd, stdout=None, stderr=None, text=None, check=None):
                 return _Result(returncode=0, stdout="10.0\n")
@@ -68,8 +71,8 @@ class TestPreviewFrameExtraction(unittest.TestCase):
                 "app.pipeline.extract.subprocess.run",
                 side_effect=fake_run,
             ), patch(
-                "app.pipeline.extract.subprocess.Popen",
-                side_effect=fake_popen,
+                "app.pipeline.extract.run_capture_process",
+                side_effect=fake_capture_process,
             ):
                 frames = _extract_with_ffmpeg(
                     source_video=source,

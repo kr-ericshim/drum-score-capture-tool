@@ -57,6 +57,7 @@ class TestReviewExport(unittest.TestCase):
                     "images": [str(page_one)],
                     "pdf": str(artifact_dir / "export" / "sheet_export.pdf"),
                     "page_diagnostics": [{"page_index": 1, "suspicious": False}],
+                    "dropped_pages": [{"page_index": 2, "diagnostic_codes": ["mostly_blank_page"]}],
                 }
 
                 review_export(
@@ -110,6 +111,7 @@ class TestReviewExport(unittest.TestCase):
                         "images": [str(workspace / "images" / "page_0001.png")],
                         "pdf": str(workspace / "sheet_export.pdf"),
                         "page_diagnostics": [{"page_index": 1, "suspicious": False}],
+                        "dropped_pages": [{"page_index": 2, "diagnostic_codes": ["mostly_blank_page"]}],
                     }
 
                 export_selected_pages.side_effect = _mock_export_selected_pages
@@ -138,6 +140,10 @@ class TestReviewExport(unittest.TestCase):
                 [{"page_index": 1, "suspicious": False}],
             )
             self.assertEqual(refreshed.result["review_export"]["selection_mode"], "captures")
+            self.assertEqual(
+                refreshed.result["dropped_pages"],
+                [{"page_index": 2, "diagnostic_codes": ["mostly_blank_page"]}],
+            )
 
     def test_review_export_page_mode_uses_images_without_review_candidates(self):
         with tempfile.TemporaryDirectory() as td:
@@ -185,14 +191,14 @@ class TestReviewExport(unittest.TestCase):
 
             stitch_pages.assert_not_called()
             export_selected_pages.assert_called_once()
-            self.assertEqual(export_selected_pages.call_args.kwargs["page_paths"], [page_two.resolve()])
+            self.assertEqual(export_selected_pages.call_args.kwargs["page_paths"], [(artifact_dir / "original-pages" / "page_0002.png").resolve()])
             self.assertEqual(response.images, [str(page_two)])
             refreshed = store.get("job-1")
             self.assertEqual(refreshed.result["images"], [str(page_two)])
             self.assertEqual(refreshed.result["review_export"]["selection_mode"], "pages")
-            self.assertEqual(refreshed.result["review_export"]["selected_pages"], [str(page_two.resolve())])
+            self.assertEqual(refreshed.result["review_export"]["selected_pages"], [str((artifact_dir / "original-pages" / "page_0002.png").resolve())])
 
-    def test_review_export_rejects_reapplying_after_review_export(self):
+    def test_review_export_allows_reapplying_after_review_export(self):
         with tempfile.TemporaryDirectory() as td:
             jobs_root = Path(td)
             artifact_dir = jobs_root / "job-1"
@@ -220,15 +226,10 @@ class TestReviewExport(unittest.TestCase):
                 )
             )
 
-            with patch("app.main.job_store", store):
-                with self.assertRaises(HTTPException) as error:
-                    review_export(
-                        "job-1",
-                        JobReviewExportRequest(keep_captures=[str(preview_one)], formats=["pdf"]),
-                    )
-
-            self.assertEqual(error.exception.status_code, 409)
-            self.assertEqual(error.exception.detail, "review export is already applied")
+            with patch("app.main.job_store", store), patch("app.main.stitch_pages", return_value=[preview_one]), patch("app.main.export_selected_pages", return_value={"images": []}):
+                response = review_export("job-1", JobReviewExportRequest(keep_captures=[str(preview_one)], formats=["pdf"]))
+            self.assertEqual(response.kept_count, 1)
+            self.assertEqual(store.get("job-1").result["review_export"]["revision"], 1)
 
     def test_review_export_rejects_empty_formats_instead_of_falling_back(self):
         with tempfile.TemporaryDirectory() as td:

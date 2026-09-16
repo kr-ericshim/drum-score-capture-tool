@@ -19,6 +19,10 @@ body {
   font-family: var(--sans);
   line-height: 1.5;
   font-kerning: normal;
+  font-optical-sizing: auto;
+  font-size: var(--type-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 body::before {
@@ -26,7 +30,9 @@ body::before {
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 
@@ -82,3 +88,32 @@ img {
     transition-duration: 0.01ms !important;
   }
 }
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--line-soft);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--line-strong);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+/* Stable figures and restrained heading hierarchy across work surfaces. */
+h1, h2, h3, strong { font-weight: 600; }
+h1, h2, h3 { text-wrap: balance; }
+.status-bar, .process-step-index, .source-prepare-progress-value,
+.roi-timeline, .review-summary-pill { font-variant-numeric: tabular-nums; }
+::selection { background: var(--accent-mark); color: var(--text-1); }

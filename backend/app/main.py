@@ -11,7 +11,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from threading import RLock
+from threading import Event, RLock
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, unquote, urlsplit
 
@@ -68,6 +68,8 @@ from app.pipeline.rectify import rectify_frames
 from app.pipeline.stitch import select_review_candidates, stitch_pages
 from app.pipeline.upscale import upscale_frames
 from app.pipeline.export import export_frames, export_selected_pages
+from app.pipeline.process_control import OperationCancelled, checkpoint, operation_scope
+from yt_dlp.version import __version__ as YTDLP_VERSION
 
 
 PREVIEW_SOURCE_CACHE_NAMESPACE = YOUTUBE_DOWNLOAD_STRATEGY_VERSION
@@ -102,6 +104,8 @@ executor = ThreadPoolExecutor(max_workers=1)
 source_prepare_store = SourcePrepareStore(jobs_root / "_preview_source_jobs")
 source_prepare_executor = ThreadPoolExecutor(max_workers=1)
 maintenance_lock = RLock()
+capture_controls: Dict[str, Event] = {}
+review_locks: Dict[str, RLock] = {}
 
 
 def _runtime_metadata() -> Dict[str, str]:
@@ -109,6 +113,7 @@ def _runtime_metadata() -> Dict[str, str]:
         "app_version": str(app.version),
         "preview_cache_namespace": PREVIEW_SOURCE_CACHE_NAMESPACE,
         "youtube_download_strategy": YOUTUBE_DOWNLOAD_STRATEGY_VERSION,
+        "youtube_downloader_version": YTDLP_VERSION,
     }
 
 
@@ -723,7 +728,7 @@ def create_job(payload: JobCreate) -> JobCreateResponse:
 
     with maintenance_lock:
         job_id = str(uuid.uuid4())
-        artifact_dir = jobs_root / job_id
+        artifact_dir = (jobs_root / job_id).resolve()
         artifact_dir.mkdir(parents=True, exist_ok=True)
         job = Job(
             id=job_id,
@@ -735,6 +740,7 @@ def create_job(payload: JobCreate) -> JobCreateResponse:
             source_identity=normalized_source_identity,
         )
         job_store.create(job)
+        capture_controls[job_id] = Event()
         executor.submit(_run_job, job_id, payload)
     return JobCreateResponse(job_id=job_id)
 
@@ -787,6 +793,13 @@ def _normalize_requested_export_formats(formats: List[str]) -> List[str]:
 
 @app.post("/jobs/{job_id}/review-export", response_model=JobReviewExportResponse)
 def review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExportResponse:
+    with maintenance_lock:
+        lock = review_locks.setdefault(job_id, RLock())
+    with lock:
+        return _review_export(job_id, payload)
+
+
+def _review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExportResponse:
     job = job_store.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="job not found")
@@ -794,8 +807,6 @@ def review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExpo
         if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
             raise HTTPException(status_code=409, detail="job is still running")
         raise HTTPException(status_code=409, detail="job must be completed successfully before review export")
-    if isinstance(job.result, dict) and job.result.get("review_export"):
-        raise HTTPException(status_code=409, detail="review export is already applied")
 
     has_capture_selection = bool(payload.keep_captures)
     has_page_selection = bool(payload.keep_images)
@@ -813,7 +824,7 @@ def review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExpo
 
     selectable_paths = _resolve_selectable_capture_paths_for_job_ordered(
         job=job,
-        preferred_keys=("review_candidates",) if selection_mode == "captures" else ("images",),
+        preferred_keys=("review_candidates",) if selection_mode == "captures" else ("original_images", "images"),
     )
     resolved_paths = _resolve_selected_capture_paths_for_job(
         job=job,
@@ -822,6 +833,21 @@ def review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExpo
     )
     if not resolved_paths:
         raise HTTPException(status_code=400, detail="no valid captures selected")
+
+    # Legacy page-only jobs store images inside the replaceable export folder.
+    # Preserve the complete set once, including pages excluded in this revision.
+    if selection_mode == "pages" and not job.result.get("original_images"):
+        originals_dir = Path(job.artifact_dir) / "original-pages"
+        originals_dir.mkdir(exist_ok=True)
+        preserved = {}
+        for index, source in enumerate(selectable_paths):
+            target = (originals_dir / f"page_{index + 1:04d}{source.suffix}").resolve()
+            shutil.copy2(source, target)
+            preserved[source] = target
+        resolved_paths = [preserved[path] for path in resolved_paths]
+        saved_result = dict(job.result)
+        saved_result["original_images"] = [str(path) for path in preserved.values()]
+        job_store.set_state(job_id, job.status, result=saved_result)
 
     export_config = _resolve_job_export_options(job)
     configured_formats = list(export_config.formats)
@@ -841,15 +867,16 @@ def review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExpo
     staged_export_workspace = _create_staged_export_workspace(target_workspace=export_workspace)
 
     try:
-        page_paths = resolved_paths
+        edits = job.result.get("capture_edits", {})
+        page_paths = [Path(edits.get(str(path), {}).get("image_path", str(path))) for path in resolved_paths]
         if selection_mode == "captures":
             stitch_opts = _build_stitch_options(stitch_options_payload)
             page_paths = stitch_pages(
-                frame_paths=resolved_paths,
+                frame_paths=page_paths,
                 options=stitch_opts,
                 workspace=staged_export_workspace / "stitched",
                 source_type=job.source_type,
-                prepared_frames=resolved_paths,
+                prepared_frames=page_paths,
                 logger=lambda msg: _append(job_id, msg),
             )
             if not page_paths:
@@ -880,11 +907,14 @@ def review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExpo
     result["pdf"] = export_result.get("pdf")
     result["raw_frames"] = export_result.get("raw_frames", [])
     result["page_diagnostics"] = export_result.get("page_diagnostics", [])
+    result["dropped_pages"] = export_result.get("dropped_pages", [])
     result["output_dir"] = str(export_workspace)
     result["preview_images"] = [str(path) for path in export_result.get("preview_images", [])]
     if selection_mode == "captures":
-        result["review_candidates"] = [str(path) for path in resolved_paths]
+        # Keep every candidate, including excluded ones, with canonical paths.
+        result["review_candidates"] = [str(path) for path in selectable_paths]
     result["review_export"] = {
+        "revision": int(result.get("review_export", {}).get("revision", 0)) + 1,
         "kept_count": len(resolved_paths),
         "requested_count": len(keep_raw),
         "selection_mode": selection_mode,
@@ -911,6 +941,13 @@ def review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExpo
 
 @app.post("/jobs/{job_id}/capture-crop", response_model=CaptureCropResponse)
 def crop_capture(job_id: str, payload: CaptureCropRequest) -> CaptureCropResponse:
+    with maintenance_lock:
+        lock = review_locks.setdefault(job_id, RLock())
+    with lock:
+        return _crop_capture(job_id, payload)
+
+
+def _crop_capture(job_id: str, payload: CaptureCropRequest) -> CaptureCropResponse:
     job = job_store.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="job not found")
@@ -928,8 +965,18 @@ def crop_capture(job_id: str, payload: CaptureCropRequest) -> CaptureCropRespons
     if selectable_paths and capture_path not in selectable_paths:
         raise HTTPException(status_code=400, detail=f"capture is not selectable for this job: {payload.capture_path}")
 
-    if result.get("review_export"):
-        raise HTTPException(status_code=409, detail="capture crop is unavailable after review export")
+    if Path(job.artifact_dir, "export").resolve() in capture_path.parents:
+        raise HTTPException(status_code=409, detail="edit the original capture, not an exported preview")
+
+    if not payload.roi:
+        image = cv2.imread(str(capture_path))
+        if image is None:
+            raise HTTPException(status_code=400, detail="capture file could not be read")
+        edits = dict(result.get("capture_edits", {}))
+        edits.pop(str(capture_path), None)
+        result["capture_edits"] = edits
+        job_store.set_state(job_id, job.status, result=result)
+        return CaptureCropResponse(capture_path=str(capture_path), width=image.shape[1], height=image.shape[0])
 
     if len(payload.roi) != 4:
         raise HTTPException(status_code=400, detail="roi must be 4 points: [[x,y], ...]")
@@ -964,8 +1011,15 @@ def crop_capture(job_id: str, payload: CaptureCropRequest) -> CaptureCropRespons
     if cropped.size == 0:
         raise HTTPException(status_code=400, detail="capture crop produced empty image")
 
-    if not cv2.imwrite(str(capture_path), cropped):
+    edit_dir = Path(job.artifact_dir) / "capture-edits"
+    edit_dir.mkdir(exist_ok=True)
+    edited_path = edit_dir / f"{uuid.uuid4().hex}.png"
+    if not cv2.imwrite(str(edited_path), cropped):
         raise HTTPException(status_code=500, detail="failed to save cropped capture")
+
+    edits = dict(result.get("capture_edits", {}))
+    edits[str(capture_path)] = {"image_path": str(edited_path), "roi": payload.roi}
+    result["capture_edits"] = edits
 
     def _is_same_capture_path(raw_entry: object) -> bool:
         candidate_raw = str(raw_entry or "").strip()
@@ -997,13 +1051,41 @@ def crop_capture(job_id: str, payload: CaptureCropRequest) -> CaptureCropRespons
     job_store.log(job_id, f"capture crop saved: {capture_path.name} ({x2 - x1}x{y2 - y1})")
 
     return CaptureCropResponse(
-        capture_path=str(capture_path),
+        capture_path=str(edited_path),
         width=int(x2 - x1),
         height=int(y2 - y1),
     )
 
 
+@app.post("/jobs/{job_id}/cancel", response_model=JobStatusResponse)
+def cancel_job(job_id: str) -> JobStatusResponse:
+    with maintenance_lock:
+        job = job_store.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="job not found")
+        if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
+            control = capture_controls.get(job_id)
+            if control is None:
+                raise HTTPException(status_code=409, detail="worker is no longer available; reload the job")
+            control.set()
+            job_store.set_state(job_id, job.status, current_step="cancelling", message="cancelling capture")
+        return JobStatusResponse(**job.to_public_dict())
+
+
 def _run_job(job_id: str, payload: JobCreate) -> None:
+    with maintenance_lock:
+        control = capture_controls.setdefault(job_id, Event())
+    try:
+        with operation_scope(control):
+            _execute_job(job_id, payload)
+    except OperationCancelled:
+        job_store.set_state(job_id, JobStatus.CANCELLED, current_step="cancelled", message="capture cancelled", error_code=None)
+    finally:
+        with maintenance_lock:
+            capture_controls.pop(job_id, None)
+
+
+def _execute_job(job_id: str, payload: JobCreate) -> None:
     job = job_store.get(job_id)
     if not job:
         return
@@ -1083,6 +1165,7 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
             logger=lambda msg: _append(job_id, msg),
             progress_callback=lambda update: _apply_export_extract_progress(job_id, update),
         )
+        checkpoint()
         result["extracted_frames"] = [str(frame_path) for frame_path in frames]
         result["runtime"] = runtime_public_info(accel, ffmpeg_mode=runtime_capture.get("ffmpeg_mode"))
         source_video_path = runtime_capture.get("source_video")
@@ -1097,6 +1180,7 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
         if not frames:
             raise RuntimeError("No frames were extracted from source")
 
+        checkpoint()
         detections = detect_sheet_regions(
             frame_paths=frames,
             options=detect_opts,
@@ -1105,10 +1189,15 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
             logger=lambda msg: _append(job_id, msg),
         )
         result["detections"] = len(detections)
+        result["region_adjustments"] = [
+            {"frame_index": item.get("frame_index"), "roi": item.get("roi"), **item.get("auto_fit", {})}
+            for item in detections if item.get("auto_fit", {}).get("status") == "adjusted"
+        ]
         if not detections:
             job_store.log(job_id, "no detection candidate found; using fallback rectification path")
         job_store.set_state(job_id, JobStatus.RUNNING, 0.45, "rectifying", "sheet detection completed")
 
+        checkpoint()
         rectified_paths = rectify_frames(
             detections=detections,
             options=rectify_opts,
@@ -1118,6 +1207,7 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
         result["rectified_frames"] = [str(path) for path in rectified_paths]
         job_store.set_state(job_id, JobStatus.RUNNING, 0.68, "stitching", "rectification completed")
 
+        checkpoint()
         review_candidate_paths = select_review_candidates(
             frame_paths=rectified_paths,
             options=stitch_opts,
@@ -1125,17 +1215,36 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
             logger=lambda msg: _append(job_id, msg),
         )
 
+        from app.pipeline.export import diagnose_capture_sequence
+        result["capture_diagnostics"] = diagnose_capture_sequence(review_candidate_paths)
+        excluded_paths = {
+            path for path in review_candidate_paths
+            if result["capture_diagnostics"].get(str(path), {}).get("recommended_action") == "exclude"
+        }
+        accepted_paths = [path for path in review_candidate_paths if path not in excluded_paths]
+        result["auto_excluded_captures"] = [str(path) for path in review_candidate_paths if path in excluded_paths]
+        result["capture_classification_summary"] = {
+            label: sum(item["score_classification"] == label for item in result["capture_diagnostics"].values())
+            for label in ("score", "non_score", "uncertain")
+        }
+        job_store.log(
+            job_id, f"score screening: {len(accepted_paths)} retained, "
+            f"{len(excluded_paths)} excluded; originals available for review",
+        )
+
+        checkpoint()
         stitched_paths = stitch_pages(
             frame_paths=rectified_paths,
             options=stitch_opts,
             workspace=artifact_dir / "stitched",
             source_type=payload.source_type,
-            prepared_frames=review_candidate_paths,
+            prepared_frames=accepted_paths,
             logger=lambda msg: _append(job_id, msg),
         )
         result["stitched_frames"] = [str(path) for path in stitched_paths]
         job_store.set_state(job_id, JobStatus.RUNNING, 0.82, "upscaling", "stitching completed")
 
+        checkpoint()
         upscaled_paths = upscale_frames(
             frame_paths=stitched_paths,
             options=upscale_opts,
@@ -1150,18 +1259,36 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
         job_store.set_state(job_id, JobStatus.RUNNING, 0.92, "exporting", upscale_message)
 
         configured_document_header = export_opts.document_header.model_dump() if export_opts.document_header else None
-        export_result = export_frames(
-            frame_paths=upscaled_paths,
-            options=export_opts,
-            document_header=configured_document_header,
-            workspace=artifact_dir / "export",
-            logger=lambda msg: _append(job_id, msg),
-            source_frames=frames,
-        )
+        checkpoint()
+        if upscaled_paths:
+            export_result = export_frames(
+                frame_paths=upscaled_paths,
+                options=export_opts,
+                document_header=configured_document_header,
+                workspace=artifact_dir / "export",
+                logger=lambda msg: _append(job_id, msg),
+                source_frames=frames,
+            )
+        elif accepted_paths:
+            raise RuntimeError("retained captures produced no pages for export")
+        else:
+            export_result = {"images": [], "pdf": None, "raw_frames": [], "page_diagnostics": [], "dropped_pages": []}
+            (artifact_dir / "export").mkdir(parents=True, exist_ok=True)
+            if export_opts.include_raw_frames:
+                raw_dir = artifact_dir / "export" / "raw_frames"
+                raw_dir.mkdir(parents=True, exist_ok=True)
+                for index, source_path in enumerate(frames):
+                    checkpoint()
+                    target = raw_dir / f"raw_{index:05d}.png"
+                    shutil.copy2(source_path, target)
+                    export_result["raw_frames"].append(str(target))
+            job_store.log(job_id, "all captures excluded by score screening; review originals to restore captures")
+        checkpoint()
         result["images"] = export_result.get("images", [])
         result["pdf"] = export_result.get("pdf")
         result["raw_frames"] = export_result.get("raw_frames", [])
         result["page_diagnostics"] = export_result.get("page_diagnostics", [])
+        result["dropped_pages"] = export_result.get("dropped_pages", [])
         result["output_dir"] = str(artifact_dir / "export")
         job_store.set_state(
             job_id,
@@ -1173,6 +1300,8 @@ def _run_job(job_id: str, payload: JobCreate) -> None:
             error_code=None,
         )
         job_store.log(job_id, "job finished")
+    except OperationCancelled:
+        raise
     except Exception as exc:
         job_store.log(job_id, f"job failed: {exc}")
         job_store.set_state(

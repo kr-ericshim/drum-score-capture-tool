@@ -32,7 +32,7 @@ test("review rail footer renders output paths in a dedicated wrapping block", ()
   assert.match(markup, /rail-path-block/);
   assert.match(markup, /data-path-kind="output-dir"/);
   assert.doesNotMatch(markup, /<span>OUTPUT<\/span>\s*<strong>\/Users\/ericshim/);
-  assert.match(markup, />Open PDF</);
+  assert.doesNotMatch(markup, /data-action="open-output-pdf"|data-action="open-output-dir"/);
 });
 
 test("process rail exposes the current step with aria-current", () => {
@@ -124,9 +124,7 @@ test("english shell copy uses plain labels instead of machine-style strings", ()
   assert.match(railMarkup, /<span>Source<\/span><strong>Loaded<\/strong>/);
   assert.doesNotMatch(railMarkup, /PIPELINE|WORKBENCH STATUS|<span>SOURCE<\/span><strong>LOADED<\/strong>/);
 
-  assert.match(laneMarkup, />Selected result</);
-  assert.match(laneMarkup, />Selection state</);
-  assert.match(laneMarkup, />Nothing selected</);
+  assert.equal(laneMarkup, "");
   assert.doesNotMatch(laneMarkup, /INSPECTION VIEW|EXPORT STATE|NO SELECTION/);
 });
 
@@ -190,7 +188,7 @@ test("export preview column does not stretch into a dead gray slab", () => {
   );
   assert.match(
     componentsCss,
-    /\.export-preview-stage \{[\s\S]*?height:\s*clamp\(300px,\s*42vh,\s*440px\);[\s\S]*?padding:\s*24px;/
+    /\.export-preview-stage \{[\s\S]*?height:\s*clamp\(360px,\s*52vh,\s*620px\);[\s\S]*?padding:\s*24px;/
   );
   assert.match(
     componentsCss,
@@ -207,15 +205,15 @@ test("metadata modal secondary buttons keep explicit visible text color on the p
   );
 });
 
-test("shared visual tokens stay calm and avoid futuristic amber shell effects", () => {
+test("shared visual tokens follow the Apple palette and keep structural styles tokenized", () => {
   const tokensCss = readFileSync(new URL("../styles/tokens.css", import.meta.url), "utf8");
   const baseCss = readFileSync(new URL("../styles/base.css", import.meta.url), "utf8");
   const componentsCss = readFileSync(new URL("../styles/components.css", import.meta.url), "utf8");
   const combinedCss = `${tokensCss}\n${baseCss}\n${componentsCss}`;
 
-  assert.match(tokensCss, /--accent:\s*oklch\(0\.48 0\.07 190\);/);
-  assert.match(tokensCss, /--bg-app:\s*oklch\(0\.86 0\.006 205\);/);
-  assert.match(tokensCss, /--bg-pane:\s*oklch\(0\.905 0\.006 205\);/);
+  assert.match(tokensCss, /--accent:\s*#0066cc;/);
+  assert.match(tokensCss, /--bg-app:\s*#e8e8ed;/);
+  assert.match(tokensCss, /--bg-pane:\s*#ededf0;/);
   assert.match(baseCss, /color-scheme:\s*light;/);
   assert.doesNotMatch(componentsCss, /rgba?\(|#[0-9a-fA-F]{3,8}|oklch\(/);
   assert.doesNotMatch(combinedCss, /#d7a347|#e7bd72|236,\s*182,\s*19|215,\s*163,\s*71|radial-gradient/i);

@@ -61,7 +61,7 @@ class TestCaptureQualityPipeline(unittest.TestCase):
             executor.submit.assert_called_once()
             self.assertEqual(len(list(jobs_root.glob("*/job.json"))), 1)
 
-    def test_detect_sheet_regions_attaches_padded_safe_roi(self):
+    def test_detect_sheet_regions_preserves_selected_roi(self):
         with tempfile.TemporaryDirectory() as td:
             workspace = Path(td)
             frame_path = workspace / "frame.png"
@@ -81,7 +81,7 @@ class TestCaptureQualityPipeline(unittest.TestCase):
             self.assertEqual(len(detections), 1)
             self.assertEqual(detections[0]["roi"], [[10.0, 10.0], [70.0, 10.0], [70.0, 40.0], [10.0, 40.0]])
             self.assertIn("safe_roi", detections[0])
-            self.assertEqual(detections[0]["safe_roi"], [[6.0, 2.0], [74.0, 2.0], [74.0, 48.0], [6.0, 48.0]])
+            self.assertEqual(detections[0]["safe_roi"], [[10.0, 10.0], [70.0, 10.0], [70.0, 40.0], [10.0, 40.0]])
 
     def test_review_candidates_replace_fade_in_frame_with_clear_duplicate(self):
         with tempfile.TemporaryDirectory() as td:

@@ -2,6 +2,7 @@
 const fs = require("fs");
 const path = require("path");
 const asar = require("@electron/asar");
+const { writeSizeReport } = require("./measure-packaged-size");
 
 const [, , action = "dist"] = process.argv;
 const projectRoot = path.resolve(__dirname, "..", "..");
@@ -452,6 +453,16 @@ function validate(actionName = action) {
   console.log(`- bundled ffmpeg: ${relative(packagedFfmpegPath)}`);
   console.log(`- bundled ffprobe: ${relative(packagedFfprobePath)}`);
   console.log(`- renderer-v2 entry: ${relative(rendererV2Location)}`);
+  const developmentFiles = asar.listPackage(appAsarPath).filter((entry) =>
+    /^\/?(?:tests|scripts|renderer-v2\/src\/tests)(?:\/|$)/.test(entry.replaceAll("\\", "/")),
+  );
+  assert(developmentFiles.length === 0, `Development files leaked into app.asar: ${developmentFiles.slice(0, 5).join(", ")}`);
+  writeSizeReport({
+    packagedBackendMainPath,
+    installerArtifacts,
+    version: desktopVersion,
+    outputPath: path.join(distDir, `package-size-${process.platform}.json`),
+  });
 }
 
 module.exports = {

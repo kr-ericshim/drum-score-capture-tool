@@ -33,10 +33,10 @@ def _extend_binaries(package: str) -> None:
         return
 
 
-for package_name in ("yt_dlp", "websockets", "requests", "urllib3", "mutagen", "curl_cffi"):
+for package_name in ("yt_dlp", "yt_dlp_ejs", "websockets", "requests", "urllib3", "mutagen", "curl_cffi"):
     _extend_hiddenimports(package_name)
 
-for package_name in ("yt_dlp", "certifi"):
+for package_name in ("yt_dlp", "yt_dlp_ejs", "certifi"):
     _extend_datas(package_name)
 
 for package_name in ("curl_cffi",):

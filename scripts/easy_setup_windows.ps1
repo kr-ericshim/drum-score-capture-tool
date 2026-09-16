@@ -53,37 +53,14 @@ function Install-Backend {
   $venvPath = Join-Path $BackendDir ".venv"
   $venvPython = Join-Path $venvPath "Scripts\python.exe"
 
-  Write-Host "[1/4] Python venv setup" -ForegroundColor Yellow
+  Write-Host "[1/3] Python venv setup" -ForegroundColor Yellow
   & $PythonLauncher.Cmd @($PythonLauncher.Args + @("-m", "venv", $venvPath))
   & $venvPython -m pip install --upgrade pip setuptools wheel
 
-  Write-Host "[2/4] Core backend dependencies" -ForegroundColor Yellow
+  Write-Host "[2/3] Core backend dependencies" -ForegroundColor Yellow
   & $venvPython -m pip install -r (Join-Path $BackendDir "requirements.txt")
 
-  Write-Host "[3/4] Optional audio dependencies" -ForegroundColor Yellow
-  & $venvPython -m pip install -r (Join-Path $BackendDir "requirements-uvr.txt")
-
-  $hasNvidia = $false
-  try {
-    nvidia-smi *> $null
-    if ($LASTEXITCODE -eq 0) {
-      $hasNvidia = $true
-    }
-  } catch {
-    $hasNvidia = $false
-  }
-
-  if ($hasNvidia) {
-    Write-Host "NVIDIA GPU detected -> installing CUDA torch build" -ForegroundColor Green
-    & $venvPython -m pip install --index-url https://download.pytorch.org/whl/cu128 torch torchaudio
-  } else {
-    Write-Host "No NVIDIA GPU detected -> installing CPU torch build" -ForegroundColor Green
-    & $venvPython -m pip install torch torchaudio
-  }
-
-  & $venvPython -m pip install torchcodec "soundfile>=0.12.0"
-
-  Write-Host "[4/4] Runtime check" -ForegroundColor Yellow
+  Write-Host "[3/3] Runtime check" -ForegroundColor Yellow
   & $venvPython (Join-Path $BackendDir "scripts\doctor.py")
 }
 

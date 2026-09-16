@@ -54,6 +54,27 @@ export function mountRoiEditor({ image, canvas, input, initialPoints = null, onD
   let dragOffset = null;
   let keyboardMode = "move";
 
+  function alignCanvasToImage() {
+    const parent = canvas.offsetParent || canvas.parentElement;
+    if (!image.naturalWidth || !image.naturalHeight || !image.getBoundingClientRect || !parent?.getBoundingClientRect) return;
+    const box = image.getBoundingClientRect();
+    const parentBox = parent.getBoundingClientRect();
+    const scale = Math.min(box.width / image.naturalWidth, box.height / image.naturalHeight);
+    if (!scale) return;
+    const width = image.naturalWidth * scale;
+    const height = image.naturalHeight * scale;
+    Object.assign(canvas.style, {
+      width: `${width}px`, height: `${height}px`,
+      left: `${box.left - parentBox.left - (parent.clientLeft || 0) + (box.width - width) / 2}px`,
+      top: `${box.top - parentBox.top - (parent.clientTop || 0) + (box.height - height) / 2}px`,
+      right: "auto", bottom: "auto",
+    });
+  }
+  const observer = typeof ResizeObserver === "function" ? new ResizeObserver(alignCanvasToImage) : null;
+  observer?.observe(image);
+  image.addEventListener?.("load", alignCanvasToImage, { signal: abort.signal });
+  alignCanvasToImage();
+
   function readToken(name, fallback) {
     const root = canvas.ownerDocument?.documentElement;
     const view = canvas.ownerDocument?.defaultView;
@@ -344,6 +365,7 @@ export function mountRoiEditor({ image, canvas, input, initialPoints = null, onD
       syncA11yState();
     },
     destroy() {
+      observer?.disconnect();
       abort.abort();
     },
   };

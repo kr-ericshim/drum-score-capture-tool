@@ -7,10 +7,13 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
 import cv2
+
+from app.pipeline.process_control import checkpoint
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from app.pipeline.sheet_finalize import finalize_sheet_pages
+from app.pipeline.score_quality import analyze_score_structure
 from app.schemas import ExportOptions, PageFillMode
 
 PDF_IMAGE_MAX_EDGE = 3600
@@ -32,7 +35,7 @@ def export_frames(
     source_frames: Optional[List[Path]] = None,
 ) -> Dict[str, object]:
     workspace.mkdir(parents=True, exist_ok=True)
-    output: Dict[str, object] = {"images": [], "pdf": None, "raw_frames": [], "page_diagnostics": []}
+    output: Dict[str, object] = {"images": [], "pdf": None, "raw_frames": [], "page_diagnostics": [], "dropped_pages": []}
 
     image_dir = workspace / "images"
     image_dir.mkdir(parents=True, exist_ok=True)
@@ -65,11 +68,15 @@ def export_frames(
     if not finalized_pages:
         raise RuntimeError("no pages available for export")
 
+    finalized_pages, dropped_pages = _drop_discardable_pages(finalized_pages, logger=logger)
+    output["dropped_pages"] = dropped_pages
+
     if len(finalized_pages) > len(source_images) and source_images:
         logger(f"export page split: input#{len(source_images)} -> {len(finalized_pages)} pages")
 
     export_idx = 1
     for finalized in finalized_pages:
+        checkpoint()
         rgb = None
         if wants_jpg:
             rgb = cv2.cvtColor(finalized, cv2.COLOR_BGR2RGB)
@@ -127,7 +134,7 @@ def export_selected_pages(
     logger,
 ) -> Dict[str, object]:
     workspace.mkdir(parents=True, exist_ok=True)
-    output: Dict[str, object] = {"images": [], "pdf": None, "page_diagnostics": [], "preview_images": []}
+    output: Dict[str, object] = {"images": [], "pdf": None, "page_diagnostics": [], "preview_images": [], "dropped_pages": []}
     image_dir = workspace / "images"
     image_dir.mkdir(parents=True, exist_ok=True)
     preview_dir = workspace / "preview"
@@ -158,6 +165,9 @@ def export_selected_pages(
 
     if not finalized_pages:
         raise RuntimeError("no pages available after preparing selected captures")
+
+    finalized_pages, dropped_pages = _drop_discardable_pages(finalized_pages, logger=logger)
+    output["dropped_pages"] = dropped_pages
 
     if len(finalized_pages) > len(source_images) and source_images:
         logger(f"review export page split: input#{len(source_images)} -> {len(finalized_pages)} pages")
@@ -243,6 +253,25 @@ def _finalize_export_pages(
         if image is not None and image.size > 0:
             finalized_pages.append(image)
     return finalized_pages
+
+
+def _drop_discardable_pages(pages: List[np.ndarray], *, logger) -> tuple[List[np.ndarray], List[Dict[str, object]]]:
+    if len(pages) <= 1:
+        return pages, []
+
+    kept: List[np.ndarray] = []
+    dropped: List[Dict[str, object]] = []
+    for index, page in enumerate(pages):
+        diagnostic = _diagnose_page_image(page, index + 1)
+        codes = set(diagnostic.get("diagnostic_codes") or [])
+        is_trailing_page = index == len(pages) - 1
+        if is_trailing_page and "mostly_blank_page" in codes:
+            dropped.append(diagnostic)
+            logger(f"export skipped mostly blank trailing page {index + 1}")
+            continue
+        kept.append(page)
+
+    return kept or pages, dropped
 
 
 def _load_protected_split_boundaries(page_path: Path) -> List[int]:
@@ -337,19 +366,19 @@ def _render_document_header_band(
     document_header: Dict[str, object],
 ) -> Image.Image:
     page_width, page_height = page_size
-    horizontal_padding = max(46, int(round(page_width * 0.07)))
-    column_gap = max(30, int(round(page_width * 0.03)))
-    right_column_width = max(210, int(round(page_width * 0.24)))
+    horizontal_padding = max(40, int(round(page_width * 0.055)))
+    column_gap = max(24, int(round(page_width * 0.024)))
+    right_column_width = max(190, int(round(page_width * 0.22)))
     note_column_width = max(180, page_width - (horizontal_padding * 2) - right_column_width - column_gap)
     title_max_width = max(240, page_width - max(horizontal_padding * 4, int(round(page_width * 0.30))))
-    top_padding = max(38, int(round(page_height * 0.032)))
-    bottom_padding = max(26, int(round(page_height * 0.025)))
-    title_gap = max(10, int(round(page_height * 0.007)))
-    block_gap = max(5, int(round(page_height * 0.004)))
-    section_gap = max(18, int(round(page_height * 0.014)))
-    title_font = _resolve_score_header_title_font(max(36, int(round(page_width * 0.044))))
-    credit_font = _resolve_score_header_font(max(17, int(round(page_width * 0.0185))))
-    note_font = _resolve_score_header_font(max(16, int(round(page_width * 0.0175))))
+    top_padding = max(28, int(round(page_height * 0.022)))
+    bottom_padding = max(20, int(round(page_height * 0.018)))
+    title_gap = max(8, int(round(page_height * 0.006)))
+    block_gap = max(4, int(round(page_height * 0.003)))
+    section_gap = max(14, int(round(page_height * 0.010)))
+    title_font = _resolve_score_header_title_font(max(30, int(round(page_width * 0.039))))
+    credit_font = _resolve_score_header_font(max(15, int(round(page_width * 0.0165))))
+    note_font = _resolve_score_header_font(max(14, int(round(page_width * 0.0155))))
     measuring_image = Image.new("RGB", (page_width, 32), SCORE_HEADER_BACKGROUND)
     draw = ImageDraw.Draw(measuring_image)
 
@@ -403,10 +432,10 @@ def _render_document_header_band(
     if title_heights and footer_block_height:
         needed_height += section_gap
     needed_height += footer_block_height
-    needed_height += max(22, int(round(page_height * 0.015)))
+    needed_height += max(14, int(round(page_height * 0.010)))
 
-    min_band_height = max(168, int(round(page_height * 0.135)))
-    max_band_height = max(min_band_height, int(round(page_height * 0.30)))
+    min_band_height = max(124, int(round(page_height * 0.095)))
+    max_band_height = max(min_band_height, int(round(page_height * 0.22)))
     band_height = max(min_band_height, min(max_band_height, needed_height))
     band = Image.new("RGB", (page_width, band_height), SCORE_HEADER_BACKGROUND)
     draw = ImageDraw.Draw(band)
@@ -629,6 +658,10 @@ def _prepare_pdf_image(image: Image.Image) -> Image.Image:
 
 
 def _diagnose_page_image(image, page_index: int) -> Dict[str, object]:
+    structure = analyze_score_structure(image)
+    has_score = structure["has_score_structure"]
+    possible_staff = (structure["staff_systems"] > 0 or structure["partial_staff_groups"] > 0
+                      or structure["possible_single_line_notation"])
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     inv = cv2.adaptiveThreshold(
         gray,
@@ -640,24 +673,121 @@ def _diagnose_page_image(image, page_index: int) -> Dict[str, object]:
     )
     h, w = gray.shape[:2]
     row_density = (inv > 0).sum(axis=1).astype("float32") / float(max(1, w))
+    col_density = (inv > 0).sum(axis=0).astype("float32") / float(max(1, h))
     top_band = row_density[: max(1, min(48, h))]
     bottom_band = row_density[max(0, h - min(48, h)) :]
     top_score = float(np.mean(top_band)) if top_band.size > 0 else 0.0
     bottom_score = float(np.mean(bottom_band)) if bottom_band.size > 0 else 0.0
+    ink_ratio = float(np.mean(inv > 0)) if inv.size > 0 else 0.0
+    active_rows = np.where(row_density > 0.003)[0]
+    active_cols = np.where(col_density > 0.003)[0]
+    if active_rows.size > 0:
+        content_height_ratio = float((int(active_rows[-1]) - int(active_rows[0]) + 1) / max(1, h))
+    else:
+        content_height_ratio = 0.0
+    if active_cols.size > 0:
+        content_width_ratio = float((int(active_cols[-1]) - int(active_cols[0]) + 1) / max(1, w))
+    else:
+        content_width_ratio = 0.0
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    saturation = hsv[:, :, 1]
+    value = hsv[:, :, 2]
+    color_mask = np.logical_and.reduce((saturation > 48, value > 32, value < 248))
+    color_content_ratio = float(np.mean(color_mask)) if color_mask.size > 0 else 0.0
 
     warnings: List[str] = []
+    diagnostic_codes: List[str] = []
     suspicious = False
     if top_score > 0.020:
         suspicious = True
+        diagnostic_codes.append("top_edge_content")
         warnings.append("페이지 상단에 내용이 너무 붙어 있어 이전 페이지에서 잘렸을 수 있습니다.")
     if bottom_score > 0.020:
         suspicious = True
+        diagnostic_codes.append("bottom_edge_content")
         warnings.append("페이지 하단에 내용이 너무 붙어 있어 다음 페이지로 잘렸을 수 있습니다.")
+    if not possible_staff and (ink_ratio < 0.0035 or (content_height_ratio < 0.055 and content_width_ratio < 0.45)):
+        suspicious = True
+        diagnostic_codes.append("mostly_blank_page")
+        warnings.append("페이지에 악보 내용이 거의 없어 출력에서 제외하는 편이 안전합니다.")
+    elif not has_score and content_height_ratio < 0.24:
+        suspicious = True
+        diagnostic_codes.append("sparse_score_page")
+        warnings.append("페이지에 악보 내용이 적어 앞뒤 페이지와 함께 확인해야 합니다.")
+    photo_like = color_content_ratio > 0.085 or (structure["paper_ratio"] < 0.55 and structure["texture_ratio"] > 0.12)
+    if not possible_staff and photo_like:
+        suspicious = True
+        diagnostic_codes.append("video_frame_content")
+        warnings.append("악보가 아닌 영상 화면이 함께 들어간 것으로 보입니다. ROI를 다시 잡는 편이 안전합니다.")
+    elif has_score and photo_like and structure["paper_ratio"] < 0.82:
+        suspicious = True
+        diagnostic_codes.append("mixed_visual_content")
+        warnings.append("악보 구조와 배경 영상 또는 넓은 색상 영역이 함께 보입니다. 악보는 포함하고 영역 확인을 권장합니다.")
+
+    should_exclude = any(code in diagnostic_codes for code in ("mostly_blank_page", "video_frame_content"))
+    classification = "score" if has_score else "non_score" if should_exclude else "uncertain"
+    if classification == "uncertain":
+        suspicious = True
+        diagnostic_codes.append("score_structure_uncertain")
+        warnings.append("오선과 음표 구조를 확실히 확인하지 못했습니다. 악보가 빠지지 않도록 포함했습니다.")
 
     return {
         "page_index": int(page_index),
         "suspicious": bool(suspicious),
         "warning_reasons": warnings,
+        "diagnostic_codes": diagnostic_codes,
         "top_edge_density": round(top_score, 5),
         "bottom_edge_density": round(bottom_score, 5),
+        "ink_ratio": round(ink_ratio, 5),
+        "content_height_ratio": round(content_height_ratio, 5),
+        "content_width_ratio": round(content_width_ratio, 5),
+        "color_content_ratio": round(color_content_ratio, 5),
+        "score_classification": classification,
+        "score_evidence": structure,
+        "classification_method": "staff_geometry_v1",
+        "recommended_action": "exclude" if should_exclude else "review" if suspicious else "keep",
     }
+
+
+def diagnose_capture_sequence(frame_paths: Sequence[Path]) -> Dict[str, Dict[str, object]]:
+    """Diagnose original captures; adjacent matching scores can rescue faint staffs.
+
+    Neighbours only strengthen positive evidence. They never cause exclusion, and
+    only the immediate candidates on BOTH sides may support a weak capture.
+    """
+    diagnostics = {}
+    thumbnails = {}
+    for index, path in enumerate(frame_paths):
+        checkpoint()
+        image = cv2.imread(str(path))
+        if image is None:
+            continue
+        key = str(path)
+        diagnostics[key] = _diagnose_page_image(image, index + 1)
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        small = cv2.resize(gray, (128, 64), interpolation=cv2.INTER_AREA).astype(np.float32)
+        thumbnails[key] = (small - float(small.mean())) / max(12.0, float(small.std()))
+    original_classes = {key: item["score_classification"] for key, item in diagnostics.items()}
+    for index in range(1, len(frame_paths) - 1):
+        key = str(frame_paths[index])
+        item = diagnostics.get(key)
+        if not item or original_classes[key] != "uncertain":
+            continue
+        evidence = item["score_evidence"]
+        if not evidence["staff_systems"] and not evidence["partial_staff_groups"]:
+            continue
+        neighbors = [str(frame_paths[index - 1]), str(frame_paths[index + 1])]
+        if not all(original_classes.get(neighbor) == "score" for neighbor in neighbors):
+            continue
+        if not all(float(np.mean(np.abs(thumbnails[key] - thumbnails[neighbor]))) < 0.22 for neighbor in neighbors):
+            continue
+        item["score_classification"] = "score"
+        evidence["neighbor_supported"] = True
+        # Keep edge/cropping warnings, but resolve the uncertain-structure warning.
+        pairs = [(code, warning) for code, warning in zip(item["diagnostic_codes"], item["warning_reasons"])
+                 if code not in {"score_structure_uncertain", "sparse_score_page"}]
+        item["diagnostic_codes"] = [code for code, _ in pairs]
+        item["warning_reasons"] = [warning for _, warning in pairs]
+        item["suspicious"] = bool(pairs)
+        item["recommended_action"] = "review" if pairs else "keep"
+    return diagnostics

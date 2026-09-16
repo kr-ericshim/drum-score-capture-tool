@@ -1,5 +1,6 @@
 import { bridge, readVideoMetadata } from "./bridge.js";
 import { createStore } from "./session/store.js";
+import { restoreSession, saveSession } from "./session/persistence.js";
 import {
   createDocumentHeaderState,
   createExportMetadataModalState,
@@ -28,12 +29,16 @@ import { renderContextLane } from "../ui/shell/ContextLane.js";
 import { renderSourceScreen } from "../features/source/SourceScreen.js";
 import { createSourceController } from "../features/source/sourceController.js";
 import { renderRoiScreen } from "../features/roi/RoiScreen.js";
+import { patchRoiStage } from "../features/roi/patchRoiStage.js";
 import { renderExportScreen } from "../features/export/ExportScreen.js";
 import { renderReviewScreen } from "../features/review/ReviewScreen.js";
+import { createReviewController } from "../features/review/reviewController.js";
 import { renderArchiveModal } from "../features/archive/ArchiveModal.js";
 import { mountRoiEditor } from "../features/roi/roiEditor.js";
 import {
   createJob,
+  cancelJob,
+  cropCapture,
   createPreviewSourceJob,
   getArchiveLibrary,
   getJob,
@@ -55,7 +60,7 @@ function clamp(value, min, max) {
 }
 
 const SOURCE_DROP_ZONE_SELECTOR = '[data-drop-zone="source-ingest"]';
-const STAGE_SCROLL_RESTORE_SELECTORS = [".review-grid-shell"];
+const STAGE_SCROLL_RESTORE_SELECTORS = [".review-grid", ".review-viewer-surface"];
 const SUPPORTED_VIDEO_EXTENSIONS = new Set(["mp4", "mkv", "mov", "avi", "webm"]);
 const EXPORT_METADATA_TAB_TARGETS = [
   { action: "update-export-metadata", field: "title" },
@@ -86,6 +91,7 @@ function isSupportedVideoPath(filePath = "") {
 }
 
 function formatExportJobMessage(message, { status = "", locale = "en" } = {}) {
+  if (status === "cancelled") return t("export.cancelled", { locale });
   const raw = String(message || "").trim();
   if (!raw) {
     return "";
@@ -419,6 +425,8 @@ export function createApp(root, dependencies = {}) {
     }
     : {
       createJob,
+      cancelJob,
+      cropCapture,
       createPreviewSourceJob,
       getArchiveLibrary,
       getJob,
@@ -431,7 +439,8 @@ export function createApp(root, dependencies = {}) {
     };
   const mountShellImpl = dependencies.mountShell || mountShell;
   const mountRoiEditorImpl = dependencies.mountRoiEditor || mountRoiEditor;
-  const store = createStore(createInitialSessionState());
+  const storage = dependencies.storage || (!dependencies.exposeTestApi && typeof window !== "undefined" ? window.localStorage : null);
+  const store = createStore(restoreSession(storage, createInitialSessionState()));
   const shell = mountShellImpl(root);
   const sourceController = createSourceController({
     store,
@@ -458,6 +467,7 @@ export function createApp(root, dependencies = {}) {
   let lastProcessRailMarkup = "";
   let lastContextLaneMarkup = "";
   let lastStageMarkup = "";
+  let lastReviewFocusKey = "";
   let lastArchiveMarkup = "";
   let lastStatusMarkup = "";
   let lastBackendReady = false;
@@ -469,6 +479,10 @@ export function createApp(root, dependencies = {}) {
   let archiveRefreshToken = 0;
   let activeSourceDropZone = null;
   const runtimeGuards = createRuntimeGuards();
+  let pollFailures = 0;
+  let restorePending = Boolean(store.getState().exportConfig.jobId);
+  const stopPersistence = store.subscribe(state => saveSession(storage, state));
+  const reviewController = createReviewController({ getState: store.getState, setState, api: runtimeApi, mountEditor: mountRoiEditorImpl, root });
 
   function setState(updater) {
     const previousPreviewImage = String(store.getState().roi?.previewImage || "");
@@ -713,7 +727,7 @@ export function createApp(root, dependencies = {}) {
         ? captureLiveExportMetadataDraft(shell.stagePane, state.exportConfig?.metadataModal?.draft)
         : null;
       const liveMetadataTextInputSnapshot = captureLiveMetadataTextInputSnapshot();
-      shell.stagePane.innerHTML = stageMarkupValue;
+      if (!patchRoiStage(shell.stagePane, stageMarkupValue)) shell.stagePane.innerHTML = stageMarkupValue;
       lastStageMarkup = stageMarkupValue;
       restoreLiveExportMetadataDraft(shell.stagePane, liveMetadataDraftSnapshot);
       restoreLiveMetadataTextInputSnapshot(shell.stagePane, liveMetadataTextInputSnapshot);
@@ -730,6 +744,12 @@ export function createApp(root, dependencies = {}) {
       lastStatusMarkup = statusMarkup;
     }
     attachRoiEditor(state);
+    reviewController.syncEditor();
+    const reviewFocusKey = state.ui.activeStep === "review" ? `${state.review.filter}:${state.review.focusedPageId}` : "";
+    if (reviewFocusKey && reviewFocusKey !== lastReviewFocusKey) {
+      shell.stagePane.querySelector?.('.review-card.is-focused')?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    }
+    lastReviewFocusKey = reviewFocusKey;
     if (isArchiveOpen && !lastArchiveOpen) {
       archiveRestoreFocusTarget = globalThis?.document?.activeElement || null;
     }
@@ -773,6 +793,7 @@ export function createApp(root, dependencies = {}) {
       return next;
     });
     if (lastBackendReady) {
+      if (restorePending) { restorePending = false; reconnectJob(); }
       void refreshLocalMediaRegistry();
       void refreshArchiveLibrary();
     }
@@ -905,7 +926,8 @@ export function createApp(root, dependencies = {}) {
         locale: next.ui.locale,
       });
       next.exportConfig.jobId = job.job_id;
-      next.exportConfig.runStatus = job.status === "done" ? "done" : job.status === "error" ? "error" : "running";
+      next.exportConfig.runStatus = ["done", "error", "cancelled"].includes(job.status) ? job.status : "running";
+      next.exportConfig.connectionState = "connected";
       next.exportConfig.progress = Number(job.progress || 0);
       next.exportConfig.currentStep = String(job.current_step || "");
       next.exportConfig.message = displayMessage;
@@ -913,12 +935,24 @@ export function createApp(root, dependencies = {}) {
       next.exportConfig.outputDir = String(job.result?.output_dir || "");
       next.exportConfig.pdfPath = String(job.result?.pdf || "");
       next.review.pages = pages;
-      next.review.selectedPageIds = pages.map((page) => page.id);
-      next.review.focusedPageId = pages[0]?.id || "";
+      const preferredPageIds = pages.filter((page) => !page.autoExcludeCandidate).map((page) => page.id);
+      const savedSelection = job.result?.review_export?.selected_captures?.length
+        ? job.result.review_export.selected_captures : job.result?.review_export?.selected_pages;
+      const restoredDraft = pages.length && Array.isArray(next.review.restoredSelectedPaths);
+      next.review.selectedPageIds = savedSelection?.length
+        ? pages.filter(page => savedSelection.includes(page.capturePath)).map(page => page.id)
+        : pages.some(page => page.autoExcludeCandidate) ? preferredPageIds : pages.map((page) => page.id);
+      if (pages.length && Array.isArray(next.review.restoredSelectedPaths)) {
+        next.review.selectedPageIds = pages.filter(page => next.review.restoredSelectedPaths.includes(page.capturePath)).map(page => page.id);
+        next.review.status = "idle";
+        delete next.review.restoredSelectedPaths;
+      }
+      next.review.focusedPageId = pages.some(page => page.id === next.review.focusedPageId)
+        ? next.review.focusedPageId : next.review.selectedPageIds[0] || pages[0]?.id || "";
       next.review.outputDir = String(job.result?.output_dir || "");
       next.review.pdfPath = String(job.result?.pdf || "");
       next.review.keptCount = Number(job.result?.review_export?.kept_count || pages.length || 0);
-      next.review.status = job.result?.review_export ? "applied" : "idle";
+      next.review.status = restoredDraft ? "idle" : job.result?.review_export ? "applied" : "idle";
       next.review.error = "";
       if (job.status === "done" && pages.length) {
         next.ui.activeStep = "review";
@@ -968,8 +1002,9 @@ export function createApp(root, dependencies = {}) {
       if (!runtimeGuards.isCurrentJob(jobHandle, jobId)) {
         return;
       }
+      pollFailures = 0;
       applyJobSnapshot(job);
-      if (job.status === "done" || job.status === "error") {
+      if (["done", "error", "cancelled"].includes(job.status)) {
         stopPolling();
         if (job.status === "done") {
           refreshCompletedLibraries();
@@ -983,11 +1018,36 @@ export function createApp(root, dependencies = {}) {
       if (!runtimeGuards.isCurrentJob(jobHandle, jobId)) {
         return;
       }
+      pollFailures += 1;
+      const terminal = [401, 403, 404].includes(error?.status);
       setState((next) => {
-        next.exportConfig.runStatus = "error";
-        next.exportConfig.error = String(error?.message || error);
+        next.exportConfig.runStatus = terminal ? "error" : "running";
+        next.exportConfig.connectionState = terminal || pollFailures >= 5 ? "paused" : "reconnecting";
+        next.exportConfig.error = t("export.connectionLost", { locale: next.ui.locale });
         return next;
       });
+      if (!terminal && pollFailures < 5) {
+        activePoll = setTimeout(() => pollJob(jobId, jobHandle), Math.min(1000 * 2 ** (pollFailures - 1), 8000));
+      }
+    }
+  }
+
+  function reconnectJob() {
+    const jobId = store.getState().exportConfig.jobId;
+    if (!jobId) return;
+    pollFailures = 0;
+    activeJobHandle = runtimeGuards.attachJob(runtimeGuards.beginExportRun(), jobId);
+    void pollJob(jobId, activeJobHandle);
+  }
+
+  async function cancelCurrentJob() {
+    const state = store.getState();
+    if (!state.exportConfig.jobId || !runtimeApi.cancelJob) return;
+    try {
+      await runtimeApi.cancelJob(state.exportConfig.jobId);
+      if (store.getState().exportConfig.jobId === state.exportConfig.jobId) reconnectJob();
+    } catch (error) {
+      setInlineNotice(String(error?.message || error));
     }
   }
 
@@ -1247,6 +1307,7 @@ export function createApp(root, dependencies = {}) {
     setState((next) => {
       invalidateExportReviewState(next);
       next.roi.appliedRect = points;
+      next.roi.appliedAutoFit = Boolean(next.roi.autoFit);
       next.exportConfig.layoutHint = inferLayoutHintFromRoi(points);
       next.ui.activeStep = "export";
       return next;
@@ -1278,6 +1339,7 @@ export function createApp(root, dependencies = {}) {
         },
         detect: {
           roi,
+          auto_fit: Boolean(state.roi.autoFit),
           layout_hint: layoutHint,
         },
         rectify: {
@@ -1413,6 +1475,8 @@ export function createApp(root, dependencies = {}) {
       return;
     }
     const liveDraft = captureLiveExportMetadataDraft(shell.stagePane, modal.draft);
+    const onlyDraftChanged = !modal.validation?.title && !modal.validation?.bpm
+      && !modal.showDiscardConfirm && !state.exportConfig.error;
     setState((next) => {
       const currentModal = next.exportConfig.metadataModal || createExportMetadataModalState(
         next.source.filePath,
@@ -1431,6 +1495,9 @@ export function createApp(root, dependencies = {}) {
         currentModal.validation.bpm = "";
       }
       next.exportConfig.metadataModal = currentModal;
+      // The native input already displays this value. Replacing the stage on
+      // blur would remove the submit button between pointerdown and click.
+      if (onlyDraftChanged) lastStageMarkup = stageMarkup(next);
       return next;
     });
   }
@@ -1575,12 +1642,13 @@ export function createApp(root, dependencies = {}) {
 
   async function applyReviewSelection() {
     const state = store.getState();
+    if (hasDirtyRoiDraft(state)) return;
     const formats = Array.isArray(state.exportConfig.formats) ? state.exportConfig.formats : [];
     if (
       !state.exportConfig.jobId
       || state.exportConfig.runStatus !== "done"
-      || state.review.status === "applied"
-      || state.review.status === "running"
+      || ["running", "editing"].includes(state.review.status)
+      || state.ui.savingPdfAs
     ) {
       return;
     }
@@ -1655,6 +1723,31 @@ export function createApp(root, dependencies = {}) {
     }
   }
 
+  async function handleSavePdfAs() {
+    const state = store.getState();
+    if (!state.review.pdfPath || state.ui.savingPdfAs || ["running", "editing"].includes(state.review.status)
+      || state.exportConfig.runStatus === "running") return;
+    const token = runtimeGuards.captureSourceSession();
+    const locale = state.ui.locale || "en";
+    setState(next => { next.ui.savingPdfAs = true; return next; });
+    try {
+      const result = await runtimeBridge.savePdfAs({
+        sourcePath: state.review.pdfPath,
+        suggestedName: state.exportConfig.documentHeader?.title || state.source.displayName || "score",
+        locale,
+      });
+      if (!runtimeGuards.isCurrentSourceSession(token) || result?.canceled) return;
+      if (!result?.filePath) throw new Error(t("review.saveAsUnavailable", { locale }));
+      setInlineNotice(t("review.saveAsSuccess", { locale, replacements: { path: result.filePath } }));
+    } catch (error) {
+      if (runtimeGuards.isCurrentSourceSession(token)) setInlineNotice(t("review.saveAsFailed", {
+        locale, replacements: { reason: String(error?.message || error) },
+      }));
+    } finally {
+      setState(next => { next.ui.savingPdfAs = false; return next; });
+    }
+  }
+
   async function handleCopyText(text, label) {
     const locale = store.getState().ui.locale;
     if (!String(text || "").trim()) {
@@ -1680,6 +1773,9 @@ export function createApp(root, dependencies = {}) {
       return;
     }
     const action = target.dataset.action;
+    if (action?.startsWith("review-")) { await reviewController.handleAction(action, target.dataset.value); return; }
+    if (action === "cancel-job") { await cancelCurrentJob(); return; }
+    if (action === "reconnect-job") { reconnectJob(); return; }
     if (action === "select-source-file") {
       await selectSourceFile();
       return;
@@ -1813,6 +1909,7 @@ export function createApp(root, dependencies = {}) {
       const { pageId } = target.dataset;
       setState((next) => {
         next.review.focusedPageId = pageId;
+        next.review.cropping = false;
         return next;
       });
       return;
@@ -1829,6 +1926,10 @@ export function createApp(root, dependencies = {}) {
     if (action === "open-output-pdf") {
       const locale = store.getState().ui.locale || "en";
       await handleOpenPath(store.getState().review.pdfPath, t("label.outputPdf", { locale }));
+      return;
+    }
+    if (action === "save-output-pdf-as") {
+      await handleSavePdfAs();
       return;
     }
     if (action === "copy-output-dir") {
@@ -1869,6 +1970,10 @@ export function createApp(root, dependencies = {}) {
 
   const handleInput = (event) => {
     const target = event.target;
+    if (target.dataset.action === "toggle-roi-auto-fit") {
+      setState(next => { next.roi.autoFit = Boolean(target.checked); return next; });
+      return;
+    }
     if (target.dataset.action === "youtube-url-input") {
       resetCurrentSourceSession();
       sourceController.setYoutubeUrl(String(target.value || ""));
@@ -1924,19 +2029,7 @@ export function createApp(root, dependencies = {}) {
     }
     if (target.dataset.action === "toggle-review-page") {
       const { pageId } = target.dataset;
-      setState((next) => {
-        if (next.review.status === "applied") {
-          return next;
-        }
-        const selected = new Set(next.review.selectedPageIds);
-        if (target.checked) {
-          selected.add(pageId);
-        } else {
-          selected.delete(pageId);
-        }
-        next.review.selectedPageIds = Array.from(selected);
-        return next;
-      });
+      reviewController.toggle(pageId, target.checked);
       return;
     }
     if (target.dataset.action === "set-roi-bound") {
@@ -1991,6 +2084,7 @@ export function createApp(root, dependencies = {}) {
   };
 
   const handleKeyDown = (event) => {
+    reviewController.handleKey(event);
     if (event.key === "Tab" && store.getState().exportConfig.metadataModal?.isOpen) {
       const tabTargetIndex = exportMetadataTabTargetIndex(event.target);
       if (tabTargetIndex >= 0) {
@@ -2032,6 +2126,7 @@ export function createApp(root, dependencies = {}) {
       return next;
     });
     if (becameReady) {
+      if (restorePending) { restorePending = false; reconnectJob(); }
       void refreshLocalMediaRegistry();
       void refreshArchiveLibrary();
     }
@@ -2067,6 +2162,8 @@ export function createApp(root, dependencies = {}) {
         }
       : undefined,
     destroy() {
+      reviewController.destroy();
+      stopPersistence();
       stopPolling();
       stopSourcePreparePolling();
       releasePreviewImageUrl(store.getState().roi?.previewImage);

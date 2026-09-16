@@ -29,6 +29,7 @@ class ExtractOptions(BaseModel):
 
 class DetectOptions(BaseModel):
     roi: List[List[float]]
+    auto_fit: bool = False
     layout_hint: LayoutHint = "auto"
 
     @field_validator("roi")
@@ -334,6 +335,7 @@ class RuntimeStatusResponse(BaseModel):
     app_version: str
     preview_cache_namespace: str
     youtube_download_strategy: str
+    youtube_downloader_version: str = ""
 
 
 class CacheClearResponse(BaseModel):

@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Deque, List, Optional, Tuple
 
 import cv2
+
+from app.pipeline.process_control import checkpoint
 import numpy as np
 
 from app.pipeline.layout_profiles import LAYOUT_BOTTOM_BAR, LAYOUT_FULL_SCROLL, LAYOUT_PAGE_TURN, resolve_layout_hint
@@ -88,6 +90,7 @@ def stitch_pages(
         raise RuntimeError("failed to read first rectified frame")
 
     for path in filtered_frames[1:]:
+        checkpoint()
         next_image = cv2.imread(str(path))
         if next_image is None:
             continue
@@ -104,6 +107,7 @@ def stitch_pages(
 
     grouped_frames.append(current_group)
     for frame_group in grouped_frames:
+        checkpoint()
         merged_image, split_boundaries = _merge_scroll_group_frames_with_boundaries(frame_group)
         if merged_image is None:
             continue
@@ -126,6 +130,7 @@ def _merge_scroll_group_frames_with_boundaries(frame_group: List[Path]) -> Tuple
 
     images: List[np.ndarray] = []
     for path in frame_group:
+        checkpoint()
         image = cv2.imread(str(path))
         if image is not None and image.size > 0:
             images.append(image)
@@ -185,6 +190,7 @@ def _filter_redundant_frames(
     clarity_replacements = 0
     scroll_direction = 0
     for path in frame_paths[1:]:
+        checkpoint()
         current = cv2.imread(str(path))
         if current is None:
             continue
@@ -545,6 +551,7 @@ def _collect_page_turn_pages(
 
     similarity_threshold = max(0.88, min(0.98, 1.0 - (options.overlap_threshold * 0.25)))
     for path in frame_paths[1:]:
+        checkpoint()
         next_image = cv2.imread(str(path))
         if next_image is None:
             continue

@@ -14,7 +14,7 @@ test("context lane stays hidden on source because the source screen already owns
   assert.equal(markup, "");
 });
 
-test("context lane renders english review preview labels when locale is en", () => {
+test("context lane stays hidden because review owns its full-size viewer", () => {
   const state = createInitialSessionState();
   state.ui.locale = "en";
   state.ui.activeStep = "review";
@@ -31,8 +31,7 @@ test("context lane renders english review preview labels when locale is en", () 
 
   const markup = renderContextLane(state);
 
-  assert.match(markup, /Result Page 1/);
-  assert.match(markup, /Review summary|Next step/);
+  assert.equal(markup, "");
   assert.doesNotMatch(markup, /결과 요약|다음 작업/);
 });
 

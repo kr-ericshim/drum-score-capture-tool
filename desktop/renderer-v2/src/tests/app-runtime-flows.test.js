@@ -206,14 +206,14 @@ function createDynamicStageRoot() {
   const stageNodesByVersion = new Map();
 
   function createStageNode(selector) {
-    if (selector === ".review-grid-shell") {
+    if (selector === ".review-grid") {
       return { scrollTop: 0, scrollLeft: 0 };
     }
     if (selector === '[data-action="toggle-review-page"]') {
       return {
         dataset: { action: "toggle-review-page", pageId: "1" },
         focus() {
-          const scroller = nodes["#stagePane"].querySelector(".review-grid-shell");
+          const scroller = nodes["#stagePane"].querySelector(".review-grid");
           if (scroller) {
             scroller.scrollTop = 0;
           }
@@ -264,7 +264,7 @@ function createDynamicStageRoot() {
         return this._innerHTML;
       },
       querySelector(selector) {
-        if (selector === ".review-grid-shell" && !this._innerHTML.includes('class="review-grid-shell"')) {
+        if (selector === ".review-grid" && !this._innerHTML.includes('class="review-grid"')) {
           return null;
         }
         if (selector.startsWith('[data-action="toggle-review-page"') && !this._innerHTML.includes('data-action="toggle-review-page"')) {
@@ -705,6 +705,72 @@ test("runExport skips the client-side ROI health preflight and creates a job imm
   assert.deepEqual(state.roi.diagnostics, []);
 });
 
+test("runExport leaves backend exclude candidates out of the default review selection", async () => {
+  installBrowserStubs();
+  const root = createRoot();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+      createJob: async () => "job-1",
+      getJob: async () => ({
+        job_id: "job-1",
+        status: "done",
+        progress: 1,
+        result: {
+          review_candidates: ["/tmp/capture-1.png", "/tmp/capture-2.png", "/tmp/capture-3.png", "/tmp/capture-4.png"],
+          images: ["/tmp/page-1.png", "/tmp/page-2.png", "/tmp/page-3.png"],
+          page_diagnostics: [
+            { page_index: 1, suspicious: false, recommended_action: "keep" },
+            {
+              page_index: 2,
+              suspicious: true,
+              diagnostic_codes: ["video_frame_content"],
+              recommended_action: "exclude",
+              warning_reasons: ["악보가 아닌 영상 화면이 함께 들어간 것으로 보입니다."],
+            },
+            {
+              page_index: 3,
+              suspicious: true,
+              diagnostic_codes: ["sparse_score_page"],
+              recommended_action: "review",
+            },
+          ],
+          dropped_pages: [
+            {
+              page_index: 4,
+              suspicious: true,
+              diagnostic_codes: ["mostly_blank_page"],
+              recommended_action: "exclude",
+            },
+          ],
+        },
+      }),
+      reviewExport: async () => ({}),
+    },
+  });
+
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/source-a.mp4";
+    next.source.displayName = "source-a.mp4";
+    next.roi.frameTime = 5;
+    next.roi.appliedRect = ROI_RECT;
+    next.exportConfig.formats = ["png"];
+    next.ui.activeStep = "export";
+    return next;
+  });
+
+  await root.dispatchAction("run-export");
+  await flush();
+
+  const state = app.debug.getState();
+  assert.equal(state.ui.activeStep, "review");
+  assert.deepEqual(state.review.selectedPageIds, ["1", "3"]);
+  assert.equal(state.review.pages[1].autoExcludeCandidate, true);
+  assert.equal(state.review.pages[2].autoExcludeCandidate, false);
+  assert.equal(state.review.pages[3].autoExcludeCandidate, true);
+});
+
 test("runExport prevents duplicate jobs when re-entered before job creation resolves", async () => {
   installBrowserStubs();
   let createJobCalls = 0;
@@ -794,7 +860,7 @@ test("runExport opens the metadata modal before polling when pdf is selected", a
   assert.equal(state.exportConfig.runStatus, "idle");
 });
 
-test("applied review selection stays locked when a checkbox input fires later", () => {
+test("applied review selection becomes editable when a checkbox changes", () => {
   installBrowserStubs();
   const root = createRoot();
   const app = createApp(root, {
@@ -824,8 +890,9 @@ test("applied review selection stays locked when a checkbox input fires later", 
   });
 
   const state = app.debug.getState();
-  assert.equal(state.review.status, "applied");
-  assert.deepEqual(state.review.selectedPageIds, ["1"]);
+  assert.equal(state.review.status, "idle");
+  assert.deepEqual(state.review.selectedPageIds, []);
+  assert.equal(state.review.canUndo, true);
 });
 
 test("review checkbox rerender preserves the review grid scroll position", () => {
@@ -860,7 +927,7 @@ test("review checkbox rerender preserves the review grid scroll position", () =>
   });
 
   const stagePane = root.querySelector("#stagePane");
-  const beforeScroller = stagePane.querySelector(".review-grid-shell");
+  const beforeScroller = stagePane.querySelector(".review-grid");
   beforeScroller.scrollTop = 512;
   beforeScroller.scrollLeft = 24;
   globalThis.document.activeElement = {
@@ -872,7 +939,7 @@ test("review checkbox rerender preserves the review grid scroll position", () =>
     checked: false,
   });
 
-  const afterScroller = stagePane.querySelector(".review-grid-shell");
+  const afterScroller = stagePane.querySelector(".review-grid");
   const state = app.debug.getState();
   assert.equal(afterScroller.scrollTop, 512);
   assert.equal(afterScroller.scrollLeft, 24);
@@ -2160,4 +2227,90 @@ test("late review apply result is ignored after a newer source is loaded", async
   assert.equal(state.exportConfig.jobId, "");
   assert.equal(state.review.pages.length, 0);
   assert.equal(state.ui.activeStep, "roi");
+});
+
+test("a transient poll failure reconnects to the same job without creating another capture", async () => {
+  installBrowserStubs();
+  const root = createRoot();
+  let created = 0, reads = 0;
+  const app = createApp(root, { exposeTestApi: true, api: {
+    createJob: async () => { created++; return "reconnect-job"; },
+    getJob: async () => {
+      reads++;
+      if (reads === 1) throw new Error("connection interrupted");
+      return { job_id: "reconnect-job", status: "done", progress: 1, result: { review_candidates: ["/capture.png"] } };
+    },
+  }});
+  app.debug.setState(next => {
+    next.source.filePath = "/video.mp4";
+    next.roi.appliedRect = ROI_RECT;
+    next.exportConfig.formats = ["png"];
+    next.ui.activeStep = "export";
+    return next;
+  });
+  await root.dispatchAction("run-export");
+  await flush();
+  assert.equal(app.debug.getState().exportConfig.runStatus, "running");
+  assert.equal(app.debug.getState().exportConfig.connectionState, "reconnecting");
+  await root.dispatchAction("reconnect-job");
+  await flush();
+  assert.equal(app.debug.getState().exportConfig.runStatus, "done");
+  assert.equal(created, 1);
+  assert.equal(reads, 2);
+  app.destroy();
+});
+
+test("PDF open and Save As dispatch separate actions without changing the original output", async t => {
+  const opened = [];
+  const saves = [];
+  const pending = deferred();
+  installBrowserStubs({
+    openPath: async path => { opened.push(path); return ""; },
+    savePdfAs: async options => { saves.push(options); return pending.promise; },
+  });
+  const root = createRoot();
+  const app = createApp(root, { exposeTestApi: true, api: {} });
+  t.after(() => app.destroy());
+  app.debug.setState(s => {
+    s.ui.locale = "ko";
+    s.source.displayName = "practice.mp4";
+    s.exportConfig.documentHeader.title = "연습 악보";
+    s.review.pdfPath = "/tmp/export/score.pdf";
+    s.review.outputDir = "/tmp/export";
+    return s;
+  });
+  await root.dispatchAction("open-output-pdf");
+  assert.deepEqual(opened, ["/tmp/export/score.pdf"]);
+  assert.equal(saves.length, 0);
+  const save = root.dispatchAction("save-output-pdf-as");
+  await flush();
+  assert.equal(app.debug.getState().ui.savingPdfAs, true);
+  await root.dispatchAction("save-output-pdf-as");
+  assert.equal(saves.length, 1);
+  assert.deepEqual(saves[0], { sourcePath: "/tmp/export/score.pdf", suggestedName: "연습 악보", locale: "ko" });
+  pending.resolve({ canceled: false, filePath: "/tmp/my-score.pdf" });
+  await save;
+  assert.equal(app.debug.getState().ui.savingPdfAs, false);
+  assert.match(app.debug.getState().ui.inlineNotice, /PDF 복사본을 저장했습니다: \/tmp\/my-score.pdf/);
+  assert.equal(app.debug.getState().review.pdfPath, "/tmp/export/score.pdf");
+  assert.equal(opened.length, 1);
+});
+
+test("Save As cancellation is quiet and errors allow retry", async t => {
+  let fail = false;
+  installBrowserStubs({ savePdfAs: async () => {
+    if (fail) throw new Error("EACCES");
+    return { canceled: true };
+  } });
+  const root = createRoot();
+  const app = createApp(root, { exposeTestApi: true, api: {} });
+  t.after(() => app.destroy());
+  app.debug.setState(s => { s.ui.locale = "ko"; s.review.pdfPath = "/tmp/score.pdf"; s.ui.inlineNotice = ""; return s; });
+  await root.dispatchAction("save-output-pdf-as");
+  assert.equal(app.debug.getState().ui.inlineNotice, "");
+  assert.equal(app.debug.getState().ui.savingPdfAs, false);
+  fail = true;
+  await root.dispatchAction("save-output-pdf-as");
+  assert.match(app.debug.getState().ui.inlineNotice, /PDF를 저장하지 못했습니다: EACCES/);
+  assert.equal(app.debug.getState().ui.savingPdfAs, false);
 });

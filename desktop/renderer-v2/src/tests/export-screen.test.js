@@ -221,7 +221,26 @@ test("export screen avoids fabricated slice and zoom counters in the preview wor
   const markup = renderExportScreen(state);
 
   assert.doesNotMatch(markup, /Slice 14\/42|Zoom 100%|EXTRACTION NODE/);
+  assert.doesNotMatch(markup, /export-preview-badge/);
   assert.match(markup, /file:\/\/\/C:\/captures\/frame%201%23\.png/);
+});
+
+test("export screen hides idle progress chrome until work starts", () => {
+  const state = createInitialSessionState();
+  state.source.filePath = "/tmp/practice.mp4";
+  state.source.displayName = "practice.mp4";
+  state.roi.previewImage = "/tmp/frame.png";
+  state.roi.appliedRect = [
+    [0, 0],
+    [320, 0],
+    [320, 180],
+    [0, 180],
+  ];
+
+  const markup = renderExportScreen(state);
+
+  assert.doesNotMatch(markup, /role="progressbar"/);
+  assert.doesNotMatch(markup, />0%<\/strong>/);
 });
 
 test("export screen previews the applied ROI crop instead of the whole frame when geometry is available", () => {

@@ -5,7 +5,9 @@ Use this checklist immediately before cutting a public release for Drum Sheet Ca
 ## Release Gate
 
 - [ ] Release scope is frozen for this version.
-- [ ] Version is updated in `desktop/package.json`.
+- [ ] Version is updated in `desktop/package.json` and both root version fields of `desktop/package-lock.json`.
+- [ ] `node desktop/scripts/check-release-version.js` passes; the intended tag exactly matches the version.
+- [ ] `docs/release/release-notes-vX.Y.Z.md` exists and describes the new version.
 - [ ] Backend app version matches `desktop/package.json`.
 - [ ] README files still match the actual product behavior and supported platforms.
 - [ ] Public release target is still limited to Windows `x64` and macOS `arm64`.
@@ -27,7 +29,7 @@ Use this checklist immediately before cutting a public release for Drum Sheet Ca
 - [ ] Treat `pack:release` as unpacked-app validation only; it does not prove DMG/installer generation.
 - [ ] Confirm packaged artifact validation passes at the end of the build logs, including frozen backend runtime plus bundled `ffmpeg`/`ffprobe` detection.
 - [ ] Confirm packaged Electron smoke starts the generated app and reaches `/health` plus `/runtime`.
-- [ ] Confirm packaged runtime smoke starts the backend executable from `dist/`, reads `/runtime`, and extracts a preview frame from a generated local video.
+- [ ] Confirm packaged runtime smoke starts the backend executable from `dist/`, reads `/runtime`, extracts a preview frame from a synthetic score video, and completes PNG/PDF export.
 - [ ] Treat `test:desktop-smoke` as a no-GUI Electron startup contract only; full packaged app behavior still requires the manual smoke test below.
 
 ## Manual Smoke Test
@@ -66,7 +68,9 @@ Use this checklist immediately before cutting a public release for Drum Sheet Ca
 - [ ] Create a new tag `vX.Y.Z`.
 - [ ] Push the new tag.
 - [ ] Confirm GitHub Actions release workflow starts from the tag push.
+- [ ] Confirm both platform build jobs and packaged smoke checks pass before the separate publish job starts.
 - [ ] Confirm release assets are uploaded for both public targets.
+- [ ] For a `codex/release-*` branch or manual preflight, confirm installers are stored as Actions artifacts and the publish job is skipped.
 - [ ] Verify the GitHub release notes describe user-visible changes and known limitations.
 
 ## Known Limitations To State Publicly
@@ -79,5 +83,5 @@ Use this checklist immediately before cutting a public release for Drum Sheet Ca
 ## Version Decision Rule
 
 - [ ] Use `1.0.0` only if this release is intended to be the first stable public baseline, the workflow is stable, and the manual smoke tests pass on target platforms.
-- [ ] Use `0.1.22` or `0.2.0` instead if you still expect release-process churn, platform-policy changes, or one more round of post-release fixes.
-- [ ] Never overwrite the existing `v0.1.21` tag for a new public build; cut a new version.
+- [ ] Use the next patch or minor version instead if you still expect release-process churn, platform-policy changes, or one more round of post-release fixes.
+- [ ] Never overwrite an existing release tag for a new public build; cut a new version.

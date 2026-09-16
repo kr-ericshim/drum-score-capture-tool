@@ -13,6 +13,8 @@ from yt_dlp import YoutubeDL
 from app.pipeline.acceleration import get_runtime_acceleration
 from app.pipeline.ffmpeg_runtime import ensure_runtime_bin_on_path, resolve_ffmpeg_bin, resolve_ffprobe_bin
 from app.schemas import ExtractOptions
+from app.pipeline.process_control import checkpoint, OperationCancelled, run_capture_process
+from yt_dlp.version import __version__ as YTDLP_VERSION
 
 YOUTUBE_DOWNLOAD_STRATEGY_VERSION = "yt-v3"
 YOUTUBE_LOW_QUALITY_HEIGHT_THRESHOLD = 360
@@ -154,6 +156,7 @@ def _download_youtube(url: str, workspace: Path, logger, progress_callback=None)
     download_dir.mkdir(parents=True, exist_ok=True)
     output_template = str(download_dir / "%(id)s.%(ext)s")
     logger(f"downloading youtube source: {url}")
+    logger(f"youtube downloader version: {YTDLP_VERSION}")
     _emit_prepare_progress(
         progress_callback,
         {
@@ -261,6 +264,8 @@ def _download_youtube(url: str, workspace: Path, logger, progress_callback=None)
             _write_download_metadata(download_dir, source_key=url, video_title=title)
             logger(f"youtube download saved: {download_path}")
             return download_path
+        except OperationCancelled:
+            raise
         except Exception as exc:
             errors.append(f"{name}: {exc}")
             logger(f"youtube download strategy failed: {name}: {exc}")
@@ -268,6 +273,7 @@ def _download_youtube(url: str, workspace: Path, logger, progress_callback=None)
 
 
 def _emit_prepare_progress(progress_callback, update: Dict[str, object], *, logger=None) -> None:
+    checkpoint()
     if not progress_callback:
         return
     try:
@@ -706,14 +712,19 @@ def _extract_with_ffmpeg(
 
         mode = _hwaccel_mode_name(hw_flags)
         logger(f"running ffmpeg extract ({mode})")
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        _consume_ffmpeg_progress(
-            process,
-            expected_duration=expected_duration,
-            progress_callback=progress_callback,
-        )
-        returncode = process.wait()
-        stderr = process.stderr.read().strip() if process.stderr else ""
+        last_percent = -1
+        def report_progress(raw_line):
+            nonlocal last_percent
+            key, _, value = raw_line.strip().partition("=")
+            seconds = _parse_ffmpeg_out_time_seconds(value) if key == "out_time" else None
+            if seconds is None or expected_duration <= 0:
+                return
+            fraction = max(0.0, min(seconds / expected_duration, 1.0))
+            percent = int(round(fraction * 100))
+            if percent > last_percent:
+                last_percent = percent
+                _emit_frame_extract_progress(progress_callback, progress=fraction)
+        returncode, stderr = run_capture_process(cmd, on_line=report_progress)
         frames = sorted(out_dir.glob("frame_*.png"))
         if returncode == 0 and frames:
             _emit_frame_extract_progress(progress_callback, progress=1.0)

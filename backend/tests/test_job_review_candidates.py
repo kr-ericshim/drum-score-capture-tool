@@ -68,6 +68,7 @@ class TestJobReviewCandidates(unittest.TestCase):
                         "pdf": None,
                         "raw_frames": [],
                         "page_diagnostics": [],
+                        "dropped_pages": [{"page_index": 2, "diagnostic_codes": ["mostly_blank_page"]}],
                     },
                 ),
             ):
@@ -79,6 +80,10 @@ class TestJobReviewCandidates(unittest.TestCase):
             self.assertEqual(
                 job.result.get("review_candidates"),
                 [str(deduped_candidate)],
+            )
+            self.assertEqual(
+                job.result.get("dropped_pages"),
+                [{"page_index": 2, "diagnostic_codes": ["mostly_blank_page"]}],
             )
 
 

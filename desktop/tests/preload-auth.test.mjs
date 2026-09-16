@@ -31,7 +31,7 @@ test("preload fetches the backend session token from Electron IPC", async () => 
             }
             throw new Error(`unexpected channel: ${channel}`);
           },
-          invoke() {},
+          invoke(...args) { calls.push(args); },
           on() {},
           removeListener() {},
         },
@@ -53,6 +53,9 @@ test("preload fetches the backend session token from Electron IPC", async () => 
   assert.equal(Object.hasOwn(exposed.value, "apiToken"), false);
   assert.equal(typeof exposed.value.requestJson, "function");
   assert.deepEqual(calls, ["get-app-version", "get-session-token"]);
+  const saveOptions = { sourcePath: "/tmp/score.pdf", suggestedName: "score", locale: "ko" };
+  exposed.value.savePdfAs(saveOptions);
+  assert.deepEqual(calls.at(-1), ["save-pdf-as", saveOptions]);
 });
 
 test("preload exposes getPathForFile through Electron webUtils", async () => {

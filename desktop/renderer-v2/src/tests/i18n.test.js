@@ -35,7 +35,7 @@ test("shell translations stay task-first and avoid machine-style wording", () =>
     assert.doesNotMatch(t(key, { locale: "en" }), disallowed);
   }
 
-  assert.equal(t("topbar.step.source", { locale: "ko" }), "소스");
+  assert.equal(t("topbar.step.source", { locale: "ko" }), "영상 선택");
   assert.equal(t("topbar.step.source", { locale: "en" }), "Source");
   assert.equal(t("rail.pipeline", { locale: "en" }), "Steps");
   assert.equal(t("rail.workbenchStatus", { locale: "en" }), "Ready");

@@ -5,6 +5,8 @@ const crypto = require("crypto");
 const { app, BrowserWindow, clipboard, dialog, ipcMain, shell } = require("electron");
 const { spawn, spawnSync } = require("child_process");
 const { decidePackagedBackendLaunchMode } = require("./backend-launch-policy");
+const { resolveBackendJobsDir } = require("./backend-job-paths");
+const { savePdfAs } = require("./save-pdf-as");
 const { resolveRendererIndexPath } = require("./renderer-entry");
 
 const BACKEND_PORT = Number(process.env.DRUMSHEET_PORT || 8000);
@@ -177,6 +179,11 @@ function resolveNodeRuntimeBinary() {
   const configured = (process.env.DRUMSHEET_NODE_BIN || "").trim();
   if (configured && existsFile(configured)) {
     return configured;
+  }
+
+  // Electron ships a compatible Node runtime, including in standalone builds.
+  if (process.versions?.electron && existsFile(process.execPath)) {
+    return process.execPath;
   }
 
   const candidates = [];
@@ -473,7 +480,7 @@ function runBackend() {
   const env = {
     ...process.env,
     DRUMSHEET_PORT: String(BACKEND_PORT),
-    DRUMSHEET_JOBS_DIR: path.join(backendDir, "jobs"),
+    DRUMSHEET_JOBS_DIR: resolveBackendJobsDir({ app, backendDir, env: process.env }),
     DRUMSHEET_HWACCEL: process.env.DRUMSHEET_HWACCEL || "auto",
     DRUMSHEET_OPENCV_ACCEL: process.env.DRUMSHEET_OPENCV_ACCEL || "auto",
     DRUMSHEET_SESSION_TOKEN: BACKEND_SESSION_TOKEN,
@@ -483,6 +490,9 @@ function runBackend() {
   const nodeRuntimeBin = resolveNodeRuntimeBinary();
   if (nodeRuntimeBin) {
     env.DRUMSHEET_NODE_BIN = nodeRuntimeBin;
+    if (nodeRuntimeBin === process.execPath && process.versions?.electron) {
+      env.ELECTRON_RUN_AS_NODE = "1";
+    }
     console.log(`[backend] node runtime: ${nodeRuntimeBin}`);
   } else {
     console.log("[backend] node runtime: not found");
@@ -696,6 +706,12 @@ ipcMain.handle("select-video-file", async () => {
     }
     return shell.openPath(targetPath);
   });
+
+  ipcMain.handle("save-pdf-as", async (_, options) => savePdfAs(options, {
+    dialog,
+    parentWindow: mainWindow && !mainWindow.isDestroyed() ? mainWindow : null,
+    downloadsPath: app.getPath("downloads"),
+  }));
 
   ipcMain.handle("copy-text", async (_, text) => {
     const value = String(text || "");

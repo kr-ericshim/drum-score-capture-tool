@@ -30,8 +30,6 @@ function renderRailFooter(state) {
     const selectionLabel = escapeHtml(state.review.status === "applied" ? t("review.kept", { locale }) : t("review.selected", { locale }));
     const outputDirLabel = escapeHtml(t("rail.outputDir", { locale }));
     const safeOutputLabel = escapeHtml(outputLabel);
-    const openFolderLabel = escapeHtml(t("rail.openFolder", { locale }));
-    const openPdfLabel = escapeHtml(t("rail.openPdf", { locale }));
     const copyPathLabel = escapeHtml(t("rail.copyPath", { locale }));
     return `
       <section class="rail-footer rail-footer-actions">
@@ -50,8 +48,6 @@ function renderRailFooter(state) {
           <span>${outputDirLabel}</span>
           <strong>${safeOutputLabel}</strong>
         </div>
-        <button class="rail-action" data-action="open-output-dir" ${state.review.outputDir ? "" : "disabled"}>${openFolderLabel}</button>
-        <button class="rail-action rail-action-primary" data-action="open-output-pdf" ${state.review.pdfPath ? "" : "disabled"}>${openPdfLabel}</button>
         <button class="rail-action" data-action="copy-output-dir" ${state.review.outputDir ? "" : "disabled"}>${copyPathLabel}</button>
       </section>
     `;
@@ -91,6 +87,9 @@ export function renderProcessRail(state, items) {
         </li>
       `).join("")}
     </ol>
-    ${renderRailFooter(state)}
+    ${state.ui.activeStep === "review" ? `<details class="review-output-details">
+      <summary>${escapeHtml(t("rail.exportSettings", { locale }))}</summary>
+      ${renderRailFooter(state)}
+    </details>` : renderRailFooter(state)}
   `;
 }

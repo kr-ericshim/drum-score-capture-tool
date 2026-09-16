@@ -10,7 +10,7 @@ jobs:
       fail-fast: false
       matrix:
         os:
-          - macos-14
+          - macos-15
           - windows-latest
 
     runs-on: ${{ matrix.os }}
@@ -27,7 +27,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
           cache-dependency-path: desktop/package-lock.json
 
@@ -37,6 +37,9 @@ jobs:
       - name: Install desktop dependencies
         working-directory: desktop
         run: npm ci
+
+      - name: Check release versions
+        run: node desktop/scripts/check-release-version.js
 
       - name: Run backend tests
         shell: bash
@@ -57,7 +60,5 @@ jobs:
           test -f README.md
           test -f README.en.md
           test -f README.ko.md
-          test -f docs/reports/2026-03-09-github-production-readiness-report.md
           test -f docs/release/github-release-runbook.md
           test -f docs/release/final-production-checklist.md
-          test -f docs/release/release-notes-v0.1.30.md

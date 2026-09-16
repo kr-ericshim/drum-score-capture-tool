@@ -157,3 +157,18 @@ test("roi screen exposes keyboard access for roi canvas", () => {
   assert.match(markup, /aria-describedby="roiCanvasHelp"/);
   assert.match(markup, /use the arrow keys to move the region/i);
 });
+
+test("white-panel auto fit is opt-in and requires applying changed capture settings", () => {
+  const state = createInitialSessionState();
+  state.source.filePath = "/video.mp4";
+  state.roi.previewImage = "/preview.png";
+  state.roi.appliedRect = [[0,100],[400,100],[400,200],[0,200]];
+  state.roi.draftRect = state.roi.appliedRect;
+  state.roi.autoFit = true;
+  state.roi.appliedAutoFit = false;
+  const model = buildRoiScreenModel(state);
+  assert.equal(model.applyDisabled, false);
+  assert.match(renderRoiScreen(state), /data-action="toggle-roi-auto-fit" checked/);
+  state.roi.appliedAutoFit = true;
+  assert.equal(buildRoiScreenModel(state).applyDisabled, true);
+});

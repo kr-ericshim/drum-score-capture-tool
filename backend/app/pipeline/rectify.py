@@ -4,9 +4,10 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import cv2
+
+from app.pipeline.process_control import checkpoint
 import numpy as np
 
-from app.pipeline.roi_health import pad_roi_rect
 from app.schemas import RectifyOptions
 
 
@@ -23,27 +24,27 @@ def rectify_frames(
     if options.manual_points is not None:
         forced = np.array(options.manual_points, dtype=np.float32)
         for idx, item in enumerate(detections):
+            checkpoint()
             if not item.get("roi"):
                 item["roi"] = forced.tolist()
                 item.pop("safe_roi", None)
 
     logger(f"rectify mode auto={options.auto}")
     for idx, item in enumerate(detections):
+        checkpoint()
         frame_path = Path(item["frame_path"])
         image = cv2.imread(str(frame_path))
         if image is None:
             continue
         roi = item.get("roi")
         if roi is None:
-            out_paths.append(frame_path)
-            continue
+            raise ValueError("a capture region is required; refusing to export the full video frame")
 
-        safe_roi = item.get("safe_roi") or pad_roi_rect(
-            roi,
-            image_width=image.shape[1],
-            image_height=image.shape[0],
-        )
-        points = np.array(safe_roi, dtype=np.float32).reshape(4, 2)
+        # The visible selection is the capture boundary. Historical safe_roi
+        # padding must never override the user's region.
+        points = np.array(roi, dtype=np.float32).reshape(4, 2)
+        if not np.isfinite(points).all():
+            raise ValueError("capture region must contain finite coordinates")
         points = _order_points(points)
         warped = _warp_sheet(image, points)
         if options.auto:
@@ -73,6 +74,17 @@ def _order_points(points):
 
 def _warp_sheet(image, points):
     (tl, tr, br, bl) = points
+    if np.allclose([tl[1], tr[0], br[1], bl[0]], [tr[1], br[0], bl[1], tl[0]]):
+        # Rectangle bounds are half-open, exactly like the renderer selection.
+        # A direct slice avoids resampling pixels from outside the boundary.
+        h, w = image.shape[:2]
+        x1, y1 = np.ceil(tl).astype(int)
+        x2, y2 = np.floor(br).astype(int)
+        x1, x2 = max(0, x1), min(w, x2)
+        y1, y2 = max(0, y1), min(h, y2)
+        if x2 - x1 < 2 or y2 - y1 < 2:
+            raise ValueError("capture region is empty or too small")
+        return image[y1:y2, x1:x2].copy()
     width_a = np.linalg.norm(br - bl)
     width_b = np.linalg.norm(tr - tl)
     max_w = max(int(width_a), int(width_b))
@@ -81,7 +93,7 @@ def _warp_sheet(image, points):
     max_h = max(int(height_a), int(height_b))
 
     if max_w <= 1 or max_h <= 1:
-        return image
+        raise ValueError("capture region is empty or too small")
 
     destination = np.array(
         [
@@ -93,7 +105,11 @@ def _warp_sheet(image, points):
         dtype=np.float32,
     )
     matrix = cv2.getPerspectiveTransform(points, destination)
-    warped = cv2.warpPerspective(image, matrix, (max_w, max_h))
+    mask = np.zeros(image.shape[:2], dtype=np.uint8)
+    cv2.fillConvexPoly(mask, points.astype(np.int32), 255)
+    bounded = image.copy()
+    bounded[mask == 0] = 255
+    warped = cv2.warpPerspective(bounded, matrix, (max_w, max_h), borderValue=(255, 255, 255))
     return warped
 
 

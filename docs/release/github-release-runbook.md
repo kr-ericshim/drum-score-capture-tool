@@ -15,12 +15,18 @@ The workflow YAML below must stay aligned with:
 
 ## Release Defaults
 
-- Release trigger: tag push matching `v*`
+- Public release trigger: tag push matching `v*`
+- Preflight trigger: push a `codex/release-*` branch, or manually dispatch the workflow. Preflight builds both installers and stores Actions artifacts without publishing a release.
+- Publishing is a separate job that waits for both platform builds and their packaged smoke tests to succeed.
 - Version source of truth: `desktop/package.json`
 - Public targets:
   - Windows `x64` NSIS installer
   - macOS `arm64` DMG
 - Default release policy: unsigned
+- Packaging configuration: `desktop/electron-builder.config.js` only; `desktop/package.json` contains application metadata and commands.
+- `release` resolves to the `compact` profile. Development virtualenvs, backend tests, jobs, and renderer tests are excluded.
+- `dist:release` builds the frozen backend once, packages it, and validates the resulting payload. CI then runs both smoke checks against that same packaged runtime; do not add a separate preliminary backend build.
+- Successful `pack` and `dist` validation writes `dist/package-size-<platform>.json` with installed app/component sizes and, for `dist`, compressed installer sizes. Values are logical file bytes excluding symlinks, not allocated disk blocks.
 - Initial language policy:
   - saved `drum-sheet-language` wins
   - otherwise `ko*` system locales start in Korean
@@ -28,7 +34,7 @@ The workflow YAML below must stay aligned with:
 
 ## Pre-Release Checklist
 
-1. Update `desktop/package.json` version
+1. Update `desktop/package.json`, both version fields in `desktop/package-lock.json`, and the FastAPI version in `backend/app/main.py`; add `docs/release/release-notes-vX.Y.Z.md`. Run `node desktop/scripts/check-release-version.js`. Tag builds reject an exact tag/version mismatch before installing dependencies.
 2. Review `README.md`, `README.ko.md`, `README.en.md`
 3. Run local checks
 
@@ -71,138 +77,21 @@ git push origin v0.1.0
 
 ## CI Workflow
 
-The authoritative CI definition is `.github/workflows/ci.yml`. Do not keep a copied YAML block in this runbook; it drifts too easily. Before tagging a release, confirm the workflow still runs the backend suite, `verify:renderer-v2`, and desktop node tests on both `macos-14` and `windows-latest`.
+The authoritative CI definition is `.github/workflows/ci.yml`. Do not keep a copied YAML block in this runbook; it drifts too easily. Before tagging a release, confirm the workflow still runs the backend suite, `verify:renderer-v2`, and desktop node tests on both `macos-15` and `windows-latest`.
 
 ## Release Workflow
 
-The committed `.github/workflows/release.yml` should continue to match this content:
+The authoritative release workflow is `.github/workflows/release.yml`. Do not keep a copied YAML block in this runbook; it drifts too easily. Before tagging a release, confirm the workflow still:
 
-```yaml
-name: Release
-
-on:
-  push:
-    tags:
-      - "v*"
-
-permissions:
-  contents: write
-
-jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            artifact_glob: dist/*.exe
-          - os: macos-14
-            artifact_glob: dist/*.dmg
-
-    runs-on: ${{ matrix.os }}
-
-    env:
-      DRUMSHEET_ENABLE_SIGNING: "false"
-      CSC_IDENTITY_AUTO_DISCOVERY: "false"
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: desktop/package-lock.json
-
-      - name: Install backend build dependencies
-        shell: bash
-        run: |
-          python -m pip install --upgrade pip setuptools wheel
-          python -m pip install -r backend/requirements-build.txt
-
-      - name: Run backend test suite
-        shell: bash
-        env:
-          PYTHONPATH: backend
-        run: python -m unittest discover -s backend/tests -p 'test_*.py'
-
-      - name: Build frozen backend runtime
-        shell: bash
-        run: |
-          python backend/scripts/build_frozen_backend.py
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            test -f backend/runtime/drumsheet-backend/drumsheet-backend.exe
-          else
-            test -f backend/runtime/drumsheet-backend/drumsheet-backend
-          fi
-
-      - name: Smoke test frozen backend
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/drumsheet-jobs"
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            BACKEND_BIN="backend/runtime/drumsheet-backend/drumsheet-backend.exe"
-          else
-            BACKEND_BIN="backend/runtime/drumsheet-backend/drumsheet-backend"
-          fi
-          DRUMSHEET_PORT=8123 DRUMSHEET_JOBS_DIR="$RUNNER_TEMP/drumsheet-jobs" "$BACKEND_BIN" > "$RUNNER_TEMP/drumsheet-backend.log" 2>&1 &
-          BACKEND_PID=$!
-          trap 'kill $BACKEND_PID >/dev/null 2>&1 || true' EXIT
-          for _ in $(seq 1 18); do
-            sleep 5
-            if curl -sf http://127.0.0.1:8123/health >/dev/null; then
-              exit 0
-            fi
-          done
-          cat "$RUNNER_TEMP/drumsheet-backend.log"
-          exit 1
-
-      - name: Install desktop dependencies
-        working-directory: desktop
-        run: npm ci
-
-      - name: Smoke test desktop startup contract
-        working-directory: desktop
-        shell: bash
-        run: npm run test:desktop-smoke
-
-      - name: Verify renderer-v2
-        working-directory: desktop
-        shell: bash
-        run: npm run verify:renderer-v2
-
-      - name: Run desktop node tests
-        working-directory: desktop
-        shell: bash
-        run: npm run test:desktop-node
-
-      - name: Build release artifacts
-        working-directory: desktop
-        run: npm run dist:release
-
-      - name: Smoke test packaged Electron app
-        working-directory: desktop
-        run: npm run smoke:packaged-electron
-
-      - name: Smoke test packaged backend runtime
-        working-directory: desktop
-        run: npm run smoke:packaged-runtime
-
-      - name: Upload release assets
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            ${{ matrix.artifact_glob }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
+- runs on `windows-latest` and `macos-15`
+- installs backend build dependencies and runs the backend unittest suite
+- builds the frozen backend runtime
+- runs desktop smoke, renderer-v2, and desktop node checks
+- runs `npm run dist:release`
+- runs packaged Electron and packaged runtime smoke tests
+- verifies non-empty, versioned installers and stores them as Actions artifacts
+- publishes both installers and the matching release notes only after both matrix jobs pass, and only for a version tag push
+- preserves package size reports as separate Actions artifacts
 
 ## Locale Bootstrap Verification
 
@@ -220,7 +109,7 @@ It verifies:
 
 `desktop/scripts/validate-packaged-release.js` still checks a few packaged backend source markers because current release packages intentionally ship the backend source tree next to the frozen runtime. Treat these as source-package compatibility and stale-copy checks only.
 
-Packaged behavior is gated in two layers: `npm run smoke:packaged-electron` starts the generated Electron app and waits for its backend to expose `/health` and `/runtime`; `npm run smoke:packaged-runtime` starts the backend executable from the generated `dist/` payload, reads `/runtime`, and extracts a preview frame from a generated local video.
+Packaged behavior is gated in two layers: `npm run smoke:packaged-electron` starts the generated Electron app and waits for its backend to expose `/health` and `/runtime`; `npm run smoke:packaged-runtime` starts the backend executable from the generated `dist/` payload, reads `/runtime`, extracts a preview frame from a generated synthetic score video, and runs a capture job through PNG/PDF export with file-signature checks. This is a synthetic local-file test, not YouTube coverage or visual validation of musical notation.
 
 ## Unsigned Release Notes
 

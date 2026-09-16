@@ -47,18 +47,14 @@ install_backend() {
   local py_bin="$1"
   local venv_py="${BACKEND_DIR}/.venv/bin/python"
 
-  echo "[1/4] Python venv setup"
+  echo "[1/3] Python venv setup"
   "${py_bin}" -m venv "${BACKEND_DIR}/.venv"
   "${venv_py}" -m pip install --upgrade pip setuptools wheel
 
-  echo "[2/4] Core backend dependencies"
+  echo "[2/3] Core backend dependencies"
   "${venv_py}" -m pip install -r "${BACKEND_DIR}/requirements.txt"
 
-  echo "[3/4] Optional audio dependencies"
-  "${venv_py}" -m pip install -r "${BACKEND_DIR}/requirements-uvr.txt"
-  "${venv_py}" -m pip install torch torchaudio torchcodec "soundfile>=0.12.0"
-
-  echo "[4/4] Runtime check"
+  echo "[3/3] Runtime check"
   "${venv_py}" "${BACKEND_DIR}/scripts/doctor.py" || true
 }
 

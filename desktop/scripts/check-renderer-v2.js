@@ -113,8 +113,8 @@ assert(
     || reviewScreen.includes('t("review.appliedNote"'),
   "review screen is missing its finalize affordance.",
 );
-assert(processRail.includes('data-action="open-output-dir"'), "review rail output-folder action is missing.");
-assert(processRail.includes('data-action="open-output-pdf"'), "review rail output-pdf action is missing.");
+assert(reviewScreen.includes('data-action="open-output-dir"'), "review screen output-folder action is missing.");
+assert(reviewScreen.includes('data-action="open-output-pdf"'), "review screen output-pdf action is missing.");
 
 assert(baseCss.includes(":focus-visible"), "renderer-v2 base styles are missing visible focus treatment.");
 assert(layoutCss.includes(".workspace-shell"), "renderer-v2 layout is missing the workstation shell grid.");

@@ -76,9 +76,9 @@ def _frame_pages_as_printed_set(images: List[np.ndarray], *, page_ratio: float) 
     if max_w <= 0 or max_h <= 0:
         return valid_images
 
-    margin_x = max(10, int(max_w * 0.015))
-    margin_top = max(14, int(max_h * 0.026))
-    margin_bottom = max(24, int(max_h * 0.056))
+    margin_x = max(10, int(max_w * 0.018))
+    margin_top = max(14, int(max_h * 0.024))
+    margin_bottom = max(20, int(max_h * 0.036))
     canvas_w = max_w + (margin_x * 2)
     target_ratio = max(0.6, float(page_ratio))
     canvas_h = max(margin_top + margin_bottom + 1, int(round(canvas_w / target_ratio)))
@@ -254,7 +254,7 @@ def _split_long_page(
 
     mode: PageFillMode = "performance" if page_fill_mode == "performance" else "balanced"
 
-    min_single_page_scale = 0.94 if mode == "performance" else 0.97
+    min_single_page_scale = 0.96 if mode == "performance" else 0.97
     target_h = _resolve_split_target_height(
         width=w,
         page_ratio=page_ratio,
@@ -390,7 +390,15 @@ def _split_long_page(
                 page_ratio=page_ratio,
             )
 
-    return normalized_pages or _slice_by_whitespace(
+    if normalized_pages:
+        return _balance_short_edge_pages(
+            normalized_pages,
+            target_h=target_h,
+            page_fill_mode=mode,
+            page_ratio=page_ratio,
+        )
+
+    return _slice_by_whitespace(
         image,
         row_density=row_density,
         target_h=target_h,
@@ -666,12 +674,85 @@ def _slice_by_whitespace(
         # Start exactly at the chosen cut to avoid duplicated strips across pages.
         start = cut
 
-    return _merge_short_trailing_page(
+    return _balance_short_edge_pages(
         pages,
         target_h=target_h,
         page_fill_mode=mode,
         page_ratio=page_ratio,
     )
+
+
+def _balance_short_edge_pages(
+    pages: List[np.ndarray],
+    *,
+    target_h: int,
+    page_fill_mode: PageFillMode = "performance",
+    page_ratio: Optional[float] = None,
+) -> List[np.ndarray]:
+    pages = _merge_short_leading_page(
+        pages,
+        target_h=target_h,
+        page_fill_mode=page_fill_mode,
+        page_ratio=page_ratio,
+    )
+    return _merge_short_trailing_page(
+        pages,
+        target_h=target_h,
+        page_fill_mode=page_fill_mode,
+        page_ratio=page_ratio,
+    )
+
+
+def _merge_short_leading_page(
+    pages: List[np.ndarray],
+    *,
+    target_h: int,
+    page_fill_mode: PageFillMode = "performance",
+    page_ratio: Optional[float] = None,
+) -> List[np.ndarray]:
+    mode: PageFillMode = "performance" if page_fill_mode == "performance" else "balanced"
+    if len(pages) < 2:
+        return pages
+
+    result = list(pages)
+    if mode == "performance":
+        max_head = max(120, int(target_h * 0.34))
+        max_next = int(target_h * 1.10)
+        min_merged_scale = 0.91
+    else:
+        max_head = max(120, int(target_h * 0.24))
+        max_next = int(target_h * 1.02)
+        min_merged_scale = 0.94
+
+    first = result[0]
+    second = result[1]
+    first_h = int(first.shape[0])
+    second_h = int(second.shape[0])
+    if first_h > max_head or second_h > max_next:
+        return result
+
+    if page_ratio is not None:
+        merged_scale = _estimate_single_page_frame_scale(
+            height=first_h + second_h,
+            width=int(max(first.shape[1], second.shape[1])),
+            page_ratio=page_ratio,
+        )
+        if merged_scale < min_merged_scale:
+            return result
+
+    result[1] = np.vstack((_pad_to_common_width(first, second), _pad_to_common_width(second, first)))
+    result.pop(0)
+    return result
+
+
+def _pad_to_common_width(image, other) -> np.ndarray:
+    width = max(int(image.shape[1]), int(other.shape[1]))
+    if int(image.shape[1]) >= width:
+        return image
+    delta = width - int(image.shape[1])
+    left = delta // 2
+    right = delta - left
+    return cv2.copyMakeBorder(image, 0, 0, left, right, cv2.BORDER_CONSTANT, value=(255, 255, 255))
 
 
 def _choose_protected_split_boundary(
@@ -793,7 +874,7 @@ def _merge_short_trailing_page(
             break
 
         if page_ratio is not None:
-            min_single_page_scale = 0.94 if mode == "performance" else 0.97
+            min_single_page_scale = 0.96 if mode == "performance" else 0.97
             merged_scale = _estimate_single_page_frame_scale(
                 height=prev_h + tail_h,
                 width=int(prev.shape[1]),
@@ -812,9 +893,9 @@ def _estimate_single_page_frame_scale(*, height: int, width: int, page_ratio: fl
     if height <= 0 or width <= 0:
         return 1.0
 
-    margin_x = max(10, int(width * 0.015))
-    margin_top = max(14, int(height * 0.026))
-    margin_bottom = max(24, int(height * 0.056))
+    margin_x = max(10, int(width * 0.018))
+    margin_top = max(14, int(height * 0.024))
+    margin_bottom = max(20, int(height * 0.036))
     canvas_w = width + (margin_x * 2)
     target_ratio = max(0.6, float(page_ratio))
     canvas_h = max(margin_top + margin_bottom + 1, int(round(canvas_w / target_ratio)))
@@ -840,11 +921,11 @@ def _frame_as_printed_page(
         return image
 
     if margin_x is None:
-        margin_x = max(10, int(w * 0.015))
+        margin_x = max(10, int(w * 0.018))
     if margin_top is None:
-        margin_top = max(14, int(h * 0.026))
+        margin_top = max(14, int(h * 0.024))
     if margin_bottom is None:
-        margin_bottom = max(24, int(h * 0.056))
+        margin_bottom = max(20, int(h * 0.036))
 
     if canvas_w is None:
         canvas_w = w + (margin_x * 2)

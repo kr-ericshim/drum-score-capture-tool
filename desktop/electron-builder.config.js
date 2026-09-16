@@ -1,7 +1,52 @@
 const path = require("path");
 
-const packageManifest = require("./package.json");
-const baseConfig = JSON.parse(JSON.stringify(packageManifest.build || {}));
+// Keep packaging policy here; package.json contains application metadata only.
+const baseConfig = {
+  "productName": "Drum Sheet Capture",
+  "appId": "com.ericshim.drumsheetcapture",
+  "extraResources": [
+    {
+      "from": "../backend",
+      "to": "backend",
+      "filter": [
+        "**/*",
+        "!jobs",
+        "!jobs/**/*",
+        "!output",
+        "!output/**/*",
+        "!**/__pycache__",
+        "!**/__pycache__/**",
+        "!**/.pytest_cache",
+        "!**/.pytest_cache/**",
+        "!**/*.log",
+        "!**/.git",
+        "!**/.git/**",
+        "!third_party/HAT/results",
+        "!third_party/HAT/results/**",
+        "!third_party/BasicSR/.github",
+        "!third_party/BasicSR/.github/**",
+        "!third_party/BasicSR/docs",
+        "!third_party/BasicSR/docs/**",
+        "!third_party/BasicSR/assets",
+        "!third_party/BasicSR/assets/**",
+        "!third_party/BasicSR/colab",
+        "!third_party/BasicSR/colab/**",
+        "!third_party/BasicSR/experiments",
+        "!third_party/BasicSR/experiments/**",
+        "!third_party/BasicSR/sets",
+        "!third_party/BasicSR/sets/**",
+        "!third_party/BasicSR/scripts",
+        "!third_party/BasicSR/scripts/**",
+        "!third_party/BasicSR/tests",
+        "!third_party/BasicSR/tests/**",
+        "!third_party/BasicSR/test_scripts",
+        "!third_party/BasicSR/test_scripts/**",
+        "!third_party/BasicSR/datasets",
+        "!third_party/BasicSR/datasets/**"
+      ]
+    }
+  ]
+};
 const profile = (process.env.DRUMSHEET_DIST_PROFILE || "").toLowerCase();
 const isLeanProfile = profile === "lean";
 const isCompactFullProfile = profile === "compact";
@@ -11,6 +56,19 @@ const normalizeFilter = (items = []) => Array.from(new Set(items));
 
 const extraResource = baseConfig.extraResources && baseConfig.extraResources[0];
 const filter = normalizeFilter([...(extraResource?.filter || [])]);
+
+baseConfig.files = [
+  "main.js",
+  "preload.js",
+  "renderer-entry.js",
+  "backend-launch-policy.js",
+  "backend-job-paths.js",
+  "save-pdf-as.js",
+  "package.json",
+  "renderer-v2/index.html",
+  "renderer-v2/src/**/*",
+  "!renderer-v2/src/tests{,/**/*}",
+];
 
 const fullCompactFilters = [
   // Remove cache and temporary artifacts that do not affect runtime.
@@ -28,30 +86,6 @@ const fullCompactFilters = [
   "!scripts/**",
   "!requirements*.txt",
   "!**/.DS_Store",
-
-  // Trim non-runtime virtualenv content while keeping the bundled interpreter.
-  "!.venv/include",
-  "!.venv/include/**",
-  "!.venv/share",
-  "!.venv/share/**",
-  "!.venv/**/pip",
-  "!.venv/**/pip/**",
-  "!.venv/**/setuptools",
-  "!.venv/**/setuptools/**",
-  "!.venv/**/yapf",
-  "!.venv/**/yapf/**",
-  "!.venv/**/yapftests",
-  "!.venv/**/yapftests/**",
-  "!.venv/**/yapf_third_party",
-  "!.venv/**/yapf_third_party/**",
-  "!.venv/**/test",
-  "!.venv/**/test/**",
-  "!.venv/**/tests",
-  "!.venv/**/tests/**",
-  "!.venv/**/testing",
-  "!.venv/**/testing/**",
-  "!.venv/**/docs",
-  "!.venv/**/docs/**",
 
   // Avoid shipping a giant HAT experiments bundle in full packaging.
   "!third_party/HAT/experiments",
@@ -101,6 +135,7 @@ if (extraResource) {
 
 baseConfig.asar = true;
 baseConfig.compression = "maximum";
+baseConfig.electronLanguages = ["en", "ko"];
 baseConfig.mac = {
   ...(baseConfig.mac || {}),
   target: [{ target: "dmg", arch: ["arm64"] }],

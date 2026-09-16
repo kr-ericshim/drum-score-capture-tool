@@ -4,10 +4,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import cv2
+
+from app.pipeline.process_control import checkpoint
 import numpy as np
 
-from app.pipeline.roi_health import pad_roi_rect
 from app.schemas import DetectOptions
+from app.pipeline.auto_roi import fit_white_score_region
 
 
 def detect_sheet_regions(
@@ -24,27 +26,29 @@ def detect_sheet_regions(
         return []
 
     roi = _parse_roi(options.roi)
-    logger("using manual ROI for all frames")
+    logger("fitting white score edges inside the selected region" if options.auto_fit else "using manual ROI for all frames")
 
     detections: List[Dict[str, Any]] = []
     for idx, frame_path in enumerate(frame_paths):
-        safe_roi = roi.tolist()
-        image = cv2.imread(str(frame_path))
-        if image is not None:
-            safe_roi = pad_roi_rect(
-                roi.tolist(),
-                image_width=image.shape[1],
-                image_height=image.shape[0],
-            )
+        checkpoint()
+        selected_roi = roi.tolist()
+        fit = {"status": "disabled"}
+        if options.auto_fit:
+            selected_roi, fit = fit_white_score_region(cv2.imread(str(frame_path)), selected_roi)
         detections.append(
             {
                 "frame_path": str(frame_path),
-                "roi": roi.tolist(),
-                "safe_roi": safe_roi,
+                "roi": selected_roi,
+                "requested_roi": roi.tolist(),
+                "safe_roi": selected_roi,
+                "auto_fit": fit,
                 "score": 1.0,
                 "frame_index": idx,
             }
         )
+    if options.auto_fit:
+        adjusted = sum(item["auto_fit"]["status"] == "adjusted" for item in detections)
+        logger(f"white score fit: {adjusted}/{len(detections)} frames adjusted; other frames keep the selected boundary")
     return detections
 
 

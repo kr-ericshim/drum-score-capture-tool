@@ -183,6 +183,56 @@ class TestExportDocumentHeader(unittest.TestCase):
         self.assertGreater(right_ink, 120)
         self.assertLess(center_ink, min(left_ink, right_ink))
 
+    def test_render_document_header_band_keeps_minimal_header_compact(self):
+        band = _render_document_header_band(
+            page_size=(1100, 1500),
+            document_header={"title": "Moonlight Etude"},
+        )
+        self.addCleanup(band.close)
+
+        self.assertLessEqual(band.size[1], 170)
+
+    def test_diagnose_page_image_emits_actionable_codes_for_sparse_and_video_pages(self):
+        sparse = np.full((1500, 1100, 3), 255, dtype=np.uint8)
+        cv2.putText(sparse, "John 14:6", (430, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2, cv2.LINE_AA)
+        sparse_diagnostic = _diagnose_page_image(sparse, 1)
+
+        self.assertTrue(sparse_diagnostic["suspicious"])
+        self.assertIn("mostly_blank_page", sparse_diagnostic["diagnostic_codes"])
+        self.assertEqual(sparse_diagnostic["recommended_action"], "exclude")
+
+        video_mixed = _make_score_page(label="Video", top_staff_y=560)
+        video_mixed[80:470, 90:1010] = (60, 120, 210)
+        cv2.circle(video_mixed, (520, 260), 120, (35, 170, 240), -1)
+        video_diagnostic = _diagnose_page_image(video_mixed, 2)
+
+        self.assertTrue(video_diagnostic["suspicious"])
+        self.assertIn("mixed_visual_content", video_diagnostic["diagnostic_codes"])
+        self.assertEqual(video_diagnostic["recommended_action"], "review")
+        self.assertEqual(video_diagnostic["score_classification"], "score")
+
+    def test_export_selected_pages_skips_mostly_blank_trailing_page(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            score_path = root / "score.png"
+            blank_tail_path = root / "tail.png"
+            cv2.imwrite(str(score_path), _make_score_page(label="Keep"))
+            blank_tail = np.full((1500, 1100, 3), 255, dtype=np.uint8)
+            cv2.putText(blank_tail, "John 14:6", (430, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2, cv2.LINE_AA)
+            cv2.imwrite(str(blank_tail_path), blank_tail)
+
+            result = export_selected_pages(
+                page_paths=[score_path, blank_tail_path],
+                formats=["png"],
+                workspace=root / "export",
+                logger=lambda _msg: None,
+            )
+
+        self.assertEqual(len(result["images"]), 1)
+        self.assertEqual(len(result["page_diagnostics"]), 1)
+        self.assertEqual(len(result["dropped_pages"]), 1)
+        self.assertIn("mostly_blank_page", result["dropped_pages"][0]["diagnostic_codes"])
+
     def test_export_selected_pages_applies_document_header_only_to_pdf_and_keeps_diagnostics_on_score(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

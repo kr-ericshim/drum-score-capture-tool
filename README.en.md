@@ -1,102 +1,74 @@
 # Drum Sheet Capture User Guide
 
-[Back to README hub](./README.md)
+Capture score regions shown in a video and save them as PNG, JPG, or PDF. This app captures images; it does not transcribe audio into notation or export MusicXML/MIDI.
 
-## Overview
+[Download the latest release](https://github.com/kr-ericshim/drum-score-capture-tool/releases/latest) · [Project home](./README.md) · [한국어](./README.ko.md)
 
-Drum Sheet Capture is a local desktop app that lets you select the score area from a video and export the result as PNG, JPG, or PDF.
-
-Supported release targets:
-
-- Windows installer
-- macOS DMG
+This guide follows the current source tree. Unreleased features may differ from your installed version; check its release notes.
 
 ## Installation
 
-Download the file for your operating system from GitHub Releases.
+| Computer | Download |
+| --- | --- |
+| Windows x64 — Intel/AMD 64-bit | `.exe` installer |
+| macOS Apple Silicon — M-series | `arm64.dmg` |
 
-- Windows: `.exe` installer
-- macOS: `.dmg`
+Python, Node.js, and FFmpeg do not need to be installed separately. Intel Mac, native Windows ARM64, and Linux installers are not currently provided.
 
-The default public release is a standalone build.
-It is intended to run without requiring a separate Python installation because the frozen backend runtime is bundled into the app.
+### Windows
 
-The current public installers are unsigned. On Windows, SmartScreen may show an unknown publisher warning until Windows code signing is introduced.
+1. Open the release page above and download the `.exe` under **Assets**. The source code ZIP is not an installer.
+2. Run the installer and open the app.
+3. The current build is unsigned, so SmartScreen may show a warning. After confirming the file came from this repository, use **More info → Run anyway** if offered. Managed computers may enforce a different policy.
 
-## Launch
+### macOS
 
-1. Open the app.
-2. Click `Select Video` on the first screen.
-3. Choose either a local file or a YouTube URL.
+1. Download `arm64.dmg` from **Assets**.
+2. Open it and copy the app to `Applications`.
+3. Launch the copied app.
 
-On first launch, the UI uses the saved language if one exists.
-Otherwise it defaults to Korean for `ko*` system locales and English for everything else.
-
-## Basic Workflow
-
-1. Select a video
-2. Open a frame where the score is clearly visible
-3. Draw the ROI box around the score area
-4. Choose export formats
-5. Start processing
-6. Review the results and export the final selection
-
-## Output
-
-The app can export:
-
-- PNG
-- JPG
-- PDF
-
-You can review generated pages before exporting the final set.
-
-## Troubleshooting
-
-### macOS Gatekeeper blocks the app
-
-Because the current public macOS build is unsigned, Gatekeeper may block the DMG or the app on first launch.
-
-1. Open the DMG.
-2. Copy the app to `Applications`.
-3. Open Terminal and remove the quarantine attribute from the installed app:
+The current build is unsigned and not notarized, so Gatekeeper may block it. After confirming the download came from this repository, remove the installed app's quarantine attribute in Terminal and launch it again:
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/Drum Sheet Capture.app"
 ```
 
-If macOS blocks the DMG before it opens, run the same command against the downloaded DMG first:
+If the DMG itself is blocked, replace the example path with the actual downloaded file path and keep the quotes:
 
 ```bash
-xattr -dr com.apple.quarantine "/path/to/Drum.Sheet.Capture-<version>-arm64.dmg"
+xattr -dr com.apple.quarantine "/actual/download/path/downloaded-file.dmg"
 ```
 
-Then launch the app again.
+## Basic workflow
 
-### Backend connection failed
+1. **Import a video:** select a local file or prepare a public YouTube URL.
+2. **Select the score area:** load a clear frame and mark the capture region (ROI). Leave enough room for notes, lyrics, and repeat markings.
+3. **Run the capture:** confirm the time range and output formats, then start processing.
+4. **Review the results:** inspect pages and select the captures to keep. When needed, crop captures and rebuild the PDF from the selection.
+5. **Save the files:** check the PNG, JPG, or PDF output. Use **Save PDF as…** to save a PDF copy to your preferred location.
 
-- Restart the app.
-- Confirm that you are running the latest release build.
+A saved language preference takes priority. Otherwise, Korean system locales start in Korean and other locales start in English.
 
-### The preview frame is not usable
+## Input and storage
 
-- Move to a moment where the score is clearer and load the frame again.
-- Leave a small top and bottom margin instead of drawing the ROI too tightly.
+- Video processing runs locally. YouTube import requires an internet connection.
+- Sign-in, age, or region restrictions and YouTube service changes can prevent imports. You can also use a local video file.
+- The file picker accepts MP4, MKV, MOV, AVI, and WEBM. A supported extension does not guarantee that every codec or damaged file can be read.
+- Working videos, frames, and results can use much more disk space than the installer. Save important PDFs to a separate folder.
+- Installed builds store working data in a `jobs` directory under the app's user data folder. Development runs use `backend/jobs`.
 
-### Page size or clipping looks wrong
+## Troubleshooting
 
-- Adjust the ROI and run the process again.
-- Review suspicious pages before exporting the final set.
+| Symptom | What to check |
+| --- | --- |
+| Backend connection failed | Fully quit and reopen the app. Confirm the installer matches your OS architecture. If it persists, record the error and app version. |
+| YouTube import failed | Check that the link is public and inspect the preparation details. Try local video input as well. |
+| Blurry or incorrect preview | Seek to a frame where the score is still and clear, then reload it. |
+| Notes or page edges are clipped | Adjust the ROI in the original frame and capture again. Zoom into the PDF to check markings above and below the staff. |
+| Unexpected result pages | Check missing, duplicate, or suspicious captures in review, then export the final selection again. |
 
-## Release Build Notes
+Report unresolved issues in [Issues](https://github.com/kr-ericshim/drum-score-capture-tool/issues). Include app version, OS/CPU architecture, local or YouTube input, reproduction steps, and the error message. Remove private file paths and links from logs before sharing.
 
-The public GitHub release build uses the `dist:release` profile.
+## Development and builds
 
-This profile keeps:
-
-- standalone installation
-- frozen backend runtime bundled into the app
-- Windows and macOS release focus
-- aggressive removal of caches, tests, docs, and non-runtime assets
-
-`full` remains an internal fallback package and should not be treated as the default public release.
+For source setup and builds, see the [project README](./README.md#development). Maintainers should use the [release runbook](./docs/release/github-release-runbook.md).

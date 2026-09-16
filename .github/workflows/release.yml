@@ -4,9 +4,12 @@ on:
   push:
     tags:
       - "v*"
+    branches:
+      - "codex/release-*"
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -16,10 +19,11 @@ jobs:
         include:
           - os: windows-latest
             artifact_glob: dist/*.exe
-          - os: macos-14
+          - os: macos-15
             artifact_glob: dist/*.dmg
 
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
 
     env:
       DRUMSHEET_ENABLE_SIGNING: "false"
@@ -37,9 +41,12 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
           cache-dependency-path: desktop/package-lock.json
+
+      - name: Check release versions
+        run: node desktop/scripts/check-release-version.js
 
       - name: Install backend build dependencies
         shell: bash
@@ -52,37 +59,6 @@ jobs:
         env:
           PYTHONPATH: backend
         run: python -m unittest discover -s backend/tests -p 'test_*.py'
-
-      - name: Build frozen backend runtime
-        shell: bash
-        run: |
-          python backend/scripts/build_frozen_backend.py
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            test -f backend/runtime/drumsheet-backend/drumsheet-backend.exe
-          else
-            test -f backend/runtime/drumsheet-backend/drumsheet-backend
-          fi
-
-      - name: Smoke test frozen backend
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/drumsheet-jobs"
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            BACKEND_BIN="backend/runtime/drumsheet-backend/drumsheet-backend.exe"
-          else
-            BACKEND_BIN="backend/runtime/drumsheet-backend/drumsheet-backend"
-          fi
-          DRUMSHEET_PORT=8123 DRUMSHEET_JOBS_DIR="$RUNNER_TEMP/drumsheet-jobs" "$BACKEND_BIN" > "$RUNNER_TEMP/drumsheet-backend.log" 2>&1 &
-          BACKEND_PID=$!
-          trap 'kill $BACKEND_PID >/dev/null 2>&1 || true' EXIT
-          for _ in $(seq 1 18); do
-            sleep 5
-            if curl -sf http://127.0.0.1:8123/health >/dev/null; then
-              exit 0
-            fi
-          done
-          cat "$RUNNER_TEMP/drumsheet-backend.log"
-          exit 1
 
       - name: Install desktop dependencies
         working-directory: desktop
@@ -115,6 +91,13 @@ jobs:
         working-directory: desktop
         run: npm run smoke:packaged-runtime
 
+      - name: Save package size report
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-size-${{ matrix.os }}
+          path: dist/package-size-*.json
+          if-no-files-found: error
+
       - name: Verify release upload assets
         shell: bash
         run: |
@@ -125,7 +108,7 @@ jobs:
             echo "No release upload assets matched: ${{ matrix.artifact_glob }}" >&2
             exit 1
           fi
-          version="${GITHUB_REF_NAME#v}"
+          version="$(node -p "require('./desktop/package.json').version")"
           for artifact in "${artifacts[@]}"; do
             if [ ! -s "$artifact" ]; then
               echo "Release upload asset is missing or empty: $artifact" >&2
@@ -141,10 +124,48 @@ jobs:
             ls -lh "$artifact"
           done
 
-      - name: Upload release assets
+      - name: Save verified installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.os }}
+          path: ${{ matrix.artifact_glob }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download both verified platform installers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: installers-*
+          path: dist
+          merge-multiple: true
+
+      - name: Confirm both platforms and release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          windows=(dist/*.exe)
+          mac=(dist/*.dmg)
+          test "${#windows[@]}" -eq 1
+          test "${#mac[@]}" -eq 1
+          test -s "${windows[0]}"
+          test -s "${mac[0]}"
+          test -s "docs/release/release-notes-${GITHUB_REF_NAME}.md"
+
+      - name: Publish both installers together
         uses: softprops/action-gh-release@v2
         with:
+          body_path: docs/release/release-notes-${{ github.ref_name }}.md
+          fail_on_unmatched_files: true
           files: |
-            ${{ matrix.artifact_glob }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            dist/*.exe
+            dist/*.dmg

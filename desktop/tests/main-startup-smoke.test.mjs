@@ -122,6 +122,7 @@ test("main process startup contract loads renderer-v2 through the isolated prelo
     assert.equal(windows[0].options.webPreferences.contextIsolation, true);
     assert.equal(windows[0].options.webPreferences.nodeIntegration, false);
     assert.equal(ipcHandles.has("get-backend-state"), true);
+    assert.equal(ipcHandles.has("save-pdf-as"), true);
     assert.deepEqual(ipcSyncChannels, ["get-app-version", "get-session-token"]);
     assert.equal(spawnCalls.length, 1);
     assert.equal(spawnCalls[0].options.env.DRUMSHEET_SESSION_TOKEN.length, 48);

@@ -43,7 +43,7 @@ export function buildRoiScreenModel(state) {
   const previewCandidates = Array.isArray(state.roi.previewCandidates) ? state.roi.previewCandidates : [];
   const draftReady = isRectValid(state.roi.draftRect);
   const appliedReady = isRectValid(state.roi.appliedRect);
-  const hasPendingDraft = draftReady && (!appliedReady || rectKey(state.roi.draftRect) !== rectKey(state.roi.appliedRect));
+  const hasPendingDraft = draftReady && (!appliedReady || rectKey(state.roi.draftRect) !== rectKey(state.roi.appliedRect) || Boolean(state.roi.autoFit) !== Boolean(state.roi.appliedAutoFit));
   const durationSec = Number(state.source.metadata?.durationSec || 0);
   const currentTime = Number.isFinite(state.roi.frameTime) ? state.roi.frameTime : 0;
 
@@ -129,7 +129,10 @@ export function renderRoiScreen(state) {
           <input id="roiInput" type="hidden" value="${escapeHtml(state.roi.appliedRect ? JSON.stringify(state.roi.appliedRect) : "")}" />
         </div>
         <div class="roi-stage-footer" data-stitch-region="roi-actions">
-          <p class="roi-stage-helper roi-stage-helper-${escapeHtml(model.statusTone)}" aria-live="polite">${escapeHtml(model.statusText)}</p>
+          <div class="roi-capture-options">
+            <label class="roi-auto-fit-option"><input type="checkbox" data-action="toggle-roi-auto-fit" ${state.roi.autoFit ? "checked" : ""} /> ${escapeHtml(t("roi.autoFit", { locale: model.locale }))}</label>
+            <p class="roi-stage-helper roi-stage-helper-${escapeHtml(model.statusTone)}" aria-live="polite">${state.roi.autoFit ? escapeHtml(t("roi.autoFitHelp", { locale: model.locale })) : escapeHtml(model.statusText)}</p>
+          </div>
           <div class="roi-stage-actions">
             ${model.showApplyAction ? `<button class="button button-primary" data-action="apply-roi" ${model.applyDisabled ? "disabled" : ""}>${escapeHtml(t("roi.apply", { locale: model.locale }))}</button>` : ""}
           </div>

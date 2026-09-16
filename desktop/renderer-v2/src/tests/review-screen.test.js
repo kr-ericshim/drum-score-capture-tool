@@ -53,7 +53,7 @@ test("review apply action stays disabled while review export is running", () => 
   assert.match(markup, /data-action="apply-review"[^>]*disabled/);
 });
 
-test("review screen removes the apply action after review export has already been applied", () => {
+test("review screen keeps a resave action after review export", () => {
   const state = createReviewState();
   state.exportConfig.jobId = "job-1";
   state.review.status = "applied";
@@ -62,19 +62,19 @@ test("review screen removes the apply action after review export has already bee
 
   const markup = renderReviewScreen(state);
 
-  assert.doesNotMatch(markup, /data-action="apply-review"/);
-  assert.match(markup, /선택 반영이 끝났습니다|Selection applied/);
-  assert.doesNotMatch(markup, /Page curation is done|결과 폴더와 PDF를 엽니다|Open the output folder and PDF|PDF/);
+  assert.match(markup, /data-action="apply-review"/);
+  assert.match(markup, /다시 수정할 수 있습니다|continue editing/);
+  assert.match(markup, /data-action="open-output-pdf"[^>]*>저장된 PDF 열기/);
 });
 
-test("review screen locks selection controls after review export has already been applied", () => {
+test("review screen keeps selection editable after review export", () => {
   const state = createReviewState();
   state.exportConfig.jobId = "job-1";
   state.review.status = "applied";
 
   const markup = renderReviewScreen(state);
 
-  assert.match(markup, /data-action="toggle-review-page"[^>]*disabled/);
+  assert.doesNotMatch(markup, /data-action="toggle-review-page"[^>]*disabled/);
 });
 
 test("review selection controls include page-specific accessible labels", () => {
@@ -121,7 +121,7 @@ test("review screen removes decorative review controls outside the real flow", (
   assert.doesNotMatch(markup, /Add Frame|RECROP|ZOOM/);
   assert.doesNotMatch(markup, /mode-switch/);
   assert.doesNotMatch(markup, /review-card-tag/);
-  assert.doesNotMatch(markup, /결과 폴더 열기/);
+  assert.match(markup, /data-action="open-output-dir"/);
   assert.match(markup, /data-action="apply-review"/);
 });
 
@@ -132,9 +132,9 @@ test("review screen uses capture-selection language instead of page-curation wor
 
   const markup = renderReviewScreen(state);
 
-  assert.match(markup, /Choose Captures/);
+  assert.match(markup, /Review &amp; save captures/);
   assert.match(markup, /Include/);
-  assert.match(markup, /Regenerate from selected captures/);
+  assert.match(markup, /Rebuild PDF from selected captures/);
   assert.doesNotMatch(markup, /Candidate/);
   assert.doesNotMatch(markup, /DASHBOARD|WORKBENCH|INSPECTION VIEW/i);
   assert.doesNotMatch(markup, /Review captured pages|Keep selected pages|Page curation/i);
@@ -241,6 +241,20 @@ test("review screen highlights suspicious page diagnostics prominently", () => {
   assert.match(markup, /페이지 하단에 내용이 너무 붙어 있습니다/);
 });
 
+test("review screen labels auto-exclude candidates separately from review warnings", () => {
+  const state = createReviewState();
+  state.exportConfig.jobId = "job-1";
+  state.review.pages[0].suspicious = true;
+  state.review.pages[0].autoExcludeCandidate = true;
+  state.review.pages[0].warningReason = "악보가 아닌 영상 화면이 함께 들어간 것으로 보입니다.";
+
+  const markup = renderReviewScreen(state);
+
+  assert.match(markup, /제외 후보/);
+  assert.match(markup, /확인 필요/);
+  assert.match(markup, /악보가 아닌 영상 화면이 함께 들어간 것으로 보입니다/);
+});
+
 test("review apply action stays disabled when export formats are empty", () => {
   const state = createReviewState();
   state.exportConfig.jobId = "job-1";
@@ -250,4 +264,57 @@ test("review apply action stays disabled when export formats are empty", () => {
   const markup = renderReviewScreen(state);
 
   assert.match(markup, /data-action="apply-review"[^>]*disabled/);
+});
+
+
+test("review warning details belong to the viewed capture instead of every thumbnail", () => {
+  const state = createReviewState();
+  state.review.pages[0].suspicious = true;
+  state.review.pages[0].warningReason = "Current capture warning";
+  state.review.pages.push({ id: "2", title: "Page 2", previewPath: "/tmp/two.png", suspicious: true, warningReason: "Other capture warning" });
+  const markup = renderReviewScreen(state);
+  assert.match(markup, /review-inspector[\s\S]*Current capture warning/);
+  assert.doesNotMatch(markup, /Other capture warning/);
+  assert.match(markup, /data-action="review-previous"[^>]*disabled/);
+});
+
+test("an empty review filter explains how to return to the full list", () => {
+  const state = createReviewState();
+  state.ui.locale = "en";
+  state.review.filter = "suspicious";
+  const markup = renderReviewScreen(state);
+  assert.match(markup, /No captures need attention/);
+  assert.match(markup, /Choose All to see every capture/);
+  assert.doesNotMatch(markup, /class="review-full-image/);
+  assert.match(markup, /data-action="review-next"[^>]*disabled/);
+});
+
+test("saved PDF and folder actions are visible without opening details and honor file availability", () => {
+  const state = createReviewState();
+  let markup = renderReviewScreen(state);
+  assert.match(markup, /data-action="open-output-pdf"[^>]*disabled/);
+  assert.match(markup, /data-action="open-output-dir"[^>]*disabled/);
+  state.review.pdfPath = "/tmp/export/score.pdf";
+  state.review.outputDir = "/tmp/export";
+  markup = renderReviewScreen(state);
+  assert.doesNotMatch(markup, /data-action="open-output-pdf"[^>]*disabled/);
+  assert.doesNotMatch(markup, /data-action="open-output-dir"[^>]*disabled/);
+  assert.doesNotMatch(markup, /<details/);
+  assert.match(markup, /data-action="save-output-pdf-as"/);
+  assert.doesNotMatch(markup, /data-action="save-output-pdf-as"[^>]*disabled/);
+  state.review.status = "running";
+  markup = renderReviewScreen(state);
+  assert.match(markup, /data-action="save-output-pdf-as"[^>]*disabled/);
+  assert.match(markup, /data-action="open-output-pdf"[^>]*disabled/);
+  assert.match(markup, /data-action="open-output-dir"[^>]*disabled/);
+});
+
+test("save copy explains the selected format and that selection changes require saving", () => {
+  const state = createReviewState();
+  state.exportConfig.formats = ["png"];
+  assert.match(renderReviewScreen(state), /선택한 캡처로 이미지 다시 만들기/);
+  state.exportConfig.formats = ["pdf"];
+  const markup = renderReviewScreen(state);
+  assert.match(markup, /선택한 캡처로 PDF 다시 만들기/);
+  assert.match(markup, /열기·다른 이름으로 저장은 마지막 생성 파일을 사용합니다/);
 });

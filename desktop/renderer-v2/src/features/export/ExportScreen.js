@@ -151,6 +151,17 @@ export function buildExportScreenModel(state) {
         ? t("export.runPdf", { locale })
         : t("export.runDirect", { locale }),
     statusMessage,
+    showProgressDetails: running || progress > 0,
+    showStatusNote:
+      !running
+      && Boolean(String(statusMessage || "").trim())
+      && String(statusMessage || "").trim() !== t("export.ready", { locale })
+      && !(progress > 0 && String(statusMessage || "").trim() === formatExportProgressStatus({
+        currentStep: state.exportConfig.currentStep,
+        message: statusMessage,
+        locale,
+        runStatus: state.exportConfig.runStatus,
+      })),
     progressStatus: formatExportProgressStatus({
       currentStep: state.exportConfig.currentStep,
       message: statusMessage,
@@ -242,6 +253,8 @@ export function renderExportScreen(state) {
           <p>${t("export.subtitle", { locale: model.locale })}</p>
         </div>
         <div class="screen-inline-actions">
+          ${state.exportConfig.connectionState && state.exportConfig.connectionState !== "connected" ? `<button class="button button-secondary" data-action="reconnect-job">${t("export.reconnect", { locale: model.locale })}</button>` : ""}
+          ${state.exportConfig.runStatus === "running" ? `<button class="button button-secondary" data-action="cancel-job">${t("export.cancel", { locale: model.locale })}</button>` : ""}
           <button class="button button-primary" data-action="run-export" ${model.canRun ? "" : "disabled"}>${model.primaryActionLabel}</button>
         </div>
       </header>
@@ -300,27 +313,27 @@ export function renderExportScreen(state) {
             <h2>${t("export.previewTitle", { locale: model.locale })}</h2>
             <p>${safePreviewCaption}</p>
           </div>
-          <div class="export-progress-summary" role="status" aria-live="polite">
-            <span>${safeProgressStatus}</span>
-            <strong>${safeProgressLabel}</strong>
-          </div>
-          <div class="export-progress-strip" role="progressbar" aria-label="${t("export.progressAria", { locale: model.locale })}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${model.progress}">
-            <span style="width:${model.progress}%"></span>
-          </div>
+          ${model.showProgressDetails ? `
+            <div class="export-progress-summary" role="status" aria-live="polite">
+              <span>${safeProgressStatus}</span>
+              <strong>${safeProgressLabel}</strong>
+            </div>
+            <div class="export-progress-strip" role="progressbar" aria-label="${t("export.progressAria", { locale: model.locale })}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${model.progress}">
+              <span style="width:${model.progress}%"></span>
+            </div>
+          ` : ""}
           <div class="export-preview-stage">
             ${model.previewSource
               ? model.hasCropPreview
                 ? `<div class="export-preview-figure export-preview-crop" style="--crop-x:${model.cropBounds.x}; --crop-y:${model.cropBounds.y}; --crop-w:${model.cropBounds.width}; --crop-h:${model.cropBounds.height}; --image-w:${model.sourceWidth}; --image-h:${model.sourceHeight};">
                     <img src="${safePreviewSource}" alt="${safeFileNameAttr} score region preview" loading="lazy" />
-                    <span class="export-preview-badge">${model.roiSummary}</span>
                   </div>`
                 : `<div class="export-preview-figure">
                   <img src="${safePreviewSource}" alt="${safeFileNameAttr} representative frame" loading="lazy" />
-                  <span class="export-preview-badge">${model.roiSummary}</span>
                 </div>`
               : `<div class="export-preview-empty"><p>${t("export.previewEmpty", { locale: model.locale })}</p></div>`}
           </div>
-          <p class="export-preview-note">${safeStatusMessage}</p>
+          ${model.showStatusNote ? `<p class="export-preview-note">${safeStatusMessage}</p>` : ""}
         </section>
         ${model.metadata.isOpen ? `
           <div class="export-metadata-overlay">

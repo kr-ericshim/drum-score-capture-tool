@@ -143,6 +143,7 @@ export function canRunExport(state) {
 }
 
 export function hasDirtyRoiDraft(state) {
+  if (Boolean(state?.roi?.autoFit) !== Boolean(state?.roi?.appliedAutoFit)) return true;
   if (!isRectValid(state?.roi?.draftRect)) {
     return false;
   }

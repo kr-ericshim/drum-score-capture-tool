@@ -76,7 +76,7 @@ test("roi top bar collapses to source and step only", () => {
   });
 
   assert.match(markup, /song\.mp4/);
-  assert.match(markup, /영역 지정/);
+  assert.match(markup, /악보 영역/);
   assert.match(markup, /class="topbar-roi"/);
   assert.match(markup, /class="topbar-balance"/);
   assert.match(markup, /class="topbar-tools topbar-tools-compact"/);
@@ -120,7 +120,8 @@ test("export screen keeps the simplified config stack and roi preview workbench"
   assert.match(markup, /data-stitch-region="export-config"/);
   assert.match(markup, /data-stitch-region="export-preview"/);
   assert.doesNotMatch(markup, /data-stitch-region="export-metrics"/);
-  assert.match(markup, /class="export-preview-note"/);
+  assert.doesNotMatch(markup, /role="progressbar"/);
+  assert.doesNotMatch(markup, /class="export-preview-note"[^>]*>\s*(Ready to run|실행 준비 완료)/);
 });
 
 test("review screen uses a grid-first review workspace instead of preview-first strip layout", () => {
@@ -144,7 +145,7 @@ test("review screen uses a grid-first review workspace instead of preview-first 
   assert.doesNotMatch(markup, /큰 미리보기/);
 });
 
-test("review process rail keeps export settings and finalize actions in the left column", () => {
+test("review process rail keeps location details separate from visible file actions", () => {
   const state = createInitialSessionState();
   state.ui.activeStep = "review";
   state.exportConfig.jobId = "job-1";
@@ -153,8 +154,8 @@ test("review process rail keeps export settings and finalize actions in the left
 
   const markup = renderProcessRail(state, getProcessRailItems(state));
 
-  assert.match(markup, /Saved output|현재 출력 결과/);
-  assert.match(markup, /Open PDF/);
+  assert.match(markup, /Save location|저장 위치/);
+  assert.doesNotMatch(markup, /data-action="open-output-pdf"/);
   assert.match(markup, /Copy path|경로 복사/);
 });
 
@@ -186,7 +187,7 @@ test("shell surfaces reject generic workbench vocabulary and keep task-first lab
   assert.match(topBarMarkup, /Processor ready/);
   assert.match(railMarkup, />Steps</);
   assert.match(railMarkup, />Ready</);
-  assert.match(laneMarkup, />Selected result</);
+  assert.equal(laneMarkup, "");
 
   const combinedMarkup = `${topBarMarkup} ${railMarkup} ${laneMarkup}`;
   assert.doesNotMatch(combinedMarkup, /Workflow|System status|Inspection view|ENGINE_READY|WORKBENCH STATUS|PIPELINE/);

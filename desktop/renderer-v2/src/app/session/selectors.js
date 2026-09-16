@@ -509,6 +509,7 @@ export function summarizeSelection(allIds = [], selectedIds = new Set()) {
 
 export function deriveCapturePages(result = {}, locale = "en") {
   const pageDiagnostics = Array.isArray(result.page_diagnostics) ? result.page_diagnostics : [];
+  const droppedPages = Array.isArray(result.dropped_pages) ? result.dropped_pages : [];
   const previewImages = Array.isArray(result.preview_images) ? result.preview_images : [];
   const reviewCandidates = Array.isArray(result.review_candidates) ? result.review_candidates : [];
   const finalImages = Array.isArray(result.images) ? result.images : [];
@@ -517,7 +518,9 @@ export function deriveCapturePages(result = {}, locale = "en") {
   let capturePaths = finalImages;
   let previewKind = "output";
   let selectionMode = "pages";
-  if (reviewSelectionMode === "pages" && finalImages.length) {
+  if (Array.isArray(result.original_images) && result.original_images.length) {
+    capturePaths = result.original_images;
+  } else if (reviewSelectionMode === "pages" && finalImages.length) {
     capturePaths = finalImages;
     previewKind = "output";
     selectionMode = "pages";
@@ -536,28 +539,49 @@ export function deriveCapturePages(result = {}, locale = "en") {
   } else if (previewImages.length) {
     capturePaths = previewImages;
   }
-  const alignedDiagnostics = pageDiagnostics.length === capturePaths.length ? pageDiagnostics : [];
+  let alignedDiagnostics = pageDiagnostics.length === capturePaths.length ? pageDiagnostics : [];
+  if (!alignedDiagnostics.length && droppedPages.length > 0) {
+    const combinedDiagnostics = [...pageDiagnostics, ...droppedPages].sort((a, b) => {
+      const aIndex = Number(a?.page_index || a?.pageIndex || 0);
+      const bIndex = Number(b?.page_index || b?.pageIndex || 0);
+      return aIndex - bIndex;
+    });
+    if (combinedDiagnostics.length === capturePaths.length) {
+      alignedDiagnostics = combinedDiagnostics;
+    }
+  }
 
   return capturePaths.map((capturePath, index) => {
-    const diagnostic = alignedDiagnostics[index] || {};
+    const diagnostic = result.capture_diagnostics?.[capturePath] || alignedDiagnostics[index] || {};
+    const diagnosticCodes = Array.isArray(diagnostic?.diagnostic_codes)
+      ? diagnostic.diagnostic_codes.map((value) => String(value || "").trim()).filter(Boolean)
+      : [];
     const warningReasons = Array.isArray(diagnostic?.warning_reasons)
       ? diagnostic.warning_reasons.map((value) => String(value || "").trim()).filter(Boolean)
       : [];
     const warningReason = warningReasons[0]
       || String(diagnostic?.warning_reason || diagnostic?.warningReason || "").trim();
+    const recommendedAction = String(diagnostic?.recommended_action || diagnostic?.recommendedAction || "").trim();
+    const autoExcludeCandidate = recommendedAction === "exclude"
+      || diagnosticCodes.includes("mostly_blank_page")
+      || diagnosticCodes.includes("video_frame_content");
     const outputPreviewPath = previewImages[index] || finalImages[index] || capturePath;
     return {
       id: `${index + 1}`,
       index: index + 1,
       title: t("selector.pageTitle", { locale, replacements: { index: index + 1 } }),
       capturePath,
-      previewPath: normalizeAssetPath(capturePath),
+      previewPath: normalizeAssetPath(result.capture_edits?.[capturePath]?.image_path || capturePath),
+      cropRect: result.capture_edits?.[capturePath]?.roi || null,
       outputPreviewPath: normalizeAssetPath(outputPreviewPath),
       previewKind,
       selectionMode,
-      exportLocked: hasReviewExport,
-      suspicious: alignedDiagnostics.length > 0 ? Boolean(diagnostic?.suspicious) : false,
+      exportLocked: false,
+      suspicious: Boolean(diagnostic?.suspicious),
       warningReason,
+      diagnosticCodes,
+      recommendedAction,
+      autoExcludeCandidate,
       diagnostics: diagnostic,
     };
   });

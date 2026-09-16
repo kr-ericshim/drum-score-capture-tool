@@ -197,6 +197,73 @@ test("deriveCapturePages prefers review candidates and keeps diagnostics aligned
   assert.equal(pages[1].warningReason, "페이지 하단이 잘릴 수 있습니다.");
 });
 
+test("deriveCapturePages marks backend exclude diagnostics as auto-exclude candidates", () => {
+  const pages = deriveCapturePages({
+    review_candidates: ["/tmp/c1.png", "/tmp/c2.png"],
+    images: ["/tmp/page1.png", "/tmp/page2.png"],
+    page_diagnostics: [
+      { page_index: 1, suspicious: false, recommended_action: "keep" },
+      {
+        page_index: 2,
+        suspicious: true,
+        diagnostic_codes: ["video_frame_content"],
+        recommended_action: "exclude",
+        warning_reasons: ["악보가 아닌 영상 화면이 함께 들어간 것으로 보입니다."],
+      },
+    ],
+  });
+
+  assert.equal(pages[0].autoExcludeCandidate, false);
+  assert.equal(pages[1].autoExcludeCandidate, true);
+  assert.deepEqual(pages[1].diagnosticCodes, ["video_frame_content"]);
+  assert.equal(pages[1].recommendedAction, "exclude");
+  assert.equal(pages[1].warningReason, "악보가 아닌 영상 화면이 함께 들어간 것으로 보입니다.");
+});
+
+test("deriveCapturePages aligns dropped trailing page diagnostics with review candidates", () => {
+  const pages = deriveCapturePages({
+    review_candidates: ["/tmp/c1.png", "/tmp/c2.png"],
+    images: ["/tmp/page1.png"],
+    page_diagnostics: [
+      { page_index: 1, suspicious: false, recommended_action: "keep" },
+    ],
+    dropped_pages: [
+      {
+        page_index: 2,
+        suspicious: true,
+        diagnostic_codes: ["mostly_blank_page"],
+        recommended_action: "exclude",
+        warning_reasons: ["페이지에 악보 내용이 거의 없어 출력에서 제외하는 편이 안전합니다."],
+      },
+    ],
+  });
+
+  assert.equal(pages.length, 2);
+  assert.equal(pages[0].autoExcludeCandidate, false);
+  assert.equal(pages[1].autoExcludeCandidate, true);
+  assert.deepEqual(pages[1].diagnosticCodes, ["mostly_blank_page"]);
+  assert.equal(pages[1].warningReason, "페이지에 악보 내용이 거의 없어 출력에서 제외하는 편이 안전합니다.");
+});
+
+test("deriveCapturePages keeps review-only sparse diagnostics selected by default", () => {
+  const pages = deriveCapturePages({
+    review_candidates: ["/tmp/c1.png"],
+    images: ["/tmp/page1.png"],
+    page_diagnostics: [
+      {
+        page_index: 1,
+        suspicious: true,
+        diagnostic_codes: ["sparse_score_page"],
+        recommended_action: "review",
+      },
+    ],
+  });
+
+  assert.equal(pages[0].autoExcludeCandidate, false);
+  assert.deepEqual(pages[0].diagnosticCodes, ["sparse_score_page"]);
+  assert.equal(pages[0].recommendedAction, "review");
+});
+
 test("deriveCapturePages falls back to preview images for pdf-only review output", () => {
   const pages = deriveCapturePages({
     preview_images: ["/tmp/preview-1.png", "/tmp/preview-2.png"],

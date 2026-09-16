@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 
 from app.pipeline.sheet_finalize import (
+    _balance_short_edge_pages,
     _frame_pages_as_printed_set,
     _refine_cut_boundary,
     _resolve_overlapping_ranges,
@@ -33,6 +34,35 @@ class TestSheetFinalizePagination(unittest.TestCase):
         self.assertEqual(len(framed), 2)
         self.assertEqual(framed[0].shape, framed[1].shape)
         self.assertGreaterEqual(int(framed[0].shape[0]), int(framed[0].shape[1]))
+
+    def test_frame_pages_as_printed_set_keeps_bottom_margin_restrained(self):
+        page = np.zeros((1000, 700, 3), dtype=np.uint8)
+
+        framed = _frame_pages_as_printed_set([page], page_ratio=1.0 / 1.4142)
+
+        gray = cv2.cvtColor(framed[0], cv2.COLOR_BGR2GRAY)
+        ink_rows = np.where(gray < 10)[0]
+        self.assertGreater(ink_rows.size, 0)
+        top_margin = int(ink_rows[0])
+        bottom_margin = int(gray.shape[0] - 1 - ink_rows[-1])
+        self.assertLessEqual(bottom_margin, max(24, int(top_margin * 1.8)))
+
+    def test_balance_short_edge_pages_merges_underfilled_leading_page(self):
+        head = np.full((320, 1000, 3), 255, dtype=np.uint8)
+        body = np.full((1100, 1000, 3), 255, dtype=np.uint8)
+        for offset in [0, 10, 20, 30, 40]:
+            cv2.line(head, (60, 90 + offset), (940, 90 + offset), (0, 0, 0), 2)
+            cv2.line(body, (60, 160 + offset), (940, 160 + offset), (0, 0, 0), 2)
+
+        pages = _balance_short_edge_pages(
+            [head, body],
+            target_h=1800,
+            page_fill_mode="performance",
+            page_ratio=1.0 / 1.4142,
+        )
+
+        self.assertEqual(len(pages), 1)
+        self.assertEqual(int(pages[0].shape[0]), 1420)
 
     def test_resolve_overlapping_ranges_removes_overlap(self):
         row_density = np.full(7444, 0.02, dtype=np.float32)

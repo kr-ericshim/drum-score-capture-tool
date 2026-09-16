@@ -44,7 +44,7 @@ async function readJson(response, fallbackMessage) {
     return response.json();
   }
   const error = await response.json().catch(() => ({ detail: fallbackMessage }));
-  throw new Error(String(error?.detail || fallbackMessage));
+  throw Object.assign(new Error(String(error?.detail || fallbackMessage)), { status: response.status });
 }
 
 async function requestApiJson(pathname, options = {}, fallbackMessage) {
@@ -57,7 +57,7 @@ async function requestApiJson(pathname, options = {}, fallbackMessage) {
     if (result?.ok) {
       return result.data;
     }
-    throw new Error(String(result?.data?.detail || fallbackMessage));
+    throw Object.assign(new Error(String(result?.data?.detail || fallbackMessage)), { status: result?.status });
   }
 
   const response = await fetch(apiPath(pathname), {
@@ -211,6 +211,17 @@ export async function createJob(payload) {
 
 export async function getJob(jobId) {
   return requestApiJson(`/jobs/${jobId}`, {}, "작업 조회에 실패했습니다.");
+}
+
+export async function cancelJob(jobId) {
+  return requestApiJson(`/jobs/${jobId}/cancel`, { method: "POST" }, "작업 취소에 실패했습니다.");
+}
+
+export async function cropCapture(jobId, capturePath, roi = []) {
+  return requestApiJson(`/jobs/${jobId}/capture-crop`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ capture_path: capturePath, roi }),
+  }, "캡처 자르기에 실패했습니다.");
 }
 
 export async function reviewExport(jobId, { keepCaptures = [], keepImages = [], formats = [] } = {}) {

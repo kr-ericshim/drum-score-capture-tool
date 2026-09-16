@@ -109,5 +109,5 @@ export function renderContextLane(state) {
   if (state.ui.activeStep === "roi") {
     return "";
   }
-  return renderReviewLane(state);
+  return "";
 }
