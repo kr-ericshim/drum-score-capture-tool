@@ -1,7 +1,9 @@
 fastapi>=0.110.0
 uvicorn[standard]>=0.23.0
 numpy>=1.26.0
-opencv-python-headless>=4.8.0
+# OpenCV 5 changes Python output array shapes used by score analysis.
+# Keep release builds on the version validated by both platform pipelines.
+opencv-python-headless==4.13.0.92
 Pillow>=10.0.0
 yt-dlp[default]==2026.8.19
 pydantic>=2.5.0
