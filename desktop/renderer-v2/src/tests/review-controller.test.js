@@ -83,3 +83,21 @@ test("review filtering keeps navigation and keyboard selection on a visible capt
   await controller.handleAction("review-filter", "suspicious");
   assert.equal(state.review.focusedPageId, "");
 });
+
+
+test("viewer inclusion action resolves the filtered capture and respects rebuilding", async () => {
+  let state = createInitialSessionState();
+  state.exportConfig.jobId = "viewer-toggle";
+  state.review.pages = [{ id: "1" }, { id: "2", suspicious: true }];
+  state.review.filter = "suspicious";
+  state.review.focusedPageId = "1";
+  state.review.selectedPageIds = ["1", "2"];
+  const controller = createReviewController({ getState: () => state, setState: f => { state = f(structuredClone(state)); }, root: {}, api: {} });
+  await controller.handleAction("review-toggle-focused");
+  assert.deepEqual(state.review.selectedPageIds, ["1"]);
+  await controller.handleAction("review-undo");
+  assert.deepEqual(state.review.selectedPageIds, ["1", "2"]);
+  state.review.status = "running";
+  await controller.handleAction("review-toggle-focused");
+  assert.deepEqual(state.review.selectedPageIds, ["1", "2"]);
+});

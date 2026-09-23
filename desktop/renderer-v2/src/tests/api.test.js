@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createPreviewSourceJob, getPreviewSourceJob, preparePreviewSource, requestPreviewFrame } from "../lib/api.js";
+import { createPreviewSourceJob, getPreviewSourceJob, preparePreviewSource, requestAutoRoi, requestPreviewFrame } from "../lib/api.js";
 
 test("requestPreviewFrame loads protected preview assets without putting the token in the image url", async () => {
   const previousWindow = globalThis.window;
@@ -75,6 +75,52 @@ test("requestPreviewFrame loads protected preview assets without putting the tok
     });
     globalThis.fetch = previousFetch;
     globalThis.URL.createObjectURL = previousCreateObjectUrl;
+  }
+});
+
+test("requestAutoRoi posts the prepared file and maps a conservative suggestion", async () => {
+  const previousWindow = globalThis.window;
+  const calls = [];
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      drumSheetAPI: {
+        async requestJson(pathname, options) {
+          calls.push({ pathname, options });
+          return {
+            ok: true,
+            status: 200,
+            data: {
+              status: "suggested",
+              roi: [[10, 20], [310, 20], [310, 160], [10, 160]],
+              evidence_level: "high",
+              layout_hint: "bottom_bar",
+              is_dark_mode: false,
+              diagnostics: { supporting_frames: 3 },
+            },
+          };
+        },
+      },
+    },
+  });
+
+  try {
+    const result = await requestAutoRoi({ filePath: "/tmp/source.mp4", startSec: 12 });
+
+    assert.equal(result.status, "suggested");
+    assert.equal(result.evidenceLevel, "high");
+    assert.deepEqual(result.roi, [[10, 20], [310, 20], [310, 160], [10, 160]]);
+    assert.deepEqual(JSON.parse(calls[0].options.body), {
+      source_type: "file",
+      file_path: "/tmp/source.mp4",
+      youtube_url: null,
+      start_sec: 12,
+    });
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: previousWindow,
+    });
   }
 });
 

@@ -37,6 +37,8 @@ from app.schemas import (
     JobStatusResponse,
     LocalMediaRegistryItem,
     LocalMediaRegistryResponse,
+    PreviewAutoRoiRequest,
+    PreviewAutoRoiResponse,
     PreviewFrameRequest,
     PreviewFrameResponse,
     PreviewRoiHealthRequest,
@@ -57,6 +59,7 @@ from app.pipeline.extract import (
     prepare_preview_source,
 )
 from app.pipeline.layout_profiles import infer_layout_hint_from_roi
+from app.pipeline.auto_roi_detector import estimate_auto_roi_for_source
 from app.pipeline.roi_health import analyze_roi_health_for_source
 try:
     from app.pipeline.roi_health import should_block_roi_capture
@@ -86,7 +89,7 @@ SUPPORTED_YOUTUBE_HOSTS = {
 }
 
 
-app = FastAPI(title="Drum Sheet Capture API", version="0.1.31")
+app = FastAPI(title="Drum Sheet Capture API", version="0.1.32")
 
 app.add_middleware(
     CORSMiddleware,
@@ -599,6 +602,61 @@ def preview_frame(payload: PreviewFrameRequest) -> PreviewFrameResponse:
     except Exception as exc:
         print(f"[preview/frame] failed for {payload.source_type}: {exc}", flush=True)
         raise HTTPException(status_code=500, detail=f"preview frame extraction failed: {exc}")
+
+
+@app.post("/preview/auto-roi", response_model=PreviewAutoRoiResponse)
+def preview_auto_roi(payload: PreviewAutoRoiRequest) -> PreviewAutoRoiResponse:
+    preview_workspace: Path | None = None
+    try:
+        normalized_file_path, normalized_youtube_url = _normalize_source_inputs(
+            source_type=payload.source_type,
+            file_path=payload.file_path,
+            youtube_url=payload.youtube_url,
+        )
+        preview_root = jobs_root / "_preview_auto_roi"
+        _prune_preview_workspaces(preview_root, keep=0)
+        preview_workspace = preview_root / str(uuid.uuid4())
+        preview_workspace.mkdir(parents=True, exist_ok=True)
+
+        resolved_source_type = payload.source_type
+        resolved_file_path = normalized_file_path
+        resolved_youtube_url = normalized_youtube_url
+        if payload.source_type == "youtube" and normalized_youtube_url:
+            prepared = _coerce_prepared_youtube_source(
+                _get_or_prepare_cached_youtube_video(normalized_youtube_url, logger=lambda _: None),
+                fallback_url=normalized_youtube_url,
+            )
+            resolved_source_type = "file"
+            resolved_file_path = str(prepared["video_path"])
+            resolved_youtube_url = None
+
+        result = estimate_auto_roi_for_source(
+            source_type=resolved_source_type,
+            file_path=resolved_file_path,
+            youtube_url=resolved_youtube_url,
+            start_sec=payload.start_sec,
+            workspace=preview_workspace,
+            logger=lambda _: None,
+        )
+        roi = result.get("roi")
+        layout_hint = infer_layout_hint_from_roi(roi, source_type=payload.source_type) if roi else None
+        return PreviewAutoRoiResponse(
+            status=str(result.get("status") or "not_found"),
+            roi=roi,
+            evidence_level=str(result.get("evidence_level") or "low"),
+            layout_hint=layout_hint,
+            is_dark_mode=bool(result.get("is_dark_mode")),
+            diagnostics=dict(result.get("diagnostics") or {}),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"preview auto ROI failed: {exc}")
+    finally:
+        if preview_workspace is not None:
+            shutil.rmtree(preview_workspace, ignore_errors=True)
 
 
 @app.post("/preview/roi-health", response_model=PreviewRoiHealthResponse)

@@ -318,3 +318,20 @@ test("save copy explains the selected format and that selection changes require 
   assert.match(markup, /선택한 캡처로 PDF 다시 만들기/);
   assert.match(markup, /열기·다른 이름으로 저장은 마지막 생성 파일을 사용합니다/);
 });
+
+
+test("review keeps excluded notation visible and names the saved PDF before changes are rebuilt", () => {
+  const state = createReviewState();
+  state.ui.locale = "en";
+  state.review.selectedPageIds = [];
+  state.review.pdfPath = "/tmp/saved.pdf";
+  const markup = renderReviewScreen(state);
+  assert.match(markup, /review-card is-excluded is-focused/);
+  assert.match(markup, /review-inspector is-excluded/);
+  assert.match(markup, /data-action="review-toggle-focused"[^>]*>Include capture/);
+  assert.match(markup, /data-action="open-output-pdf"[^>]*>Open previous PDF/);
+  assert.match(markup, /data-action="apply-review"[^>]*disabled/);
+  assert.doesNotMatch(markup, /excluded-overlay|animate-pulse/);
+  state.review.status = "applied";
+  assert.match(renderReviewScreen(state), /class="button button-primary" data-action="open-output-pdf"/);
+});

@@ -553,6 +553,94 @@ test("simplified ROI step remains usable from frame load through apply-roi", asy
   assert.equal(state.exportConfig.layoutHint, "full_scroll");
 });
 
+test("preview loading places an automatic ROI suggestion in the editable draft only", async () => {
+  installBrowserStubs();
+  const root = createDynamicStageRoot();
+  const suggested = [[20, 100], [300, 100], [300, 175], [20, 175]];
+  const app = createApp(root, {
+    exposeTestApi: true,
+    api: {
+      requestPreviewFrame: async () => ({
+        imagePath: "/tmp/preview.png",
+        sourcePath: "/tmp/preview.png",
+        diagnostics: [],
+      }),
+      requestAutoRoi: async () => ({
+        status: "suggested",
+        roi: suggested,
+        evidenceLevel: "high",
+        diagnostics: { supporting_frames: 3 },
+      }),
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+      reviewExport: async () => ({}),
+    },
+  });
+
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/source-a.mp4";
+    next.source.metadata = { durationSec: 120, width: 320, height: 180 };
+    next.ui.activeStep = "roi";
+    next.roi.frameTime = 10;
+    return next;
+  });
+
+  await root.dispatchAction("load-preview-frame");
+  await flush();
+
+  const state = app.debug.getState();
+  assert.deepEqual(state.roi.draftRect, suggested);
+  assert.equal(state.roi.appliedRect, null);
+  assert.equal(state.roi.autoRoiStatus, "suggested");
+  assert.equal(state.roi.autoRoiEvidence, "high");
+});
+
+test("late automatic ROI does not overwrite a draft drawn while detection runs", async () => {
+  installBrowserStubs();
+  const root = createDynamicStageRoot();
+  const pendingSuggestion = deferred();
+  const manual = [[30, 30], [280, 30], [280, 150], [30, 150]];
+  const app = createApp(root, {
+    exposeTestApi: true,
+    api: {
+      requestPreviewFrame: async () => ({
+        imagePath: "/tmp/preview.png",
+        sourcePath: "/tmp/preview.png",
+        diagnostics: [],
+      }),
+      requestAutoRoi: () => pendingSuggestion.promise,
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+      reviewExport: async () => ({}),
+    },
+  });
+
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/source-a.mp4";
+    next.source.metadata = { durationSec: 120, width: 320, height: 180 };
+    next.ui.activeStep = "roi";
+    next.roi.frameTime = 10;
+    return next;
+  });
+
+  const loading = root.dispatchAction("load-preview-frame");
+  await flush();
+  app.debug.setState((next) => {
+    next.roi.draftRect = manual;
+    next.roi.autoRoiUserEdited = true;
+    return next;
+  });
+  pendingSuggestion.resolve({
+    status: "suggested",
+    roi: [[20, 100], [300, 100], [300, 175], [20, 175]],
+    evidenceLevel: "high",
+    diagnostics: {},
+  });
+  await loading;
+
+  assert.deepEqual(app.debug.getState().roi.draftRect, manual);
+});
+
 test("same-frame apply-roi relocks export and clears stale review outputs", async () => {
   installBrowserStubs();
   const root = createDynamicStageRoot();

@@ -31,6 +31,22 @@ test("roi screen distinguishes draft and applied states", () => {
   assert.equal(model.applyDisabled, true);
 });
 
+test("roi screen identifies an automatic suggestion without presenting a fake percentage", () => {
+  const state = createInitialSessionState();
+  state.ui.locale = "ko";
+  state.source.filePath = "/tmp/video.mp4";
+  state.roi.previewImage = "/tmp/frame.png";
+  state.roi.draftRect = [[10, 10], [110, 10], [110, 90], [10, 90]];
+  state.roi.autoRoiStatus = "suggested";
+  state.roi.autoRoiEvidence = "high";
+
+  const model = buildRoiScreenModel(state);
+
+  assert.match(model.statusText, /자동으로 추천했습니다/);
+  assert.doesNotMatch(model.statusText, /%/);
+  assert.equal(model.applyDisabled, false);
+});
+
 test("roi screen treats edited-but-unapplied roi as draft state", () => {
   const state = createInitialSessionState();
   state.ui.locale = "en";

@@ -35,7 +35,7 @@ function normalize(rect, width, height) {
   };
 }
 
-export function mountRoiEditor({ image, canvas, input, initialPoints = null, onDraftChange }) {
+export function mountRoiEditor({ image, canvas, input, initialPoints = null, onDraftChange, onUserEdit }) {
   if (!image || !canvas || !input) {
     return {
       applyDraft() {
@@ -50,6 +50,8 @@ export function mountRoiEditor({ image, canvas, input, initialPoints = null, onD
   const MIN_KEYBOARD_STEP = 1;
   const FAST_KEYBOARD_STEP = 10;
   let rect = null;
+  let pendingPoints = initialPoints;
+  let imageReady = false;
   let dragMode = "";
   let dragOffset = null;
   let keyboardMode = "move";
@@ -198,12 +200,13 @@ export function mountRoiEditor({ image, canvas, input, initialPoints = null, onD
     }
   }
 
-  function emit() {
+  function emit(userEdit = false) {
     if (!rect) {
       return;
     }
     const points = rectToPoints(normalize(rect, canvas.width, canvas.height));
     input.value = JSON.stringify(points);
+    if (userEdit) onUserEdit?.();
     if (typeof onDraftChange === "function") {
       onDraftChange(points);
     }
@@ -290,7 +293,7 @@ export function mountRoiEditor({ image, canvas, input, initialPoints = null, onD
       dragMode = "";
       dragOffset = null;
       paint();
-      emit();
+      emit(true);
     }
   }, { signal: abort.signal });
 
@@ -329,19 +332,21 @@ export function mountRoiEditor({ image, canvas, input, initialPoints = null, onD
     }
     syncA11yState();
     paint();
-    emit();
+    emit(true);
     event.preventDefault?.();
   }, { signal: abort.signal });
 
   if (image.complete && image.naturalWidth && image.naturalHeight) {
     canvas.width = image.naturalWidth;
     canvas.height = image.naturalHeight;
-    setRect(initialPoints);
+    imageReady = true;
+    setRect(pendingPoints);
   } else {
     image.addEventListener("load", () => {
       canvas.width = image.naturalWidth;
       canvas.height = image.naturalHeight;
-      setRect(initialPoints);
+      imageReady = true;
+      setRect(pendingPoints);
     }, { signal: abort.signal, once: true });
   }
 
@@ -353,9 +358,11 @@ export function mountRoiEditor({ image, canvas, input, initialPoints = null, onD
       return rectToPoints(normalize(rect, canvas.width, canvas.height));
     },
     setDraft(nextPoints) {
-      if (!canvas.width || !canvas.height || !isValidRect(nextPoints)) {
-        return;
-      }
+      if (!isValidRect(nextPoints)) return;
+      pendingPoints = nextPoints.map(point => [...point]);
+      // The canvas still has its default dimensions before the image loads.
+      // Keep the newest suggestion instead of clamping it or restoring a stale initial box.
+      if (!imageReady || !canvas.width || !canvas.height) return;
       const currentPoints = rect ? rectToPoints(normalize(rect, canvas.width, canvas.height)) : null;
       if (JSON.stringify(currentPoints) === JSON.stringify(nextPoints)) {
         return;

@@ -4,10 +4,10 @@ import { escapeHtml } from "../../lib/html.js";
 import { t } from "../../lib/i18n.js";
 
 const STEP_ICONS = {
-  source: "01",
-  roi: "02",
-  export: "03",
-  review: "04",
+  source: "1",
+  roi: "2",
+  export: "3",
+  review: "4",
 };
 
 const PIPELINE = "Steps";

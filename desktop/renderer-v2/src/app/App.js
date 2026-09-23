@@ -45,6 +45,7 @@ import {
   getLocalMediaRegistry,
   getPreviewSourceJob,
   preparePreviewSource,
+  requestAutoRoi,
   requestPreviewFrame,
   requestPreviewRoiHealth,
   reviewExport,
@@ -421,6 +422,14 @@ export function createApp(root, dependencies = {}) {
         checkedSeconds: [],
         metrics: {},
       }),
+      requestAutoRoi: async () => ({
+        status: "not_found",
+        roi: null,
+        evidenceLevel: "low",
+        layoutHint: "",
+        isDarkMode: false,
+        diagnostics: {},
+      }),
       ...dependencies.api,
     }
     : {
@@ -433,6 +442,7 @@ export function createApp(root, dependencies = {}) {
       getLocalMediaRegistry,
       getPreviewSourceJob,
       preparePreviewSource,
+      requestAutoRoi,
       requestPreviewFrame,
       requestPreviewRoiHealth,
       reviewExport,
@@ -455,6 +465,7 @@ export function createApp(root, dependencies = {}) {
     },
   });
   let roiEditor = null;
+  let mountingRoiEditor = false;
   let roiEditorKey = "";
   let roiEditorNodes = null;
   let activePoll = null;
@@ -516,6 +527,10 @@ export function createApp(root, dependencies = {}) {
       previewImage: "",
       previewSourcePath: "",
       diagnostics: [],
+      autoRoiStatus: "idle",
+      autoRoiEvidence: "",
+      autoRoiDiagnostics: {},
+      autoRoiUserEdited: false,
       draftRect: null,
       appliedRect: null,
       imageWidth: 0,
@@ -611,6 +626,7 @@ export function createApp(root, dependencies = {}) {
   }
 
   function attachRoiEditor(state) {
+    if (mountingRoiEditor) return;
     if (state.ui.activeStep !== "roi" || !state.roi.previewImage) {
       destroyRoiEditor();
       return;
@@ -632,23 +648,36 @@ export function createApp(root, dependencies = {}) {
       return;
     }
     destroyRoiEditor();
-    roiEditor = mountRoiEditorImpl({
-      image,
-      canvas,
-      input,
-      initialPoints: state.roi.draftRect || state.roi.appliedRect,
-      onDraftChange(points) {
-        if (rectMatches(points, store.getState().roi.draftRect)) {
-          return;
-        }
-        setState((next) => {
-          next.roi.draftRect = points;
-          return next;
-        });
-      },
-    });
-    roiEditorKey = nextKey;
-    roiEditorNodes = { image, canvas, input };
+    mountingRoiEditor = true;
+    try {
+      roiEditor = mountRoiEditorImpl({
+        image,
+        canvas,
+        input,
+        initialPoints: state.roi.draftRect || state.roi.appliedRect,
+        onDraftChange(points) {
+          if (rectMatches(points, store.getState().roi.draftRect)) {
+            return;
+          }
+          setState((next) => {
+            next.roi.draftRect = points;
+            return next;
+          });
+        },
+        onUserEdit() {
+          setState((next) => {
+            next.roi.autoRoiUserEdited = true;
+            return next;
+          });
+        },
+      });
+      roiEditorKey = nextKey;
+      roiEditorNodes = { image, canvas, input };
+    } finally {
+      mountingRoiEditor = false;
+    }
+    const latestRoi = store.getState().roi;
+    roiEditor?.setDraft?.(latestRoi.draftRect || latestRoi.appliedRect || null);
   }
 
   function render() {
@@ -1253,12 +1282,48 @@ export function createApp(root, dependencies = {}) {
         next.roi.previewImage = preview.imagePath;
         next.roi.previewSourcePath = preview.sourcePath;
         next.roi.diagnostics = preview.diagnostics;
+        next.roi.autoRoiStatus = "loading";
+        next.roi.autoRoiEvidence = "";
+        next.roi.autoRoiDiagnostics = {};
+        next.roi.autoRoiUserEdited = false;
         next.roi.imageWidth = Number(next.source.metadata?.width || 0);
         next.roi.imageHeight = Number(next.source.metadata?.height || 0);
         next.roi.status = "ready";
         next.roi.error = "";
         return next;
       });
+      try {
+        const suggestion = await runtimeApi.requestAutoRoi({
+          filePath: state.source.filePath,
+          startSec: state.roi.frameTime || 0,
+        });
+        if (!runtimeGuards.isCurrentPreview(previewToken)) {
+          return;
+        }
+        setState((next) => {
+          const suggestedRect = suggestion.status === "suggested" && isRectValid(suggestion.roi)
+            ? suggestion.roi
+            : null;
+          // Do not replace a box the user drew while background detection was
+          // running. The detector only supplies a starting point.
+          if (suggestedRect && !next.roi.autoRoiUserEdited) {
+            next.roi.draftRect = suggestedRect;
+          }
+          next.roi.autoRoiStatus = suggestedRect ? "suggested" : "not_found";
+          next.roi.autoRoiEvidence = suggestedRect ? suggestion.evidenceLevel : "low";
+          next.roi.autoRoiDiagnostics = suggestion.diagnostics || {};
+          return next;
+        });
+      } catch (_) {
+        if (runtimeGuards.isCurrentPreview(previewToken)) {
+          setState((next) => {
+            next.roi.autoRoiStatus = "not_found";
+            next.roi.autoRoiEvidence = "low";
+            next.roi.autoRoiDiagnostics = {};
+            return next;
+          });
+        }
+      }
     } catch (error) {
       if (!runtimeGuards.isCurrentPreview(previewToken)) {
         return;

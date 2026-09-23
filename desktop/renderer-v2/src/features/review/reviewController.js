@@ -73,6 +73,7 @@ export function createReviewController({ getState, setState, api, mountEditor, r
     if (["running", "editing"].includes(state.review.status)) return;
     const pages = state.review.filter === "suspicious" ? state.review.pages.filter(page => page.suspicious || page.autoExcludeCandidate) : state.review.pages;
     const focused = pages.find(page => page.id === state.review.focusedPageId) || pages[0];
+    if (action === "review-toggle-focused" && focused) { toggle(focused.id, !state.review.selectedPageIds.includes(focused.id)); return; }
     if (action === "review-select-all") { select(state.review.pages.map(page => page.id)); return; }
     if (action === "review-select-none") { select([]); return; }
     if (action === "review-undo" || action === "review-redo") {

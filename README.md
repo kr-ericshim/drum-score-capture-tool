@@ -20,7 +20,7 @@ The guides describe the current source tree. Features in an unreleased checkout 
 ## How it works
 
 1. Open a local video or prepare a public YouTube URL.
-2. Load a frame where the score is visible and mark its capture region (ROI).
+2. Load a clear score frame, check or adjust the suggested capture region (ROI), then apply it.
 3. Choose the capture range and export options, then run the capture.
 4. Review the captured pages, adjust the selection, and export PNG, JPG, or PDF.
 

@@ -309,7 +309,7 @@ export function renderExportScreen(state) {
         </div>
         <section class="export-preview-workbench" data-stitch-region="export-preview">
           <div class="panel-heading export-preview-heading">
-            <span class="panel-kicker">${t("export.previewKicker", { locale: model.locale })}</span>
+
             <h2>${t("export.previewTitle", { locale: model.locale })}</h2>
             <p>${safePreviewCaption}</p>
           </div>
@@ -339,7 +339,7 @@ export function renderExportScreen(state) {
           <div class="export-metadata-overlay">
             <section class="export-metadata-modal export-metadata-sheet" role="dialog" aria-modal="true" aria-labelledby="exportMetadataModalTitle">
               <div class="export-metadata-head">
-                <p class="export-metadata-kicker">${t("export.title", { locale: model.locale })}</p>
+
                 <h2 id="exportMetadataModalTitle">${safeMetadataTitle}</h2>
                 <p class="export-metadata-helper">${safeMetadataHelper}</p>
               </div>

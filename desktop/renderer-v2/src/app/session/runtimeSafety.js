@@ -108,6 +108,10 @@ export function invalidatePreviewFlow(state, {
   state.roi.previewImage = "";
   state.roi.previewSourcePath = "";
   state.roi.diagnostics = [];
+  state.roi.autoRoiStatus = "idle";
+  state.roi.autoRoiEvidence = "";
+  state.roi.autoRoiDiagnostics = {};
+  state.roi.autoRoiUserEdited = false;
   state.roi.draftRect = null;
   state.roi.appliedRect = null;
   state.roi.imageWidth = 0;

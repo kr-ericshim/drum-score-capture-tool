@@ -25,7 +25,17 @@ export function saveSession(storage, state) {
     storage?.setItem(KEY, JSON.stringify({
       version: 1,
       source: Object.fromEntries(["filePath", "sourceType", "displayName", "metadata", "youtubeUrl", "preparedFromYouTube", "archiveSourceKind", "archiveSourceKey", "archiveDisplayName"].map(key => [key, source[key]])),
-      roi: { ...roi, previewImage: roi.previewSourcePath || "", draftRect: null, diagnostics: [], error: "" },
+      roi: {
+        ...roi,
+        previewImage: roi.previewSourcePath || "",
+        draftRect: null,
+        diagnostics: [],
+        autoRoiStatus: "idle",
+        autoRoiEvidence: "",
+        autoRoiDiagnostics: {},
+        autoRoiUserEdited: false,
+        error: "",
+      },
       exportConfig: Object.fromEntries(["formats", "pageFillMode", "layoutHint", "jobId", "runStatus", "documentHeader"].map(key => [key, exportConfig[key]])),
       review: { selectedPaths: state.review.pages.length
         ? state.review.pages.filter(page => state.review.selectedPageIds.includes(page.id)).map(page => page.capturePath)

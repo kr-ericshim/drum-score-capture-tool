@@ -52,15 +52,24 @@ export function buildRoiScreenModel(state) {
   if (state.roi.status === "loading") {
     statusTone = "loading";
     statusText = t("roi.status.loading", { locale });
+  } else if (hasPreview && state.roi.autoRoiStatus === "loading") {
+    statusTone = "loading";
+    statusText = t("roi.status.autoDetecting", { locale });
   } else if (hasPreview && hasPendingDraft) {
     statusTone = "draft";
-    statusText = t("roi.status.draft", { locale });
+    const evidence = state.roi.autoRoiEvidence === "high" ? "High" : "Medium";
+    statusText = state.roi.autoRoiStatus === "suggested"
+      ? t(`roi.status.autoSuggested${evidence}`, { locale })
+      : t("roi.status.draft", { locale });
     if (appliedReady) {
       statusText += getPendingStatusSuffix(locale);
     }
   } else if (hasPreview && appliedReady) {
     statusTone = "ready";
     statusText = t("roi.status.ready", { locale });
+  } else if (hasPreview && state.roi.autoRoiStatus === "not_found") {
+    statusTone = "idle";
+    statusText = t("roi.status.autoNotFound", { locale });
   }
 
   return {
@@ -91,8 +100,13 @@ export function renderRoiScreen(state) {
 
   return `
     <section class="screen screen-roi" data-screen="roi" aria-labelledby="roiScreenTitle">
-      <h1 id="roiScreenTitle" class="visually-hidden" data-screen-heading tabindex="-1">${escapeHtml(t("topbar.step.roi", { locale: model.locale }))}</h1>
+      <header class="screen-headline screen-headline-roi">
+        <div><h1 id="roiScreenTitle" data-screen-heading tabindex="-1">${escapeHtml(t("topbar.step.roi", { locale: model.locale }))}</h1>
+        <p>${escapeHtml(t("roi.workspaceHelp", { locale: model.locale }))}</p></div>
+        <p class="workspace-source-name" title="${escapeHtml(state.source.displayName || "")}">${escapeHtml(state.source.displayName || "")}</p>
+      </header>
       <div class="roi-workbench">
+      <aside class="roi-controls">
         <div class="roi-toolbar" data-stitch-region="roi-toolbar">
           <label class="roi-slider-row">
             <span>${escapeHtml(t("roi.frame", { locale: model.locale }))}</span>
@@ -119,15 +133,6 @@ export function renderRoiScreen(state) {
             </div>
           </div>
         ` : ""}
-        <div class="roi-stage-frame">
-          <div class="roi-stage-surface" id="appStage">
-            ${model.previewImage ? `<img id="roiImage" alt="${escapeHtml(t("roi.previewAlt", { locale: model.locale }))}" src="${escapeHtml(normalizeAssetPath(model.previewImage))}" />` : ""}
-            <canvas id="roiCanvas" tabindex="${model.hasPreview ? "0" : "-1"}" aria-label="${escapeHtml(model.canvasLabel)}" aria-describedby="roiCanvasHelp"></canvas>
-            <p id="roiCanvasHelp" class="visually-hidden">${escapeHtml(model.canvasHelp)}</p>
-            ${model.hasPreview ? "" : `<div class="stage-placeholder"><p>${escapeHtml(model.placeholderText)}</p></div>`}
-          </div>
-          <input id="roiInput" type="hidden" value="${escapeHtml(state.roi.appliedRect ? JSON.stringify(state.roi.appliedRect) : "")}" />
-        </div>
         <div class="roi-stage-footer" data-stitch-region="roi-actions">
           <div class="roi-capture-options">
             <label class="roi-auto-fit-option"><input type="checkbox" data-action="toggle-roi-auto-fit" ${state.roi.autoFit ? "checked" : ""} /> ${escapeHtml(t("roi.autoFit", { locale: model.locale }))}</label>
@@ -136,6 +141,16 @@ export function renderRoiScreen(state) {
           <div class="roi-stage-actions">
             ${model.showApplyAction ? `<button class="button button-primary" data-action="apply-roi" ${model.applyDisabled ? "disabled" : ""}>${escapeHtml(t("roi.apply", { locale: model.locale }))}</button>` : ""}
           </div>
+        </div>
+      </aside>
+        <div class="roi-stage-frame">
+          <div class="roi-stage-surface" id="appStage">
+            ${model.previewImage ? `<img id="roiImage" alt="${escapeHtml(t("roi.previewAlt", { locale: model.locale }))}" src="${escapeHtml(normalizeAssetPath(model.previewImage))}" />` : ""}
+            <canvas id="roiCanvas" tabindex="${model.hasPreview ? "0" : "-1"}" aria-label="${escapeHtml(model.canvasLabel)}" aria-describedby="roiCanvasHelp"></canvas>
+            <p id="roiCanvasHelp" class="visually-hidden">${escapeHtml(model.canvasHelp)}</p>
+            ${model.hasPreview ? "" : `<div class="stage-placeholder"><p>${escapeHtml(model.placeholderText)}</p></div>`}
+          </div>
+          <input id="roiInput" type="hidden" value="${escapeHtml(state.roi.appliedRect ? JSON.stringify(state.roi.appliedRect) : "")}" />
         </div>
       </div>
     </section>

@@ -1,0 +1,108 @@
+/* Shared workspace: navigation above, task controls beside the primary artifact. */
+.app-shell, .app-shell[data-step="review"] { grid-template-rows: 56px minmax(0, 1fr) 26px; background: var(--bg-shell); }
+.app-shell[data-step] .topbar { padding: 0 20px; justify-content: flex-end; background: var(--bg-shell); border-bottom: 1px solid var(--line-soft); }
+.app-shell[data-step] .topbar > :is(.topbar-brand, .topbar-center), .app-shell[data-step] .topbar-roi > :is(.topbar-center, .topbar-balance) { display: none; }
+.app-shell[data-step] .topbar-roi { display: flex; justify-content: flex-end; width: 100%; }
+.app-shell[data-step] .workspace-shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.app-shell[data-step] .process-rail {
+  position: absolute; top: 0; left: 0; right: 310px; height: 56px;
+  display: flex; flex-direction: row; justify-content: space-between; align-items: center;
+  padding: 0 20px; gap: 12px; overflow: visible; border: 0; background: transparent; z-index: 2;
+}
+.app-shell[data-step] .rail-head, .app-shell[data-step] .process-rail > .rail-footer { display: none; }
+.app-shell[data-step] .process-list { display: flex; flex-wrap: nowrap; gap: 4px; margin: 0; padding: 0; min-width: 0; overflow: visible; }
+.app-shell[data-step] .process-list li { flex: 0 0 auto; width: auto; }
+.app-shell[data-step] .process-step { min-height: 36px; padding: 6px 12px; gap: 8px; border: 1px solid transparent; border-radius: 7px; background: transparent; }
+.app-shell[data-step] .process-step.is-active { background: var(--accent-soft); border-color: transparent; }
+.app-shell[data-step] .process-step-copy strong { font-size: 13px; }
+.app-shell[data-step] .process-step-copy small { display: none; }
+.app-shell[data-step] .process-step-index { font-size: 12px; }
+.app-shell[data-step] .stage-pane { grid-column: 1; grid-row: 1; background: var(--bg-pane); }
+.app-shell[data-step] .status-bar { background: #fff; color: var(--text-2); border-color: var(--line-soft); }
+.app-shell[data-step] .screen-headline { min-height: 86px; padding: 18px 24px; background: #fff; align-items: center; }
+.app-shell[data-step] .screen-headline h1 { font-size: 21px; font-weight: 650; letter-spacing: -.025em; }
+.app-shell[data-step] .screen-headline p { font-size: 13px; line-height: 1.55; color: var(--text-2); }
+.app-shell[data-step] .button { min-height: 36px; border-radius: 7px; }
+.app-shell[data-step] .button-primary { background: #222725; border-color: #222725; color: #fff; }
+.app-shell[data-step] .button-primary:hover:not(:disabled) { background: #3a433e; color: #fff; border-color: #3a433e; }
+.app-shell[data-step] .button-secondary { background: #fff; color: var(--text-1); border-color: #d5dcd8; }
+.app-shell[data-step] .button-secondary:hover:not(:disabled) { background: #f1f4f2; color: var(--text-1); }
+.app-shell :is(button, input, select, textarea, [tabindex]):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; box-shadow: none; }
+.app-shell[data-step] .panel { background: transparent; border-radius: 0; box-shadow: none; }
+.app-shell[data-step] .panel-heading h2 { font-size: 16px; font-weight: 600; }
+.app-shell[data-step] .panel-heading p { color: var(--text-2); font-size: 13px; }
+.app-shell input::placeholder, .app-shell textarea::placeholder { color: #66716b; opacity: 1; }
+.app-shell ::selection { color: #fff; background: var(--accent); }
+.app-shell * { scrollbar-color: #a7b5ad #f7f8f7; }
+/* Source: importing stays to the left; the recent source list is the content. */
+.screen-source .source-workbench { grid-template-columns: 290px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); align-content: stretch; overflow: hidden; background: #fff; }
+.screen-source .source-ingest { padding: 28px 24px; gap: 16px; overflow-y: auto; min-height: 0; border: 0; border-right: 1px solid var(--line-soft); }
+.screen-source .ingest-icon { background: transparent; border: 0; color: var(--text-1); width: 28px; height: 28px; }
+.screen-source .source-ingest .source-drop-hint { font-size: 12px; }
+.screen-source .source-youtube { width: 100%; min-width: 0; margin-top: 14px; padding: 24px 0 0; }
+.screen-source .source-youtube-controls { display: flex; flex-direction: column; align-items: stretch; gap: 10px; }
+.screen-source .source-youtube-field { width: 100%; min-width: 0; }
+.screen-source .source-youtube-kicker { font-size: 14px; font-weight: 600; color: var(--text-1); text-transform: none; letter-spacing: 0; }
+.screen-source .source-youtube-copy p { font-size: 12px; margin-top: 6px; }
+.screen-source .source-registry { padding: 28px 32px; overflow-y: auto; min-width: 0; min-height: 0; border: 0; }
+.screen-source .registry-table-wrap { margin-top: 24px; border: 0; border-radius: 0; }
+.screen-source .registry-table th { background: transparent; text-transform: none; letter-spacing: 0; font-size: 12px; }
+.screen-source .registry-table :is(th,td) { padding: 14px 12px; }
+.screen-source .registry-table th:first-child, .screen-source .registry-table td:first-child { padding-left: 0; }
+.screen-source .registry-table td { font-size: 13px; }
+.screen-source .registry-row.is-selected { background: #f1f6f3; }
+.screen-source .source-prepare-status-head { flex-wrap: wrap; }
+.screen-source .source-prepare-log pre { max-height: 180px; overflow: auto; }
+.screen-source:has(> .inline-error) { grid-template-rows: auto minmax(0,1fr) auto; }
+/* Region editor: actual canvas geometry remains controlled by roiEditor. */
+.screen-roi { display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.workspace-source-name { max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.screen-roi .roi-workbench, .screen-roi .roi-workbench:has(.roi-candidate-strip) { grid-template-columns: 290px minmax(0, 1fr); grid-template-rows: minmax(0,1fr); height: auto; min-height: 0; }
+.roi-controls { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; background: #fff; border-right: 1px solid var(--line-soft); }
+.roi-controls .roi-toolbar { flex-direction: column; align-items: stretch; gap: 18px; padding: 28px 24px; background: transparent; }
+.roi-controls .roi-slider-row { grid-template-columns: 1fr auto; flex: none; gap: 16px; }
+.roi-controls .roi-slider-row input { grid-column: 1 / -1; grid-row: 2; min-width: 0; }
+.roi-controls .roi-slider-row strong { grid-column: 2; grid-row: 1; }
+.roi-controls .roi-candidate-strip { padding: 24px; background: transparent; }
+.roi-controls .roi-candidate-list { grid-template-columns: 1fr; }
+.roi-controls .roi-candidate-heading { font-size: 13px; color: var(--text-2); text-transform: none; letter-spacing: 0; }
+.roi-controls .roi-candidate { grid-template-columns: 1fr auto; align-items: center; min-height: 42px; }
+.roi-controls .roi-stage-footer { flex-direction: column; align-items: stretch; gap: 24px; margin-top: auto; padding: 24px; background: #fff; }
+.roi-controls .roi-auto-fit-option { align-items: flex-start; line-height: 1.6; }
+.roi-controls .roi-stage-helper { margin-top: 14px; font-size: 13px; line-height: 1.7; }
+.roi-controls .roi-stage-actions .button { width: 100%; }
+.screen-roi .roi-stage-frame { min-width: 0; padding: 24px; background: var(--bg-stage); }
+.screen-roi .roi-stage-surface { width: 100%; max-height: none; border: 0; box-shadow: none; }
+/* Export: settings at left, rather than a second inspector on the right. */
+.screen-export .export-workbench { grid-template-columns: 290px minmax(0,1fr); grid-template-rows: minmax(0,1fr); overflow: hidden; }
+.screen-export .export-config-stack { grid-column: 1; grid-row: 1; overflow-y: auto; min-height: 0; padding: 0; background: #fff; border: 0; border-right: 1px solid var(--line-soft); }
+.screen-export .export-module { padding: 24px; border: 0; border-bottom: 1px solid var(--line-soft); }
+.screen-export .export-module:last-child { border-bottom: 0; }
+.screen-export .segmented-row { gap: 8px; }
+.screen-export .segment { justify-content: flex-start; gap: 10px; padding: 10px 12px; min-height: 40px; font-size: 13px; font-weight: 500; }
+.screen-export .segment input { position: static; opacity: 1; width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+.screen-export .segment.is-active { border-color: #a2beb1; color: var(--text-1); }
+.screen-export .export-preview-workbench { grid-column: 2; grid-row: 1; align-self: stretch; display: flex; flex-direction: column; gap: 16px; padding: 24px; overflow: auto; background: var(--bg-pane); }
+.screen-export .export-preview-stage { flex: 1; height: auto; min-height: 180px; padding: 20px; background: var(--bg-stage); border: 0; border-radius: 0; box-shadow: none; }
+.screen-export .export-preview-heading { flex: none; }
+.screen-export .export-progress-strip { flex: none; }
+.screen-export .path-field { background: transparent; border: 0; padding: 0; color: var(--text-2); }
+/* Review follows the same shell and light surfaces. */
+.app-shell[data-step] .screen-headline-review { min-height: 76px; padding: 14px 20px; }
+.app-shell[data-step] .screen-headline-review h1 { font-size: 17px; }
+.screen-review .review-toolbar .button { min-height: 34px; }
+.screen-review .review-grid-shell { background: #fff; border-color: var(--line-soft); }
+.screen-review .review-card { border-radius: 7px; }
+.screen-review .review-card:is(.is-selected,.is-excluded) { background: #fff; border-color: #dce2de; }
+.screen-review .review-card.is-focused { background: var(--accent-soft); border-color: var(--accent); }
+.screen-review .review-inspector, .screen-review .review-viewer-toolbar, .screen-review .review-keyboard-help { background: #fff; }
+.screen-review .review-viewer-surface { background: var(--bg-stage); }
+.screen-review .review-save-state.is-pending { color: #855c18; }
+.screen-review .review-filter [aria-pressed="true"] { color: var(--accent); border-color: #8eafa0; background: var(--accent-soft); }
+.review-output-details .rail-footer { z-index: 10; background: #fff; }
+@media (max-width: 1200px) {
+  .screen-source .source-registry { padding: 24px; }
+  .workspace-source-name { max-width: 30%; }
+  .app-shell[data-step] .process-step { padding-inline: 10px; }
+}
+@media (prefers-reduced-motion: reduce) { .app-shell *, .app-shell *::before, .app-shell *::after { animation: none !important; transition: none !important; } }

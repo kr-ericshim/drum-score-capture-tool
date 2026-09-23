@@ -225,6 +225,22 @@ class PreviewFrameResponse(BaseModel):
     diagnostics: List[PreviewDiagnostic] = Field(default_factory=list)
 
 
+class PreviewAutoRoiRequest(BaseModel):
+    source_type: Literal["file", "youtube"]
+    file_path: Optional[str] = None
+    youtube_url: Optional[str] = None
+    start_sec: Optional[float] = Field(default=None, ge=0)
+
+
+class PreviewAutoRoiResponse(BaseModel):
+    status: Literal["suggested", "not_found"]
+    roi: Optional[List[List[float]]] = None
+    evidence_level: Literal["high", "medium", "low"] = "low"
+    layout_hint: Optional[Literal["bottom_bar", "full_scroll", "page_turn"]] = None
+    is_dark_mode: bool = False
+    diagnostics: Dict[str, Any] = Field(default_factory=dict)
+
+
 class PreviewRoiHealthRequest(BaseModel):
     source_type: Literal["file", "youtube"]
     file_path: Optional[str] = None

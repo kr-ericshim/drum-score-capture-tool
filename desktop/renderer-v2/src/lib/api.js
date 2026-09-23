@@ -85,6 +85,27 @@ export async function requestPreviewFrame({ filePath, startSec }) {
   };
 }
 
+export async function requestAutoRoi({ filePath, startSec }) {
+  const data = await requestApiJson("/preview/auto-roi", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source_type: "file",
+      file_path: filePath,
+      youtube_url: null,
+      start_sec: Number.isFinite(startSec) ? startSec : null,
+    }),
+  }, "악보 영역을 자동으로 찾지 못했습니다.");
+  return {
+    status: String(data.status || "not_found"),
+    roi: Array.isArray(data.roi) ? data.roi : null,
+    evidenceLevel: String(data.evidence_level || "low"),
+    layoutHint: data.layout_hint ? String(data.layout_hint) : "",
+    isDarkMode: Boolean(data.is_dark_mode),
+    diagnostics: data.diagnostics && typeof data.diagnostics === "object" ? data.diagnostics : {},
+  };
+}
+
 export async function requestPreviewRoiHealth({ sourceType = "file", filePath, youtubeUrl = "", startSec, roi }) {
   const data = await requestApiJson("/preview/roi-health", {
     method: "POST",

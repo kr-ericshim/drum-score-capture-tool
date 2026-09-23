@@ -112,7 +112,8 @@ export function buildSourceScreenModel(state) {
     fileMeta.push({ label: t("source.meta.resolution", { locale }), value: metadata.resolutionLabel });
   }
 
-  const prepareStage = String(state.source.prepareStage || "");
+  const prepareFailed = ["error", "failed"].includes(state.source.prepareStatus);
+  const prepareStage = prepareFailed ? "failed" : String(state.source.prepareStage || "");
   const prepareProgressMode = String(state.source.prepareProgressMode || "indeterminate");
   const preparePercentValue = preparePercent(state.source.prepareProgress);
   const prepareStageLabel = prepareStage ? t(`source.prepareStage.${prepareStage}`, { locale }) : "";
@@ -145,6 +146,7 @@ export function buildSourceScreenModel(state) {
     youtubeUrl: state.source.youtubeUrl || "",
     prepareStatus: state.source.prepareStatus || "idle",
     prepareStage,
+    prepareFailed,
     prepareStageLabel,
     prepareSummary,
     prepareProgress: preparePercentValue,
@@ -228,9 +230,15 @@ export function renderSourceScreen(state) {
       </header>
       <div class="source-workbench">
         <section class="source-ingest panel" data-stitch-region="source-ingest" data-drop-zone="source-ingest">
-          <div class="ingest-icon" aria-hidden="true">+</div>
+          <div class="ingest-icon" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="17 8 12 3 7 8" />
+              <line x1="12" y1="3" x2="12" y2="15" />
+            </svg>
+          </div>
           <div class="panel-heading source-ingest-heading">
-            <span class="panel-kicker">${escapeHtml(t("source.ingestKicker", { locale: model.locale }))}</span>
+
             <h2>${escapeHtml(t("source.ingestTitle", { locale: model.locale }))}</h2>
             <p>${escapeHtml(t("source.ingestBody", { locale: model.locale }))}</p>
           </div>
@@ -270,7 +278,7 @@ export function renderSourceScreen(state) {
                   <strong>${escapeHtml(t("source.youtubeStatusTitle", { locale: model.locale }))}</strong>
                   <span>${escapeHtml(model.prepareSummary || model.prepareMessage || t("source.youtubeIdleLog", { locale: model.locale }))}</span>
                 </div>
-                <div
+                ${model.prepareFailed ? "" : `<div
                   class="source-prepare-progress"
                   data-mode="${escapeHtml(model.prepareProgressMode)}"
                   role="progressbar"
@@ -285,7 +293,7 @@ export function renderSourceScreen(state) {
                     <span class="source-prepare-progress-fill" style="width: ${model.prepareProgressMode === "determinate" ? model.prepareProgress : 35}%"></span>
                   </span>
                   <span class="source-prepare-progress-value">${escapeHtml(model.prepareProgressMode === "determinate" ? `${model.prepareProgress}%` : t("source.prepareIndeterminate", { locale: model.locale }))}</span>
-                </div>
+                </div>`}
               </div>
             ` : ""}
             ${model.showQualityGate ? `
@@ -304,7 +312,7 @@ export function renderSourceScreen(state) {
         </section>
         <section class="source-registry panel" data-stitch-region="source-registry">
           <div class="panel-heading">
-            <span class="panel-kicker">${escapeHtml(t("source.registryKicker", { locale: model.locale }))}</span>
+
             <h2>${escapeHtml(t("source.registryTitle", { locale: model.locale }))}</h2>
             <p>${escapeHtml(t("source.registryRegistered", { locale: model.locale, replacements: { count: model.registryItems.length } }))}</p>
           </div>

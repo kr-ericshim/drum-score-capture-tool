@@ -166,7 +166,7 @@ test("source screen renders english helper copy when locale is en", () => {
   const markup = renderSourceScreen(state);
 
   assert.match(markup, /Source|Open file|Reopen recent/i);
-  assert.match(markup, /Input|Recent/);
+  assert.match(markup, /Reopen recent/i);
   assert.doesNotMatch(markup, /현재 1차 플로우는|로컬 영상 불러오기/);
 });
 
@@ -327,4 +327,17 @@ test("source screen accepts mobile and music youtube hosts for preparation", () 
     assert.equal(model.youtubeUrlValid, true, youtubeUrl);
     assert.equal(model.prepareDisabled, false, youtubeUrl);
   }
+});
+
+
+test("failed source preparation does not advertise continuing progress", () => {
+  const state = createInitialSessionState();
+  state.ui.locale = "en";
+  state.source.prepareStatus = "error";
+  state.source.prepareStage = "download";
+  state.source.error = "Network unavailable";
+  const markup = renderSourceScreen(state);
+  assert.match(markup, /Prepare failed/);
+  assert.doesNotMatch(markup, /role="progressbar"|In progress/);
+  assert.match(markup, /Network unavailable/);
 });

@@ -42,7 +42,7 @@ xattr -dr com.apple.quarantine "/actual/download/path/downloaded-file.dmg"
 ## Basic workflow
 
 1. **Import a video:** select a local file or prepare a public YouTube URL.
-2. **Select the score area:** load a clear frame and mark the capture region (ROI). Leave enough room for notes, lyrics, and repeat markings.
+2. **Select the score area:** load a clear frame and check the suggested capture region (ROI), or draw it manually when no suggestion is available. Suggestions are editable drafts; choose **Apply region** to confirm. Leave enough room for notes, lyrics, and repeat markings.
 3. **Run the capture:** confirm the time range and output formats, then start processing.
 4. **Review the results:** inspect pages and select the captures to keep. When needed, crop captures and rebuild the PDF from the selection.
 5. **Save the files:** check the PNG, JPG, or PDF output. Use **Save PDF as…** to save a PDF copy to your preferred location.

@@ -205,15 +205,23 @@ test("metadata modal secondary buttons keep explicit visible text color on the p
   );
 });
 
-test("shared visual tokens follow the Apple palette and keep structural styles tokenized", () => {
+test("shared visual tokens keep readable light surfaces and structural styles tokenized", () => {
   const tokensCss = readFileSync(new URL("../styles/tokens.css", import.meta.url), "utf8");
   const baseCss = readFileSync(new URL("../styles/base.css", import.meta.url), "utf8");
   const componentsCss = readFileSync(new URL("../styles/components.css", import.meta.url), "utf8");
   const combinedCss = `${tokensCss}\n${baseCss}\n${componentsCss}`;
 
-  assert.match(tokensCss, /--accent:\s*#0066cc;/);
-  assert.match(tokensCss, /--bg-app:\s*#e8e8ed;/);
-  assert.match(tokensCss, /--bg-pane:\s*#ededf0;/);
+  const token = name => tokensCss.match(new RegExp(`--${name}:\\s*(#[0-9a-f]{6});`))[1];
+  const luminance = hex => hex.slice(1).match(/../g).map(part => {
+    const channel = parseInt(part, 16) / 255;
+    return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  }).reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index], 0);
+  for (const foreground of ["text-1", "text-2", "text-3", "accent"]) {
+    for (const background of ["bg-app", "bg-pane", "bg-panel"]) {
+      const values = [luminance(token(foreground)), luminance(token(background))].sort((a, b) => b - a);
+      assert.ok((values[0] + 0.05) / (values[1] + 0.05) >= 4.5, `${foreground} on ${background}`);
+    }
+  }
   assert.match(baseCss, /color-scheme:\s*light;/);
   assert.doesNotMatch(componentsCss, /rgba?\(|#[0-9a-fA-F]{3,8}|oklch\(/);
   assert.doesNotMatch(combinedCss, /#d7a347|#e7bd72|236,\s*182,\s*19|215,\s*163,\s*71|radial-gradient/i);
