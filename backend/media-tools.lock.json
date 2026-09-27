@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "repository": "kr-ericshim/drum-score-capture-tool",
+  "recipe": "850fac73bcaa288a6a9290dac734a2433a70582e24dfd752be4c48e0375a7f4f",
+  "tag": "media-tools-850fac73bcaa288a6a92",
+  "bundles": {
+    "darwin-arm64": {
+      "asset": "media-tools-darwin-arm64.tar.gz",
+      "sha256": "486cbff7c41e05a0f80620a4fcf1cf46c614aeb11b6b596302291367500ab2dc"
+    },
+    "win32-x64": {
+      "asset": "media-tools-win32-x64.tar.gz",
+      "sha256": "eb27508aa5e07bcc519327d5b900394bbeab2744051877ce5847971837084d26"
+    }
+  }
+}
