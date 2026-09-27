@@ -33,17 +33,15 @@ Python, Node.js, and FFmpeg do not need to be installed separately. Intel Mac, n
 2. Open it and copy the app to `Applications`.
 3. Launch the copied app.
 
-The current build is unsigned and not notarized, so Gatekeeper may block it. After confirming the download came from this repository, remove the installed app's quarantine attribute in Terminal and launch it again:
+Starting with v0.1.34, macOS builds use a free ad-hoc signature. They are not Developer ID signed or notarized, so macOS may block the first launch. After verifying the download came from this repository, use **System Settings → Privacy & Security → Open Anyway**. Managed Macs may restrict this option.
+
+Only if that option is unavailable, remove quarantine from the trusted installed app and reopen it. This does not repair an invalid signature:
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/Drum Sheet Capture.app"
 ```
 
-If the DMG itself is blocked, replace the example path with the actual downloaded file path and keep the quotes:
-
-```bash
-xattr -dr com.apple.quarantine "/actual/download/path/downloaded-file.dmg"
-```
+If “damaged” persists, download the latest installer or report the issue instead of disabling system-wide security. v0.1.33 has a separate signature validation defect.
 
 ## Basic workflow
 

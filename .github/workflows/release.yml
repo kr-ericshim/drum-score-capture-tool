@@ -26,6 +26,7 @@ jobs:
     timeout-minutes: 60
 
     env:
+      # Disable certificate signing; macOS still receives an explicit ad-hoc signature.
       DRUMSHEET_ENABLE_SIGNING: "false"
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
@@ -82,7 +83,7 @@ jobs:
       - name: Restore and verify pinned media tools
         run: python scripts/media_bundle.py restore
 
-      - name: Build release artifacts
+      - name: Build release artifacts and verify macOS app and DMG signatures
         working-directory: desktop
         run: npm run dist:release
 

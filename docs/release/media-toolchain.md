@@ -73,7 +73,7 @@ Diagnostic copy retains at most 100 recent backend log lines, redacts configured
 
 ## Signing boundary
 
-On the inspected Mac there is an Apple Development identity but **no Developer ID Application identity**. Public macOS signing/notarization cannot be completed with that development identity. Keep unsigned builds explicitly identified until the distribution certificate and notarization credentials are configured. The existing local `DRUMSHEET_ENABLE_SIGNING` switch is available; CI remains intentionally unsigned. Windows signing credentials/service enrollment are likewise not configured by this change.
+On the inspected Mac there is an Apple Development identity but **no Developer ID Application identity**. Public macOS signing/notarization cannot be completed with that development identity. From v0.1.34, macOS CI explicitly uses free ad-hoc signing and verifies the final bundle and DMG. This does not supply Developer ID trust or notarization. The local `DRUMSHEET_ENABLE_SIGNING` switch controls certificate signing; false still uses ad-hoc signing on macOS. Windows signing credentials/service enrollment are likewise not configured by this change.
 
 ## v0.1.33 preflight corrections
 

@@ -22,7 +22,7 @@ The workflow YAML below must stay aligned with:
 - Public targets:
   - Windows `x64` NSIS installer
   - macOS `arm64` DMG
-- Default release policy: unsigned
+- Default release policy: macOS ad-hoc signed (not notarized); Windows unsigned
 - Packaging configuration: `desktop/electron-builder.config.js` only; `desktop/package.json` contains application metadata and commands.
 - `release` resolves to the `compact` profile. Development virtualenvs, backend tests, jobs, and renderer tests are excluded.
 - `dist:release` builds the frozen backend once, packages it, and validates the resulting payload. CI then runs both smoke checks against that same packaged runtime; do not add a separate preliminary backend build.
@@ -69,7 +69,7 @@ git push origin v0.1.0
 
 ## GitHub Secrets
 
-### Required For Current Unsigned Release Path
+### Required For Current Free Release Path
 
 - no extra signing secret required
 - built-in `GITHUB_TOKEN` is enough
@@ -115,24 +115,15 @@ It verifies:
 
 Packaged behavior is gated in two layers: `npm run smoke:packaged-electron` starts the generated Electron app and waits for its backend to expose `/health` and `/runtime`; `npm run smoke:packaged-runtime` starts the backend executable from the generated `dist/` payload, reads `/runtime`, extracts a preview frame from a generated synthetic score video, and runs a capture job through PNG/PDF export with file-signature checks. This is a synthetic local-file test, not YouTube coverage or visual validation of musical notation.
 
-## Unsigned Release Notes
+## Free macOS Release Policy
 
-- current production release is intentionally unsigned
-- this avoids accidental local certificate auto-discovery
-- macOS arm64 builds can still be produced in this mode, but Gatekeeper or trust warnings should be expected until signing and notarization are introduced
-- Windows x64 installers can still be produced in this mode, but SmartScreen or publisher trust warnings should be expected until Windows code signing is introduced
-- public install docs must include the exact `xattr` command below
-- if a user reports that macOS blocked the DMG or app, document this workaround:
-
-```bash
-xattr -dr com.apple.quarantine "/Applications/Drum Sheet Capture.app"
-```
-
-- if the DMG itself is blocked before opening, the same command can be run on the downloaded DMG path first
-- if signing is introduced later:
-  - set `DRUMSHEET_ENABLE_SIGNING=true`
-  - provide the necessary platform certificates and secrets
-  - revise both the builder config and the release workflow
+- From v0.1.34, `DRUMSHEET_ENABLE_SIGNING=false` disables certificate discovery, but explicitly uses `mac.identity: "-"` for free ad-hoc signing.
+- Hardened runtime remains enabled; Electron JIT and library validation entitlements support bundled code without a Team ID.
+- `dist:release` verifies the sealed app and backend tools, verifies the DMG checksum, then mounts the DMG read-only and verifies its app/version before allowing upload.
+- A failed signature must fail the build. Do not repair release artifacts after validation or skip verification to publish.
+- Ad-hoc integrity verification is not Gatekeeper approval or notarization. Test a browser-downloaded DMG on a fresh Mac separately.
+- Direct users to Privacy & Security → Open Anyway first. The scoped quarantine fallback is in the Korean and English installation guides; it does not repair invalid signatures.
+- Windows remains unsigned. Paid Developer ID signing/notarization is optional future work and needs separate credentials/configuration.
 
 ## Deferred Follow-Ups
 

@@ -44,7 +44,7 @@
 
 **Python, Node.js, FFmpeg를 따로 설치할 필요가 없습니다.** `Source code` ZIP은 설치 파일이 아닙니다. Intel Mac, Windows ARM64 전용, Linux 설치 파일은 현재 제공하지 않습니다.
 
-> **설치 중 보안 경고가 나오나요?** 현재 배포 파일에는 코드 서명과 macOS 공증이 없습니다. 공식 저장소에서 받은 파일인지 확인한 뒤 [Windows 안내](./README.ko.md#windows) 또는 [macOS 안내](./README.ko.md#macos)를 따라 주세요.
+> **설치 중 보안 경고가 나오나요?** v0.1.34부터 macOS는 무료 ad-hoc 서명을 사용하며 Apple 공증은 없습니다. Windows 설치 파일은 서명되지 않습니다. 공식 저장소에서 받은 파일인지 확인한 뒤 [Windows 안내](./README.ko.md#windows) 또는 [macOS 안내](./README.ko.md#macos)를 따라 주세요.
 
 ## 처음 사용하기
 

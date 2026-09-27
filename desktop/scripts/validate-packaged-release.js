@@ -430,6 +430,13 @@ function validate(actionName = action) {
     ? assertInstallerArtifacts({ desktopVersion })
     : [];
 
+  if (process.platform === "darwin") {
+    const { verifyApp, verifyDmg } = require("./verify-macos-signature");
+    const app = path.resolve(path.dirname(appAsarPath), "..", "..");
+    verifyApp(app);
+    for (const dmg of installerArtifacts) verifyDmg(dmg, desktopVersion);
+  }
+
   const metadataPath = latestMetadataPath();
   if (validationMode.requiresReleaseMetadata && metadataPath) {
     assert(fs.existsSync(metadataPath), `Missing release metadata file ${metadataPath}`);

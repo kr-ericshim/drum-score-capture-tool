@@ -11,7 +11,7 @@ Use this checklist immediately before cutting a public release for Drum Sheet Ca
 - [ ] Backend app version matches `desktop/package.json`.
 - [ ] README files still match the actual product behavior and supported platforms.
 - [ ] Public release target is still limited to Windows `x64` and macOS `arm64`.
-- [ ] Team accepts the current unsigned release policy and resulting trust warnings.
+- [ ] Team accepts macOS ad-hoc signing without notarization, unsigned Windows installers, and first-launch trust warnings.
 
 ## Automated Checks
 
@@ -75,8 +75,8 @@ Use this checklist immediately before cutting a public release for Drum Sheet Ca
 
 ## Known Limitations To State Publicly
 
-- [ ] macOS build is currently unsigned, so Gatekeeper warnings are expected.
-- [ ] Release notes or install docs include the exact `xattr -dr com.apple.quarantine ...` command for the app and DMG paths.
+- [ ] macOS app and DMG-contained app pass strict signature verification; Gatekeeper warnings remain expected without notarization.
+- [ ] Install docs describe Open Anyway first and the scoped app quarantine fallback.
 - [ ] macOS Intel or universal builds are not part of the default release target unless explicitly added.
 - [ ] Auto-update is not part of the current release checklist unless updater support is intentionally introduced.
 

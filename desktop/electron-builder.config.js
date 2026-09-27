@@ -143,7 +143,12 @@ baseConfig.electronLanguages = ["en", "ko"];
 baseConfig.mac = {
   ...(baseConfig.mac || {}),
   target: [{ target: "dmg", arch: ["arm64"] }],
-  identity: signingEnabled ? baseConfig.mac?.identity : null,
+  // A free ad-hoc signature must seal the completed bundle, not just its launcher.
+  identity: signingEnabled ? baseConfig.mac?.identity : "-",
+  hardenedRuntime: true,
+  entitlements: path.resolve(__dirname, "build/entitlements.mac.plist"),
+  entitlementsInherit: path.resolve(__dirname, "build/entitlements.mac.plist"),
+  notarize: false,
   icon: path.resolve(__dirname, "build/icon.icns"),
 };
 baseConfig.win = {
