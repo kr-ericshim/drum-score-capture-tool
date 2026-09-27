@@ -333,7 +333,6 @@ export function renderExportScreen(state) {
             <div class="export-progress-strip" role="progressbar" aria-label="${t("export.progressAria", { locale: model.locale })}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${model.progress}">
               <span style="width:${model.progress}%"></span>
             </div>
-            </div>
           ` : ""}
           <div class="export-preview-stage">
             ${model.previewSource
