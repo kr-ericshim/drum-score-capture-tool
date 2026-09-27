@@ -326,12 +326,14 @@ export function renderExportScreen(state) {
             <p>${safePreviewCaption}</p>
           </div>
           ${model.showProgressDetails ? `
+            <div class="export-progress-card">
             <div class="export-progress-summary" role="status" aria-live="polite">
               <span>${safeProgressStatus}</span>
               <strong>${safeProgressLabel}</strong>
             </div>
             <div class="export-progress-strip" role="progressbar" aria-label="${t("export.progressAria", { locale: model.locale })}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${model.progress}">
               <span style="width:${model.progress}%"></span>
+            </div>
             </div>
           ` : ""}
           <div class="export-preview-stage">

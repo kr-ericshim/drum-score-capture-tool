@@ -147,3 +147,36 @@ test("archive modal shows an explicit loading state instead of stale rows during
   assert.match(markup, /Loading archive\.\.\.|보관함을 불러오는 중입니다\./);
   assert.doesNotMatch(markup, /Stale Library Row/);
 });
+
+test("archive modal shows app storage usage and a two-step cache clear", async () => {
+  const { renderArchiveModal } = await import("../features/archive/ArchiveModal.js");
+  const state = createInitialSessionState();
+  state.ui.locale = "en";
+  state.archive.isOpen = true;
+  state.archive.status = "ready";
+  state.archive.storage = { status: "ready", totalHuman: "1.2 GB", totalPaths: 12 };
+
+  let markup = renderArchiveModal(state);
+  assert.match(markup, /1\.2 GB · 12 work folders/);
+  assert.match(markup, /data-action="request-clear-cache"/);
+  assert.doesNotMatch(markup, /data-action="confirm-clear-cache"/);
+
+  state.archive.storage.confirm = true;
+  markup = renderArchiveModal(state);
+  assert.match(markup, /cannot be undone/);
+  assert.match(markup, /data-action="confirm-clear-cache"/);
+  assert.match(markup, /data-action="cancel-clear-cache"/);
+});
+
+test("cache clear is disabled while an export job is running", async () => {
+  const { renderArchiveModal } = await import("../features/archive/ArchiveModal.js");
+  const state = createInitialSessionState();
+  state.ui.locale = "en";
+  state.archive.isOpen = true;
+  state.exportConfig.runStatus = "running";
+  state.archive.storage = { status: "ready", totalHuman: "1.2 GB", totalPaths: 3 };
+
+  const markup = renderArchiveModal(state);
+  assert.match(markup, /data-action="request-clear-cache"[^>]*disabled/);
+  assert.match(markup, /Cannot clear while a job is running\./);
+});

@@ -34,7 +34,7 @@ The workflow YAML below must stay aligned with:
 
 ## Media and Python build prerequisite
 
-Follow [Media toolchain and local release builds](media-toolchain.md) before packaging. FFmpeg and ffprobe are built from pinned LGPL source, not downloaded by npm. Preserve the matching `ffmpeg-*-source.tar.gz` release assets alongside both installers. Use the Python version in `.python-version` and `backend/requirements-build.lock`; local builds can use the separate `backend/.venv-build` environment.
+Follow [Media toolchain and local release builds](media-toolchain.md) before packaging. Normal releases restore the SHA-256-pinned media bundle from `backend/media-tools.lock.json`; they do not compile FFmpeg. The separate Media tools workflow builds FFmpeg and ffprobe from pinned LGPL source when the recipe changes. Preserve the matching `ffmpeg-*-source.tar.gz` release assets alongside both installers. Use the Python version in `.python-version` and `backend/requirements-build.lock`; local builds can use the separate `backend/.venv-build` environment.
 
 ## Pre-Release Checklist
 

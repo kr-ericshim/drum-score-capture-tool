@@ -1,0 +1,194 @@
+[
+  {
+    "screen": "source",
+    "locale": "ko",
+    "width": 1440,
+    "geometry": {
+      "width": 1440,
+      "scroll": 1440,
+      "height": 960,
+      "scrollHeight": 960
+    }
+  },
+  {
+    "screen": "roi",
+    "locale": "ko",
+    "width": 1440,
+    "geometry": {
+      "width": 1440,
+      "scroll": 1440,
+      "height": 960,
+      "scrollHeight": 960
+    }
+  },
+  {
+    "screen": "export",
+    "locale": "ko",
+    "width": 1440,
+    "geometry": {
+      "width": 1440,
+      "scroll": 1440,
+      "height": 960,
+      "scrollHeight": 960
+    }
+  },
+  {
+    "screen": "review",
+    "locale": "ko",
+    "width": 1440,
+    "geometry": {
+      "width": 1440,
+      "scroll": 1440,
+      "height": 960,
+      "scrollHeight": 960
+    }
+  },
+  {
+    "cache": "cancel makes no API call; confirm makes one mock call and resets session; running job disables clear",
+    "locale": "ko"
+  },
+  {
+    "screen": "source",
+    "locale": "en",
+    "width": 1120,
+    "geometry": {
+      "width": 1120,
+      "scroll": 1120,
+      "height": 840,
+      "scrollHeight": 840
+    }
+  },
+  {
+    "screen": "roi",
+    "locale": "en",
+    "width": 1120,
+    "geometry": {
+      "width": 1120,
+      "scroll": 1120,
+      "height": 840,
+      "scrollHeight": 840
+    }
+  },
+  {
+    "screen": "export",
+    "locale": "en",
+    "width": 1120,
+    "geometry": {
+      "width": 1120,
+      "scroll": 1120,
+      "height": 840,
+      "scrollHeight": 840
+    }
+  },
+  {
+    "screen": "review",
+    "locale": "en",
+    "width": 1120,
+    "geometry": {
+      "width": 1120,
+      "scroll": 1120,
+      "height": 840,
+      "scrollHeight": 840
+    }
+  },
+  {
+    "cache": "cancel makes no API call; confirm makes one mock call and resets session; running job disables clear",
+    "locale": "en"
+  },
+  {
+    "screen": "source",
+    "locale": "ko",
+    "width": 1120,
+    "geometry": {
+      "width": 1120,
+      "scroll": 1120,
+      "height": 840,
+      "scrollHeight": 840
+    }
+  },
+  {
+    "screen": "roi",
+    "locale": "ko",
+    "width": 1120,
+    "geometry": {
+      "width": 1120,
+      "scroll": 1120,
+      "height": 840,
+      "scrollHeight": 840
+    }
+  },
+  {
+    "screen": "export",
+    "locale": "ko",
+    "width": 1120,
+    "geometry": {
+      "width": 1120,
+      "scroll": 1120,
+      "height": 840,
+      "scrollHeight": 840
+    }
+  },
+  {
+    "screen": "review",
+    "locale": "ko",
+    "width": 1120,
+    "geometry": {
+      "width": 1120,
+      "scroll": 1120,
+      "height": 840,
+      "scrollHeight": 840
+    }
+  },
+  {
+    "cache": "cancel makes no API call; confirm makes one mock call and resets session; running job disables clear",
+    "locale": "ko"
+  },
+  {
+    "screen": "source",
+    "locale": "en",
+    "width": 1440,
+    "geometry": {
+      "width": 1440,
+      "scroll": 1440,
+      "height": 960,
+      "scrollHeight": 960
+    }
+  },
+  {
+    "screen": "roi",
+    "locale": "en",
+    "width": 1440,
+    "geometry": {
+      "width": 1440,
+      "scroll": 1440,
+      "height": 960,
+      "scrollHeight": 960
+    }
+  },
+  {
+    "screen": "export",
+    "locale": "en",
+    "width": 1440,
+    "geometry": {
+      "width": 1440,
+      "scroll": 1440,
+      "height": 960,
+      "scrollHeight": 960
+    }
+  },
+  {
+    "screen": "review",
+    "locale": "en",
+    "width": 1440,
+    "geometry": {
+      "width": 1440,
+      "scroll": 1440,
+      "height": 960,
+      "scrollHeight": 960
+    }
+  },
+  {
+    "cache": "cancel makes no API call; confirm makes one mock call and resets session; running job disables clear",
+    "locale": "en"
+  }
+]

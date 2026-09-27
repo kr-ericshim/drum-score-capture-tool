@@ -24,7 +24,7 @@ function hasPendingRoiDraft(state) {
   return JSON.stringify(draft) !== JSON.stringify(applied);
 }
 
-function renderPageCard(page, selected, focused, locked, locale) {
+function renderPageCard(page, selected, focused, locked, locale, index = 0) {
   const pageId = escapeHtml(page.id);
   const pageTitle = escapeHtml(page.title);
   const previewPath = escapeHtml(normalizeAssetPath(page.previewPath));
@@ -35,6 +35,7 @@ function renderPageCard(page, selected, focused, locked, locale) {
   const excludeCandidateLabel = escapeHtml(t("review.excludeCandidate", { locale }));
   return `
     <article class="review-card ${selected ? "is-selected" : "is-excluded"} ${focused ? "is-focused" : ""}" role="listitem">
+      <span class="review-card-index" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span>
       <button class="review-card-figure" type="button" data-action="focus-review-page" data-page-id="${pageId}" ${focused ? 'aria-current="page"' : ""}>
         <img src="${previewPath}" alt="${pageTitle}" loading="lazy" />
       </button>
@@ -123,13 +124,16 @@ export function renderReviewScreen(state) {
         </div>
         ${visiblePages.length
           ? `<div class="review-grid" role="list" aria-label="${reviewTitle}">
-              ${visiblePages.map((page) => renderPageCard(page, selectedSet.has(page.id), page.id === focused?.id, busy, locale)).join("")}
+              ${visiblePages.map((page) => renderPageCard(page, selectedSet.has(page.id), page.id === focused?.id, busy, locale, pages.indexOf(page))).join("")}
             </div>`
           : `<div class="review-empty" role="status">
               <strong>${escapeHtml(t(hasPages ? "review.filterEmptyTitle" : "review.emptyTitle", { locale }))}</strong>
               <p>${escapeHtml(t(hasPages ? "review.filterEmptyBody" : "review.emptyBody", { locale }))}</p>
             </div>`}
-        <p id="reviewSaveHint" class="review-save-hint">${saveHint}</p>
+        <div class="review-panel-foot">
+          <p id="reviewSaveHint" class="review-save-hint">${saveHint}</p>
+          ${state.review.outputDir ? `<div class="review-output-path"><span title="${escapeHtml(state.review.outputDir)}">${escapeHtml(state.review.outputDir)}</span><button type="button" class="button button-secondary" data-action="copy-output-dir">${escapeHtml(t("rail.copyPath", { locale }))}</button></div>` : ""}
+        </div>
       </section>
       <section class="review-viewer" aria-label="${reviewTitle}">
         ${focused ? `<div class="review-inspector ${selectedSet.has(focused.id) ? "is-included" : "is-excluded"}">

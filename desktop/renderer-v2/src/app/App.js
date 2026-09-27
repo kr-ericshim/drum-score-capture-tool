@@ -42,6 +42,8 @@ import {
   cropCapture,
   createPreviewSourceJob,
   getArchiveLibrary,
+  getCacheUsage,
+  clearCache,
   getJob,
   getLocalMediaRegistry,
   getPreviewSourceJob,
@@ -414,6 +416,8 @@ export function createApp(root, dependencies = {}) {
   const runtimeApi = dependencies.api
     ? {
       getArchiveLibrary: async () => ({ items: [] }),
+      getCacheUsage: async () => ({ totalPaths: 0, totalBytes: 0, totalHuman: "0 B" }),
+      clearCache: async () => ({ clearedPaths: 0, reclaimedBytes: 0, reclaimedHuman: "0 B", skippedPaths: [] }),
       getLocalMediaRegistry: async () => ({ items: [] }),
       requestPreviewRoiHealth: async () => ({
         riskLevel: "info",
@@ -439,6 +443,8 @@ export function createApp(root, dependencies = {}) {
       cropCapture,
       createPreviewSourceJob,
       getArchiveLibrary,
+      getCacheUsage,
+      clearCache,
       getJob,
       getLocalMediaRegistry,
       getPreviewSourceJob,
@@ -915,6 +921,74 @@ export function createApp(root, dependencies = {}) {
     if (state.ui.backend?.ready && (state.archive.status === "idle" || state.archive.status === "error")) {
       void refreshArchiveLibrary();
     }
+    if (state.ui.backend?.ready) {
+      void refreshCacheUsage();
+    }
+  }
+
+  function setArchiveStorage(patch) {
+    setState((next) => {
+      next.archive.storage = { ...(next.archive.storage || {}), ...patch };
+      return next;
+    });
+  }
+
+  let cacheUsageToken = 0;
+  async function refreshCacheUsage() {
+    if (typeof runtimeApi.getCacheUsage !== "function") {
+      return;
+    }
+    const requestToken = ++cacheUsageToken;
+    setArchiveStorage({ status: "loading" });
+    try {
+      const usage = await runtimeApi.getCacheUsage();
+      if (requestToken !== cacheUsageToken) return;
+      setArchiveStorage({ status: "ready", totalHuman: usage.totalHuman, totalPaths: usage.totalPaths });
+    } catch (_) {
+      if (requestToken !== cacheUsageToken) return;
+      setArchiveStorage({ status: "error" });
+    }
+  }
+
+  async function clearAppCache() {
+    const locale = store.getState().ui.locale || "en";
+    if (typeof runtimeApi.clearCache !== "function") {
+      return;
+    }
+    setArchiveStorage({ status: "clearing", error: "", result: "" });
+    let result;
+    try {
+      result = await runtimeApi.clearCache();
+    } catch (error) {
+      setArchiveStorage({
+        status: "ready",
+        confirm: false,
+        error: error?.status === 409 ? t("archive.storage.blocked", { locale }) : String(error?.message || error),
+      });
+      return;
+    }
+    stopPolling();
+    stopSourcePreparePolling();
+    const skipped = Array.isArray(result?.skippedPaths) ? result.skippedPaths.length : 0;
+    const message = skipped
+      ? t("archive.storage.partial", { locale, replacements: { size: result.reclaimedHuman, count: skipped } })
+      : t("archive.storage.done", { locale, replacements: { size: result.reclaimedHuman } });
+    // Everything the session pointed at (jobs, previews, prepared videos) lived in the cleared folder.
+    setState((next) => {
+      const fresh = createInitialSessionState();
+      fresh.ui.locale = next.ui.locale;
+      fresh.ui.backend = next.ui.backend;
+      fresh.ui.inlineNotice = message;
+      fresh.archive = {
+        ...fresh.archive,
+        isOpen: next.archive.isOpen,
+        storage: { status: "ready", confirm: false, result: message, error: "", totalHuman: next.archive.storage?.totalHuman || "", totalPaths: next.archive.storage?.totalPaths || 0 },
+      };
+      return fresh;
+    });
+    lastStageMarkup = "";
+    refreshCompletedLibraries();
+    void refreshCacheUsage();
   }
 
   function closeArchive() {
@@ -1932,6 +2006,18 @@ export function createApp(root, dependencies = {}) {
     }
     if (action === "close-archive") {
       closeArchive();
+      return;
+    }
+    if (action === "request-clear-cache") {
+      setArchiveStorage({ confirm: true, error: "", result: "" });
+      return;
+    }
+    if (action === "cancel-clear-cache") {
+      setArchiveStorage({ confirm: false });
+      return;
+    }
+    if (action === "confirm-clear-cache") {
+      await clearAppCache();
       return;
     }
     if (action === "retry-archive") {

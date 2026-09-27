@@ -256,3 +256,22 @@ export async function reviewExport(jobId, { keepCaptures = [], keepImages = [], 
     }),
   }, "검토 반영에 실패했습니다.");
 }
+
+export async function getCacheUsage() {
+  const data = await requestApiJson("/maintenance/cache-usage", {}, "저장 공간을 확인하지 못했습니다.");
+  return {
+    totalPaths: Number(data.total_paths || 0),
+    totalBytes: Number(data.total_bytes || 0),
+    totalHuman: String(data.total_human || "0 B"),
+  };
+}
+
+export async function clearCache() {
+  const data = await requestApiJson("/maintenance/clear-cache", { method: "POST" }, "캐시를 비우지 못했습니다.");
+  return {
+    clearedPaths: Number(data.cleared_paths || 0),
+    reclaimedBytes: Number(data.reclaimed_bytes || 0),
+    reclaimedHuman: String(data.reclaimed_human || "0 B"),
+    skippedPaths: Array.isArray(data.skipped_paths) ? data.skipped_paths.map(String) : [],
+  };
+}

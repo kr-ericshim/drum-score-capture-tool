@@ -2,9 +2,15 @@
 
 Capture score regions shown in a video and save them as PNG, JPG, or PDF. This app captures images; it does not transcribe audio into notation or export MusicXML/MIDI.
 
-[Download the latest release](https://github.com/kr-ericshim/drum-score-capture-tool/releases/latest) · [Project home](./README.md) · [한국어](./README.ko.md)
+[Download the latest release](https://github.com/kr-ericshim/drum-score-capture-tool/releases/latest) · [한국어 · Project home](./README.md) · [한국어](./README.ko.md)
 
-This guide follows the v0.1.33 source. Button names and layouts may differ in your installed version; check its release notes.
+This guide follows the development source after v0.1.33. Unreleased features may differ from your installed version; check its release notes.
+
+[Installation](#installation) · [Basic workflow](#basic-workflow) · [Troubleshooting](#troubleshooting)
+
+![Review captures, choose pages to keep, and save the result](./docs/assets/readme/review-en.png)
+
+*Renderer preview using sample data. Your installed version may look different.*
 
 ## Installation
 
@@ -43,11 +49,9 @@ xattr -dr com.apple.quarantine "/actual/download/path/downloaded-file.dmg"
 
 1. **Import a video:** select a local file or prepare a public YouTube URL.
 2. **Select the score area:** load a clear frame and check the suggested capture region (ROI), or draw it manually when no suggestion is available. Suggestions are editable drafts; choose **Apply region** to confirm. Leave enough room for notes, lyrics, and repeat markings.
-3. **Run the capture:** confirm the time range and output formats, then start processing.
-4. **Review the results:** inspect pages and select the captures to keep. When needed, crop captures and rebuild the PDF from the selection.
+3. **Run the capture:** choose PDF, PNG, JPG, or a combination. In versions with **Capture range**, enter **Start** and **End** as seconds (`90`) or minutes:seconds (`1:30`). Leave both empty for the whole video. Range fields were added in the v0.1.33 source; older versions process the whole video. For PDF, enter the required title before starting.
+4. **Review the results:** inspect pages, select the captures to keep, and crop margins if needed. After changing the selection or crops, use **Rebuild PDF** or **Rebuild images** to update the output. Existing files do not change until you rebuild them.
 5. **Save the files:** check the PNG, JPG, or PDF output. Use **Save PDF as…** to save a PDF copy to your preferred location.
-
-The frame selected in the score-area step is only for checking the ROI. Set the processing interval under **Capture range** in the capture step: enter **Start** and **End** as seconds (`90`), minutes:seconds (`1:30`), or hours:minutes:seconds (`1:02:03`). An empty start means the beginning of the video; an empty end means the end of the video. Leave both empty to process the whole video. The end must be after the start and cannot exceed the video duration.
 
 A saved language preference takes priority. Otherwise, Korean system locales start in Korean and other locales start in English.
 
@@ -59,11 +63,9 @@ A saved language preference takes priority. Otherwise, Korean system locales sta
 - Working videos, frames, and results can use much more disk space than the installer. Save important PDFs to a separate folder.
 - Installed builds store working data in a `jobs` directory under the app's user data folder. Development runs use `backend/jobs`.
 
-## Updates
+## Clear app storage
 
-When a newer stable release is available, a notice appears at the bottom of the app. Choose **Download page** to get the installer and install it manually. Updates are not installed automatically. Checking for updates requires an internet connection.
-
-v0.1.32 does not include update notifications. To upgrade from that version to v0.1.33 or later for the first time, download and install it using the release link above.
+Open **Archive → Clear cache**, read the confirmation, then choose **Delete all**. This screen was added after v0.1.33 and is not in that installer. It deletes captures, generated PDFs/images, downloaded YouTube videos and history stored inside the app's working folder. Original local videos and files copied outside that folder remain. Save important results elsewhere first; deletion cannot be undone. Clearing is disabled while work is running.
 
 ## Troubleshooting
 
@@ -74,8 +76,6 @@ v0.1.32 does not include update notifications. To upgrade from that version to v
 | Blurry or incorrect preview | Seek to a frame where the score is still and clear, then reload it. |
 | Notes or page edges are clipped | Adjust the ROI in the original frame and capture again. Zoom into the PDF to check markings above and below the staff. |
 | Unexpected result pages | Check missing, duplicate, or suspicious captures in review, then export the final selection again. |
-
-When an error occurs, choose **Copy diagnostics** at the bottom of the app to copy the app version, OS details, errors, and recent logs. **Report a problem** opens the issue form. Logs are not sent automatically; review the copied text before pasting the relevant details.
 
 Report unresolved issues in [Issues](https://github.com/kr-ericshim/drum-score-capture-tool/issues). Include app version, OS/CPU architecture, local or YouTube input, reproduction steps, and the error message. Remove private file paths and links from logs before sharing.
 

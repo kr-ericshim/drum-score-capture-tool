@@ -1,0 +1,48 @@
+<!doctype html><html lang="ko"><meta charset="utf-8"><link rel="stylesheet" href="/desktop/renderer-v2/src/styles/base.css"><div id="app"></div><script type="module">
+import {createApp} from '/desktop/renderer-v2/src/app/App.js';
+import {bridge} from '/desktop/renderer-v2/src/app/bridge.js';
+window.openedPaths=[];
+window.previewApp=createApp(document.querySelector('#app'), {exposeTestApi:true,
+ readVideoMetadata:async()=>({width:1200,height:1697,durationSec:224,durationLabel:'03:44',resolutionLabel:'1200 × 1697'}),
+ api:{
+ getCacheUsage:async()=>({totalPaths:4,totalBytes:2048,totalHuman:"2 KB"}),
+ clearCache:async()=>{window.cacheClearCalls=(window.cacheClearCalls||0)+1;return {reclaimedHuman:"2 KB",skippedPaths:[]};},
+ requestPreviewFrame:async()=>({imagePath:'http://127.0.0.1:8879/docs/design/assets/score_p1.jpg',sourcePath:'/fixture/frame.jpg',diagnostics:[]}),
+ requestAutoRoi:async()=>({status:'suggested',roi:[[28,28],[1170,28],[1170,1665],[28,1665]],evidenceLevel:'high'}),
+ createJob:async payload=>{window.mockJobPayload=payload;window.mockExport=true;return 'visual-fixture';},
+ listLocalMedia:async()=>({items:[]}), listArchive:async()=>({items:[]}),
+ reviewExport:async(job,options)=>{window.lastReviewRequest=options;await new Promise(r=>setTimeout(r,150));if(window.failRebuild)throw new Error('Fixture: output folder unavailable. Try again.');return {};},
+ getJob:async()=>{const s=previewApp.debug.getState();if(window.mockExport){window.mockExport=false;return {job_id:'visual-fixture',status:'done',progress:1,result:{review_candidates:[1,2,3,4].map(i=>`http://127.0.0.1:8879/docs/design/assets/score_p${i}.jpg`),output_dir:'/fixture/export',pdf:'/fixture/export/score.pdf'}};}return {job_id:'visual-fixture',status:'done',progress:100,result:{review_candidates:s.review.pages.map(p=>p.capturePath),output_dir:'/fixture/export',pdf:'/fixture/export/score.pdf',review_export:{selected_captures:window.lastReviewRequest.keepCaptures,kept_count:window.lastReviewRequest.keepCaptures.length}}};},
+ cropCapture:async(job,path,roi)=>({capture_path:path})
+}, bridge:{...bridge,selectVideoFile:async()=>'/fixture/항해 드럼 악보.mp4',openPath:async p=>{window.openedPaths.push(p);return '';},getBackendState:async()=>({ready:true,running:true,starting:false,error:''})}});
+window.showReview=(status='applied',locale='ko',count=6)=>previewApp.debug.setState(s=>{
+ s.ui.inlineNotice="";s.review.canUndo=false;s.review.canRedo=false;s.ui.locale=locale;s.ui.activeStep='review';
+ s.source.filePath='/fixture/practice.mp4';s.source.displayName='유다빈 밴드 - 항해 · 정기공연 드럼커버와 악보 전체 연습 영상 긴 파일 이름.mp4';s.source.status='ready';
+ s.source.metadata={width:1920,height:1080,durationSec:224,durationLabel:'03:44',resolutionLabel:'1920 × 1080'};
+ s.roi.appliedRect=[[0,0],[320,0],[320,180],[0,180]];s.roi.draftRect=structuredClone(s.roi.appliedRect);
+ s.exportConfig.runStatus='done';s.exportConfig.jobId='visual-fixture';s.exportConfig.formats=['pdf','png'];
+ s.review.pages=Array.from({length:count},(_,i)=>({id:String(i+1),title:locale==='ko'?`캡처 ${i+1}`:`Capture ${i+1}`,capturePath:`http://127.0.0.1:8879/docs/design/assets/score_p${i%4+1}.jpg?capture=${i+1}`,previewPath:`http://127.0.0.1:8879/docs/design/assets/${i===4?'score_blur.jpg':`score_p${i%4+1}.jpg`}`,selectionMode:'captures',suspicious:i===2||i===4,autoExcludeCandidate:i===2,warningReason:i===2?(locale==='ko'?'비슷한 캡처입니다. 악보를 확인한 뒤 포함 여부를 결정하세요.':'Similar capture. Inspect the notation before excluding it.') :i===4?'낮은 대비 또는 흐림이 감지되었습니다.':''}));
+ s.review.selectedPageIds=s.review.pages.filter((p,i)=>i!==2).map(p=>p.id);s.review.focusedPageId='1';s.review.keptCount=s.review.selectedPageIds.length;
+ s.review.pdfPath='/fixture/export/score.pdf';s.review.outputDir='/fixture/export';s.review.status=status;s.review.error='';s.review.filter='all';s.review.zoom='fit';s.review.cropping=false;return s;
+});
+window.showScreen=(step='source',locale='ko',variant='ready')=>{
+ showReview('applied',locale);
+ previewApp.debug.setState(s=>{
+ s.ui.activeStep=step;s.ui.inlineNotice='';s.review.canUndo=false;s.review.canRedo=false;
+ s.source.metadata={width:1200,height:1697,durationSec:224,durationLabel:'03:44',resolutionLabel:'1200 × 1697'};
+ s.source.registryItems=Array.from({length:5},(_,i)=>({filePath:`/fixture/practice-${i}.mp4`,displayName:['유다빈밴드 — 항해 (드럼 악보 포함).mp4','Sunday rehearsal — full drum score take 02.mp4','주일 예배 합주 연습 — 인트로와 브릿지 반복.mp4','Rhythm study — 16th-note groove.mp4','2026년 정기공연 리허설 최종 편집본 아주 긴 파일 이름.mp4'][i],resolutionLabel:'1920 × 1080',durationLabel:'03:44'}));
+ s.roi.previewImage='http://127.0.0.1:8879/docs/design/assets/score_p1.jpg';s.roi.imageWidth=1200;s.roi.imageHeight=1697;s.roi.status='ready';
+ s.roi.appliedRect=[[28,28],[1170,28],[1170,1665],[28,1665]];s.roi.draftRect=structuredClone(s.roi.appliedRect);
+ s.roi.previewCandidates=[{id:'a',title:locale==='ko'?'시작':'Start',time:0,label:'00:00.0'},{id:'b',title:locale==='ko'?'중간':'Middle',time:60,label:'01:00.0'},{id:'c',title:locale==='ko'?'후반':'Later',time:120,label:'02:00.0'}];
+ s.exportConfig.runStatus='idle';s.exportConfig.message='';s.exportConfig.error='';s.exportConfig.progress=0;s.exportConfig.outputDir='/fixture/export';
+ s.source.prepareStatus='idle';s.source.error='';s.source.prepareErrorDetail='';s.source.youtubeUrl='';s.source.prepareLogs=[];
+ if(step==='review')s.exportConfig.runStatus='done';
+ if(variant==='empty'){s.source.filePath='';s.source.displayName='';s.source.registryItems=[];s.source.metadata=null;s.roi.previewImage='';s.roi.appliedRect=null;s.roi.draftRect=null;}
+ if(variant==='error'&&step==='source'){s.source.youtubeUrl='https://www.youtube.com/watch?v=fixture';s.source.prepareStatus='error';s.source.error=locale==='ko'?'영상을 준비하지 못했습니다. 주소를 확인하고 다시 시도하세요.':'Could not prepare this video. Check the URL and try again.';s.source.prepareLogs=['Fixture: network unavailable.'];}
+ if(variant==='draft'){s.roi.draftRect=[[50,80],[1150,80],[1150,1500],[50,1500]];s.roi.autoRoiStatus='suggested';s.roi.autoRoiEvidence='high';}
+ if(variant==='running'){s.exportConfig.runStatus='running';s.exportConfig.progress=.42;s.exportConfig.message='Capturing frames';}
+ if(variant==='error'&&step==='export'){s.exportConfig.runStatus='error';s.exportConfig.error='Output folder is not writable. Select another location and retry.';}
+ return s;});
+};
+showScreen();
+</script></html>

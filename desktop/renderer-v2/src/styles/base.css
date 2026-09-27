@@ -1,8 +1,8 @@
 @import "./tokens.css";
 @import "./layout.css";
 @import "./components.css";
-@import "./review-workbench.css";
 @import "./workspace.css";
+@import "./review-workbench.css";
 
 * {
   box-sizing: border-box;
@@ -50,7 +50,7 @@ img {
 .skip-link {
   position: absolute;
   left: 12px;
-  top: -40px;
+  top: -100px;
   z-index: 999;
   min-height: 44px;
   padding: 9px 12px;

@@ -11,7 +11,30 @@ The app retains **both ffmpeg and ffprobe**. Removing ffprobe is not necessary f
 - LGPL build flags explicitly disable GPL and nonfree components and automatic discovery of local libraries. Native H.264, HEVC and VP9 decoding is retained. Image encoders, MPEG-4/FFV1 test fixtures, AAC, local-file/pipe processing, native platform TLS, and the existing filters/muxers remain available.
 - `uvicorn` uses asyncio/h11 without its standard extra. PyInstaller excludes uvloop, httptools, watchfiles and dotenv even if an old development environment has them installed. WebSockets dependencies used by yt-dlp are retained.
 
-## macOS build
+## Normal app builds: reuse the pinned bundle
+
+The release workflow restores `backend/media-tools.lock.json` with `python scripts/media_bundle.py restore`. It no longer installs MSYS2 or compiles FFmpeg on every app release. The lock pins the repository, content-derived recipe tag, platform asset names and SHA-256 digests. A changed recipe, wrong hash, missing license/source, unexpected archive entry or runtime mismatch fails before packaging.
+
+For local packaging, with Python 3.11 and Node available:
+
+```bash
+python3 scripts/media_bundle.py restore
+# Windows: python scripts/media_bundle.py restore
+```
+
+The command stages the binaries and notices under `backend/bin/`, and the corresponding source archive under `.tmp/media-tools/`. macOS executable permissions are restored. The existing `dist:release` and packaged smoke checks remain required.
+
+### When FFmpeg or the toolchain changes
+
+1. Update `scripts/build-media-tools.sh` and/or `.github/workflows/media-tools.yml`. The workflow, bundle helper and runtime policy also participate in the recipe hash. For a compiler/runner-image refresh with otherwise unchanged sources, change an explicit revision comment in the workflow to give the rebuilt bundle a new identity.
+2. Run **Actions → Media tools → Run workflow** on the reviewed source. It builds and validates Windows x64 and macOS arm64 once. During development, recipe changes pushed to `codex/media-tools-*` also trigger it.
+3. The successful workflow creates a `media-tools-<recipe>` **prerelease**, explicitly not the latest app release. Both platform archives carry executable tools, notices and matching upstream source. It never overwrites an existing recipe release.
+4. Download `media-tools.lock.json` from that tool release and replace `backend/media-tools.lock.json` in the same source revision. Commit the lock with the recipe changes. Do not hand-edit checksums.
+5. Run a Release preflight for the app. Both platforms must restore the bundle and pass packaged smoke tests before merging or tagging an app.
+
+Ordinary app/UI changes need none of these steps. A missing or invalid bundle does not trigger a hidden fallback to a different tool version. To recover, restore the published pinned asset, or build a new reviewed recipe and update its lock. Keep old media releases while app commits still refer to them. For a source-build fallback use the native build instructions below, preserving the same validation and source distribution requirements.
+
+## macOS source build (media maintenance only)
 
 Keep the existing development `.venv` intact. Use the dedicated build environment:
 
@@ -30,7 +53,7 @@ npm --prefix desktop run smoke:packaged-electron
 
 `run-builder.js` prefers `.venv-build`, then compatible existing interpreters. Set `DRUMSHEET_BUILD_PYTHON` to explicitly choose an interpreter. No build mutates the development virtualenv. Build tools get an ad-hoc signature after stripping on arm64; this is **not** Developer ID signing or notarization.
 
-## Windows build
+## Windows source build (media maintenance only)
 
 The release workflow installs the MINGW64 GCC, NASM, pkgconf, zlib, Meson and Ninja toolchain with MSYS2. Run `bash scripts/build-media-tools.sh` from that shell, then run the normal Python/Node build steps. The build must produce x64 executables; staging rejects mismatched executable architecture, wrong FFmpeg versions, GPL/nonfree flags, or absent license/source records. Windows compilation and installed-app behavior must pass on a Windows runner before publication.
 

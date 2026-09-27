@@ -85,6 +85,51 @@ function renderArchiveDetail(item, locale) {
   `;
 }
 
+function isWorkRunning(state) {
+  return state.exportConfig?.runStatus === "running"
+    || state.source?.prepareStatus === "loading"
+    || ["running", "editing"].includes(state.review?.status);
+}
+
+function renderArchiveStorage(state, locale) {
+  const storage = state.archive?.storage || {};
+  const busy = isWorkRunning(state);
+  const clearing = storage.status === "clearing";
+  const usageText = storage.status === "loading"
+    ? t("archive.storage.checking", { locale })
+    : storage.status === "error" || !storage.totalHuman
+      ? t("archive.storage.unknown", { locale })
+      : t("archive.storage.usage", { locale, replacements: { size: storage.totalHuman, count: Number(storage.totalPaths || 0) } });
+  const message = storage.error
+    ? `<p class="archive-storage-message is-error" role="alert">${escapeHtml(storage.error)}</p>`
+    : storage.result
+      ? `<p class="archive-storage-message" role="status">${escapeHtml(storage.result)}</p>`
+      : busy
+        ? `<p class="archive-storage-message">${escapeHtml(t("archive.storage.busy", { locale }))}</p>`
+        : "";
+  return `
+    <footer class="archive-storage" data-archive-storage>
+      <div class="archive-storage-row">
+        <div class="archive-storage-copy">
+          <strong>${escapeHtml(t("archive.storage.title", { locale }))}</strong>
+          <span>${escapeHtml(usageText)}</span>
+        </div>
+        ${storage.confirm ? "" : `<button class="button button-secondary archive-storage-clear" type="button" data-action="request-clear-cache" ${busy || clearing ? "disabled" : ""}>${escapeHtml(t("archive.storage.clear", { locale }))}</button>`}
+      </div>
+      ${storage.confirm ? `
+        <div class="archive-storage-confirm" role="alertdialog" aria-labelledby="archiveStorageWarning">
+          <p id="archiveStorageWarning">${escapeHtml(t("archive.storage.warning", { locale }))}</p>
+          <div class="archive-storage-actions">
+            <button class="button button-danger" type="button" data-action="confirm-clear-cache" ${busy || clearing ? "disabled" : ""}>${escapeHtml(t(clearing ? "archive.storage.clearing" : "archive.storage.confirm", { locale }))}</button>
+            <button class="button button-secondary" type="button" data-action="cancel-clear-cache" ${clearing ? "disabled" : ""}>${escapeHtml(t("archive.storage.cancel", { locale }))}</button>
+          </div>
+        </div>
+      ` : ""}
+      ${message}
+    </footer>
+  `;
+}
+
 export function renderArchiveModal(state) {
   if (!state.archive?.isOpen) {
     return "";
@@ -120,6 +165,7 @@ export function renderArchiveModal(state) {
               ? renderArchiveDetail(selectedItem, locale)
               : renderArchiveList(items, locale)}
         </div>
+        ${renderArchiveStorage(state, locale)}
       </section>
     </div>
   `;

@@ -1,0 +1,962 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>Drum Sheet Capture — 검토 화면 UI 시안 비교</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    /* System Desktop Tokens & Layout */
+    :root {
+      --font-sans: -apple-system, BlinkMacSystemFont, "Pretendard Variable", "Pretendard", "Segoe UI", system-ui, sans-serif;
+      --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      margin: 0;
+      padding: 0;
+      background-color: #0f1115;
+      color: #e6e8ec;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+    .tabular-nums {
+      font-variant-numeric: tabular-nums;
+    }
+    /* Simulation Frame styles */
+    .sim-viewport {
+      transition: width 0.25s cubic-bezier(0.16, 1, 0.3, 1), height 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.1);
+    }
+    /* Custom scrollbars */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.18);
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.3);
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col items-center py-6 px-4">
+
+  <!-- Control Header (Workbench Bar) -->
+  <header class="w-full max-w-[1500px] mb-4 bg-[#181a20] border border-[#2c303b] rounded-xl px-5 py-3.5 flex flex-wrap items-center justify-between gap-4 shadow-lg">
+    <div class="flex items-center gap-3">
+      <div class="w-3 h-3 rounded-full bg-blue-500 animate-pulse"></div>
+      <h1 class="text-sm font-semibold text-white tracking-wide flex items-center gap-2">
+        <span>Drum Sheet Capture</span>
+        <span class="text-xs px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono font-normal">Review UI Prototype</span>
+      </h1>
+      <span class="text-xs text-slate-400 border-l border-slate-700 pl-3">검토 화면 시안 A / B 실시간 비교 및 창 크기 검증</span>
+    </div>
+
+    <!-- Switchers -->
+    <div class="flex flex-wrap items-center gap-4 text-xs">
+      <!-- Proposal Mode Switcher -->
+      <div class="flex items-center bg-[#242731] p-1 rounded-lg border border-[#353945]">
+        <button id="btnOptionA" onclick="setOption('A')" class="px-3 py-1.5 rounded-md font-medium transition-all bg-blue-600 text-white shadow">
+          시안 A: 스마트 사이드레일
+        </button>
+        <button id="btnOptionB" onclick="setOption('B')" class="px-3 py-1.5 rounded-md font-medium transition-all text-slate-400 hover:text-white">
+          시안 B: 전폭 뷰어 & 하단 필름스트립
+        </button>
+      </div>
+
+      <!-- Viewport Size Switcher -->
+      <div class="flex items-center gap-1.5 bg-[#242731] p-1 rounded-lg border border-[#353945]">
+        <span class="text-slate-400 px-2 font-mono">창 크기:</span>
+        <button id="btnSize1440" onclick="setSize(1440, 960)" class="px-2.5 py-1.5 rounded font-mono font-medium transition-all bg-[#353945] text-white">
+          1440 × 960 (기본)
+        </button>
+        <button id="btnSize1120" onclick="setSize(1120, 840)" class="px-2.5 py-1.5 rounded font-mono font-medium transition-all text-slate-400 hover:text-white">
+          1120 × 840 (최소)
+        </button>
+      </div>
+
+      <!-- Save State Toggle -->
+      <div class="flex items-center gap-2 bg-[#242731] px-3 py-1.5 rounded-lg border border-[#353945]">
+        <span class="text-slate-400">PDF 상태:</span>
+        <span id="headerPdfStateBadge" class="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-400">
+          <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+          <span>최신본 생성됨</span>
+        </span>
+        <button onclick="toggleDirtyState()" class="ml-1 text-[11px] text-slate-300 underline hover:text-white">상태 토글</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Prototype Outer Viewport Container -->
+  <main class="w-full flex flex-col items-center overflow-x-auto pb-12">
+    <div id="simViewport" class="sim-viewport bg-[#121316] text-[#e0e2e8] rounded-lg overflow-hidden border border-[#2b2e38] flex flex-col" style="width: 1440px; height: 960px;">
+      
+      <!-- ======================================================== -->
+      <!-- PROPOSAL A: SMART SIDE-RAIL WORKBENCH                     -->
+      <!-- ======================================================== -->
+      <div id="viewOptionA" class="w-full h-full flex flex-col bg-[#16181d]">
+        
+        <!-- App Top Header (Integrated & Compact) -->
+        <header class="h-14 border-b border-[#282b35] bg-[#1a1d24] px-5 flex items-center justify-between shrink-0 select-none">
+          <div class="flex items-center gap-3 min-w-0 pr-4">
+            <!-- Step Breadcrumb -->
+            <div class="flex items-center gap-1.5 text-xs text-slate-400 shrink-0">
+              <span class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">4단계</span>
+              <span class="font-semibold text-white">결과 검토 및 저장</span>
+              <span class="text-slate-600">/</span>
+            </div>
+            <!-- Long Korean Filename with Tooltip -->
+            <div class="flex items-center gap-2 min-w-0" title="2024_정기공연_앙상블_유다빈밴드_항해_드럼악보_최종검토_수정본(연주_악보포함).mp4">
+              <span class="text-xs font-medium text-slate-200 truncate max-w-[340px] tracking-tight">
+                2024_정기공연_앙상블_유다빈밴드_항해_드럼악보_최종검토_수정본(연주_악보포함).mp4
+              </span>
+              <span class="text-[11px] font-mono text-slate-400 shrink-0 px-1.5 py-0.5 rounded bg-[#242833] border border-[#313645]">
+                4K 60fps · 03:52
+              </span>
+            </div>
+          </div>
+
+          <!-- Top Action Center: Distinction between Rebuild, Open, Save As -->
+          <div class="flex items-center gap-2.5 shrink-0">
+            <!-- Dirty / Up-to-date Status Indicator -->
+            <div id="optionA_statusPill" class="flex items-center gap-2 text-xs px-2.5 py-1 rounded bg-emerald-950/60 border border-emerald-800/60 text-emerald-300">
+              <svg class="w-3.5 h-3.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+              </svg>
+              <span id="optionA_statusText" class="font-medium">저장된 PDF와 일치함 (5 / 6장)</span>
+            </div>
+
+            <!-- PDF Rebuild Button (Conditional Primary) -->
+            <button id="optionA_btnRebuild" onclick="rebuildPdf()" class="h-8 px-3.5 rounded text-xs font-medium transition-all flex items-center gap-1.5 bg-[#252834] text-slate-300 hover:bg-[#303444] border border-[#3b4052]">
+              <svg class="w-3.5 h-3.5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              <span id="optionA_rebuildLabel">PDF 다시 만들기</span>
+            </button>
+
+            <!-- Open Saved PDF (Primary when up to date) -->
+            <button id="optionA_btnOpen" onclick="openPdf()" class="h-8 px-3.5 rounded text-xs font-medium transition-all flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white shadow-sm">
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+              <span>저장된 PDF 열기</span>
+            </button>
+
+            <!-- Save As -->
+            <button onclick="savePdfAs()" class="h-8 px-3 rounded text-xs font-medium bg-[#252834] hover:bg-[#303444] text-slate-200 border border-[#3b4052] flex items-center gap-1">
+              <span>다른 이름으로 저장…</span>
+            </button>
+
+            <!-- Open Folder -->
+            <button onclick="openFolder()" class="h-8 w-8 flex items-center justify-center rounded bg-[#252834] hover:bg-[#303444] text-slate-300 border border-[#3b4052]" title="저장 폴더 열기">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+              </svg>
+            </button>
+          </div>
+        </header>
+
+        <!-- Main Workspace (Split: Left Rail + Right Viewer) -->
+        <div class="flex-1 flex overflow-hidden">
+          
+          <!-- Left Sidebar: Thumbnail Rail (Fixed width 290px) -->
+          <aside class="w-[290px] border-r border-[#282b35] bg-[#181a22] flex flex-col shrink-0 select-none">
+            <!-- Filter & Selection Bar -->
+            <div class="p-3 border-b border-[#282b35] flex flex-col gap-2.5 bg-[#1b1e27]">
+              <!-- Filter Tabs -->
+              <div class="flex items-center justify-between text-xs">
+                <div class="flex p-0.5 rounded bg-[#121318] border border-[#2a2d38]">
+                  <button id="filterAll_A" onclick="setFilter('all')" class="px-2.5 py-1 rounded text-xs font-medium bg-[#2b2f3d] text-white">
+                    전체 <span id="countAll_A" class="font-mono">6</span>
+                  </button>
+                  <button id="filterSus_A" onclick="setFilter('suspicious')" class="px-2.5 py-1 rounded text-xs font-medium text-amber-400 hover:text-amber-300">
+                    의심만 <span id="countSus_A" class="font-mono">2</span>
+                  </button>
+                </div>
+
+                <div class="flex items-center gap-1 text-[11px] text-slate-400">
+                  <button onclick="selectAll(true)" class="hover:text-blue-400">전체 선택</button>
+                  <span class="text-slate-600">·</span>
+                  <button onclick="selectAll(false)" class="hover:text-rose-400">전체 해제</button>
+                </div>
+              </div>
+
+              <!-- Quick Status summary -->
+              <div class="text-[11px] text-slate-400 flex items-center justify-between">
+                <span>최종 PDF에 포함: <b id="keptCountLabel_A" class="text-white font-mono">5</b> / 6장</span>
+                <span class="text-amber-400 font-medium">⚠️ 1건 제외 권장</span>
+              </div>
+            </div>
+
+            <!-- Scrollable Cards List -->
+            <div id="cardList_A" class="flex-1 overflow-y-auto p-3 space-y-2.5">
+              <!-- Rendered via JS -->
+            </div>
+          </aside>
+
+          <!-- Right Stage: Inspector Header + Score Viewer Surface -->
+          <section class="flex-1 flex flex-col min-w-0 bg-[#0e1014] relative">
+            
+            <!-- Contextual Banner: Current Focused Page Status -->
+            <div id="inspectorBanner_A" class="px-5 py-2.5 border-b border-[#242732] bg-[#161820] flex items-center justify-between text-xs">
+              <!-- Left: Inclusion status of the CURRENT page -->
+              <div class="flex items-center gap-3 min-w-0">
+                <div id="focusInclusionBadge_A" class="flex items-center gap-1.5 px-2.5 py-1 rounded font-medium">
+                  <!-- Dynamic JS -->
+                </div>
+                <div class="text-slate-300 truncate">
+                  <span id="focusPageTitle_A" class="font-semibold text-white">00:00:15 - 도입부 및 인트로</span>
+                  <span id="focusWarningReason_A" class="ml-2 text-xs"></span>
+                </div>
+              </div>
+
+              <!-- Right: Quick Action on Current Page (Toggle inclusion without hunting in sidebar) -->
+              <div class="flex items-center gap-2 shrink-0">
+                <button id="btnQuickToggle_A" onclick="toggleCurrentPageInclusion()" class="h-7 px-3 rounded text-xs font-medium border transition-colors">
+                  <!-- Dynamic JS -->
+                </button>
+                <div class="h-4 w-px bg-slate-700 mx-1"></div>
+                <!-- Nav buttons -->
+                <button onclick="navigatePage(-1)" class="h-7 px-2 rounded bg-[#222530] text-slate-300 hover:text-white hover:bg-[#2b2f3d]" title="이전 페이지 (←)">
+                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" /></svg>
+                </button>
+                <span id="pageNavPos_A" class="text-xs font-mono text-slate-400 px-1">1 / 6</span>
+                <button onclick="navigatePage(1)" class="h-7 px-2 rounded bg-[#222530] text-slate-300 hover:text-white hover:bg-[#2b2f3d]" title="다음 페이지 (→)">
+                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg>
+                </button>
+              </div>
+            </div>
+
+            <!-- Score Viewport Stage -->
+            <div id="viewerCanvasStage_A" class="flex-1 overflow-auto p-6 flex items-center justify-center relative bg-[#0b0c0f]">
+              <!-- Score Sheet Card (White Paper Simulation) -->
+              <div id="scoreSheet_A" class="relative bg-white rounded shadow-2xl transition-transform duration-150 origin-center max-h-full flex items-center justify-center border border-slate-300">
+                <!-- Watermark or Excluded Dim Overlay if not included -->
+                <div id="excludedOverlay_A" class="hidden absolute inset-0 bg-slate-900/60 backdrop-blur-[1px] rounded flex flex-col items-center justify-center p-6 text-center z-10">
+                  <div class="px-4 py-2 rounded-lg bg-rose-950/90 border border-rose-600 text-rose-200 text-sm font-semibold flex items-center gap-2 shadow-xl mb-2">
+                    <svg class="w-5 h-5 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                    </svg>
+                    <span>이 캡처는 최종 PDF에서 제외되었습니다</span>
+                  </div>
+                  <p class="text-xs text-slate-300 mb-3 max-w-sm">내보내기 결과에 포함되지 않습니다. 아래 버튼을 눌러 다시 포함할 수 있습니다.</p>
+                  <button onclick="toggleCurrentPageInclusion()" class="px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium shadow-md">
+                    최종 PDF에 다시 포함하기
+                  </button>
+                </div>
+
+                <img id="scoreImg_A" src="./assets/score_p1.jpg" alt="악보 이미지" class="max-h-[820px] max-w-full object-contain rounded select-none pointer-events-none" />
+              </div>
+
+              <!-- Floating Viewer Controls (Zoom / Crop Pill) -->
+              <div class="absolute bottom-5 left-1/2 -translate-x-1/2 bg-[#1a1d26]/90 backdrop-blur-md border border-[#313645] rounded-full px-3 py-1.5 flex items-center gap-2 shadow-2xl text-xs z-20">
+                <button onclick="changeZoom(-0.15)" class="p-1 rounded text-slate-300 hover:text-white hover:bg-slate-700/50" title="축소 (-)">
+                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4" /></svg>
+                </button>
+                <span id="zoomPercentLabel_A" class="font-mono text-slate-200 min-w-[45px] text-center">맞춤</span>
+                <button onclick="changeZoom(0.15)" class="p-1 rounded text-slate-300 hover:text-white hover:bg-slate-700/50" title="확대 (+)">
+                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" /></svg>
+                </button>
+                <button onclick="resetZoom()" class="px-2 py-0.5 rounded text-[11px] bg-slate-800 text-slate-300 hover:text-white">화면맞춤</button>
+                <div class="h-3 w-px bg-slate-700"></div>
+                <button onclick="alert('영역 자르기 모드')" class="px-2 py-0.5 rounded text-[11px] bg-slate-800 text-slate-300 hover:text-white flex items-center gap-1">
+                  <svg class="w-3 h-3 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                  <span>자르기</span>
+                </button>
+              </div>
+
+              <!-- Shortcut Hint Pill -->
+              <div class="absolute bottom-5 right-5 text-[11px] text-slate-400 bg-slate-900/80 px-2.5 py-1 rounded border border-slate-800 pointer-events-none">
+                <span class="text-slate-300 font-mono">Space</span> 포함/제외 토글 · <span class="text-slate-300 font-mono">←/→</span> 이동
+              </div>
+            </div>
+          </section>
+
+        </div>
+      </div>
+
+
+      <!-- ======================================================== -->
+      <!-- PROPOSAL B: FULL-WIDTH VIEWER & FILMSTRIP TIMELINE       -->
+      <!-- ======================================================== -->
+      <div id="viewOptionB" class="w-full h-full flex flex-col bg-[#121418] hidden">
+        
+        <!-- App Top Header (Streamlined) -->
+        <header class="h-14 border-b border-[#282b35] bg-[#181a21] px-5 flex items-center justify-between shrink-0 select-none">
+          <div class="flex items-center gap-3 min-w-0 pr-4">
+            <span class="px-2 py-0.5 rounded bg-blue-900/50 text-blue-300 text-xs font-semibold">드럼 악보 검토</span>
+            <div class="flex items-center gap-2 min-w-0" title="2024_정기공연_앙상블_유다빈밴드_항해_드럼악보_최종검토_수정본(연주_악보포함).mp4">
+              <span class="text-xs font-medium text-slate-100 truncate max-w-[420px]">
+                2024_정기공연_앙상블_유다빈밴드_항해_드럼악보_최종검토_수정본(연주_악보포함).mp4
+              </span>
+            </div>
+          </div>
+
+          <!-- Top Actions -->
+          <div class="flex items-center gap-3 shrink-0">
+            <!-- Dirty / Clean status tag -->
+            <span id="optionB_statusTag" class="text-xs px-2.5 py-1 rounded font-medium bg-emerald-950/70 border border-emerald-800 text-emerald-300">
+              최신 PDF 준비됨 (5장)
+            </span>
+
+            <div class="flex items-center gap-2">
+              <button id="optionB_btnRebuild" onclick="rebuildPdf()" class="h-8 px-3.5 rounded text-xs font-medium transition-all bg-[#252834] text-slate-300 border border-[#3c4254] hover:bg-[#2f3342] flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                <span id="optionB_rebuildLabel">PDF 다시 만들기</span>
+              </button>
+              <button id="optionB_btnOpen" onclick="openPdf()" class="h-8 px-4 rounded text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white shadow-sm flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                <span>PDF 열기</span>
+              </button>
+              <button onclick="savePdfAs()" class="h-8 px-3 rounded text-xs font-medium bg-[#252834] hover:bg-[#303444] text-slate-200 border border-[#3c4254]">
+                다른 이름으로 저장…
+              </button>
+            </div>
+          </div>
+        </header>
+
+        <!-- Main Body: Big Stage + Right Info Column -->
+        <div class="flex-1 flex overflow-hidden">
+          
+          <!-- Big Central Score Stage (Full-width prominence) -->
+          <div class="flex-1 flex flex-col min-w-0 bg-[#0c0d10] relative">
+            
+            <!-- Focused Inspector Mini-bar -->
+            <div class="h-10 border-b border-[#222530] bg-[#14161d] px-5 flex items-center justify-between text-xs shrink-0 select-none">
+              <div class="flex items-center gap-3">
+                <span id="focusPageBadge_B" class="px-2 py-0.5 rounded text-[11px] font-medium font-mono">P.1</span>
+                <span id="focusPageTitle_B" class="font-semibold text-white">00:00:15 - 도입부 및 인트로</span>
+                <span id="focusPageWarning_B" class="text-xs"></span>
+              </div>
+              
+              <!-- Quick Inclusion Switch & Zoom Controls -->
+              <div class="flex items-center gap-4">
+                <label class="flex items-center gap-2 cursor-pointer text-xs">
+                  <input id="chkFocusInclude_B" type="checkbox" onchange="toggleCurrentPageInclusion()" class="w-4 h-4 rounded text-blue-600 focus:ring-0 bg-[#252834] border-slate-600 cursor-pointer" checked>
+                  <span id="chkFocusIncludeLabel_B" class="text-slate-200 font-medium">최종 PDF 포함</span>
+                </label>
+                <div class="h-3 w-px bg-slate-700"></div>
+                <div class="flex items-center gap-1">
+                  <button onclick="changeZoom(-0.15)" class="p-1 rounded text-slate-400 hover:text-white">－</button>
+                  <span id="zoomPercentLabel_B" class="font-mono text-slate-300 text-[11px] min-w-[36px] text-center">맞춤</span>
+                  <button onclick="changeZoom(0.15)" class="p-1 rounded text-slate-400 hover:text-white">＋</button>
+                  <button onclick="resetZoom()" class="text-[11px] text-slate-400 hover:text-white ml-1">초기화</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Score Viewport -->
+            <div id="viewerCanvasStage_B" class="flex-1 overflow-auto p-4 flex items-center justify-center relative">
+              <div id="scoreSheet_B" class="relative bg-white rounded shadow-2xl transition-transform duration-150 origin-center max-h-full flex items-center justify-center border border-slate-300">
+                <!-- Excluded Dim Overlay -->
+                <div id="excludedOverlay_B" class="hidden absolute inset-0 bg-slate-900/60 backdrop-blur-[1px] rounded flex flex-col items-center justify-center p-6 text-center z-10">
+                  <span class="px-3 py-1 rounded bg-rose-900/90 text-rose-200 text-xs font-semibold border border-rose-500 mb-2">
+                    최종 산출물에서 제외된 캡처
+                  </span>
+                  <button onclick="toggleCurrentPageInclusion()" class="px-3 py-1 rounded bg-blue-600 text-white text-xs font-medium">
+                    다시 포함하기
+                  </button>
+                </div>
+                <img id="scoreImg_B" src="./assets/score_p1.jpg" alt="악보 이미지" class="max-h-[680px] max-w-full object-contain rounded select-none pointer-events-none" />
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Right Sidebar: Output Summary & Risk Auditor (Width 260px) -->
+          <aside class="w-[260px] border-l border-[#282b35] bg-[#161821] p-4 flex flex-col justify-between shrink-0 select-none">
+            <div class="space-y-4">
+              <!-- Summary Title -->
+              <div>
+                <h3 class="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">출력 상태 요약</h3>
+                <div class="bg-[#1e212b] p-3 rounded-lg border border-[#2d3242] space-y-2 text-xs">
+                  <div class="flex justify-between">
+                    <span class="text-slate-400">총 캡처 수:</span>
+                    <span class="font-mono text-white">6 프레임</span>
+                  </div>
+                  <div class="flex justify-between">
+                    <span class="text-slate-400">PDF 포함:</span>
+                    <span id="summaryKept_B" class="font-mono font-bold text-blue-400">5 페이지</span>
+                  </div>
+                  <div class="flex justify-between">
+                    <span class="text-slate-400">제외된 캡처:</span>
+                    <span id="summaryExcluded_B" class="font-mono text-rose-400">1 건</span>
+                  </div>
+                  <div class="pt-2 border-t border-slate-700/60 flex justify-between text-[11px]">
+                    <span class="text-slate-400">출력 포맷:</span>
+                    <span class="font-mono text-slate-200">PDF · PNG</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Risk Auditor Notice -->
+              <div>
+                <h3 class="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">캡처 품질 검사</h3>
+                <div class="bg-amber-950/30 border border-amber-800/50 rounded-lg p-3 text-xs text-amber-200 space-y-2">
+                  <div class="flex items-center gap-1.5 font-medium text-amber-300">
+                    <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                    <span>의심 캡처 2건 감지</span>
+                  </div>
+                  <ul class="text-[11px] text-amber-300/80 space-y-1 pl-4 list-disc">
+                    <li>3번: 직전 페이지와 97% 중복 (자동 제외됨)</li>
+                    <li>5번: 모션 블러 및 저대비 감지</li>
+                  </ul>
+                  <button onclick="setFilter('suspicious')" class="w-full mt-1 py-1 rounded bg-amber-900/50 hover:bg-amber-800/50 text-amber-200 text-[11px] font-medium border border-amber-700/60">
+                    의심 캡처만 순서대로 확인
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Bottom Actions -->
+            <div class="pt-3 border-t border-[#282b35] space-y-2">
+              <button onclick="openFolder()" class="w-full py-1.5 rounded text-xs font-medium bg-[#232733] hover:bg-[#2b3040] text-slate-300 border border-[#353a4c] flex items-center justify-center gap-1.5">
+                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
+                <span>결과 폴더 열기</span>
+              </button>
+            </div>
+          </aside>
+
+        </div>
+
+        <!-- Bottom Horizontal Filmstrip Track (Height 150px) -->
+        <div class="h-[150px] border-t border-[#282b35] bg-[#161822] px-4 py-2.5 flex flex-col shrink-0 select-none">
+          <div class="flex items-center justify-between mb-1.5 text-xs text-slate-400">
+            <span class="font-medium text-slate-300 flex items-center gap-1.5">
+              <span>캡처 타임라인</span>
+              <span class="text-[11px] text-slate-500 font-mono">(좌우 스크롤 또는 방향키 이동)</span>
+            </span>
+            <div class="flex items-center gap-3 text-[11px]">
+              <span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded bg-blue-600"></span> 포함</span>
+              <span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded bg-slate-700"></span> 제외</span>
+              <span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded bg-amber-500"></span> 의심</span>
+            </div>
+          </div>
+
+          <!-- Filmstrip Track Items Container -->
+          <div id="filmstripTrack_B" class="flex-1 flex items-center gap-3 overflow-x-auto py-1">
+            <!-- Rendered via JS -->
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  </main>
+
+  <!-- Interactive Logic -->
+  <script>
+    // State management for prototype
+    const pagesData = [
+      {
+        id: "p1",
+        num: 1,
+        time: "00:00:15",
+        title: "도입부 및 인트로",
+        img: "./assets/score_p1.jpg",
+        thumb: "./assets/thumb_p1.jpg",
+        included: true,
+        suspicious: false,
+        warningReason: ""
+      },
+      {
+        id: "p2",
+        num: 2,
+        time: "00:00:48",
+        title: "1절 A 파트",
+        img: "./assets/score_p2.jpg",
+        thumb: "./assets/thumb_p2.jpg",
+        included: true,
+        suspicious: false,
+        warningReason: ""
+      },
+      {
+        id: "p3",
+        num: 3,
+        time: "00:01:42",
+        title: "1절 코러스 전환 (중복)",
+        img: "./assets/score_p2.jpg", // Duplicate of page 2
+        thumb: "./assets/thumb_p2.jpg",
+        included: false, // Auto-excluded candidate
+        suspicious: true,
+        autoExcludeCandidate: true,
+        warningReason: "이전 2페이지와 97.4% 일치하는 중복 캡처"
+      },
+      {
+        id: "p4",
+        num: 4,
+        time: "00:02:15",
+        title: "2절 벌스",
+        img: "./assets/score_p3.jpg",
+        thumb: "./assets/thumb_p3.jpg",
+        included: true,
+        suspicious: false,
+        warningReason: ""
+      },
+      {
+        id: "p5",
+        num: 5,
+        time: "00:03:05",
+        title: "솔로 브레이크 (흐림)",
+        img: "./assets/score_blur.jpg",
+        thumb: "./assets/thumb_blur.jpg",
+        included: true, // suspicious but user kept
+        suspicious: true,
+        autoExcludeCandidate: false,
+        warningReason: "모션 블러 및 저대비 감지 (음표 판별률 61%)"
+      },
+      {
+        id: "p6",
+        num: 6,
+        time: "00:03:40",
+        title: "아웃트로 및 피날레",
+        img: "./assets/score_p4.jpg",
+        thumb: "./assets/thumb_p4.jpg",
+        included: true,
+        suspicious: false,
+        warningReason: ""
+      }
+    ];
+
+    let currentOption = 'A';
+    let focusedIndex = 0;
+    let filterMode = 'all'; // 'all' or 'suspicious'
+    let isDirty = false; // Whether selection changed since last PDF build
+    let zoomLevel = 1.0;
+
+    // Initialize
+    function init() {
+      renderOptionA();
+      renderOptionB();
+      updateFocusedView();
+      updateDirtyUI();
+    }
+
+    // Switch Option A / B
+    function setOption(opt) {
+      currentOption = opt;
+      const btnA = document.getElementById('btnOptionA');
+      const btnB = document.getElementById('btnOptionB');
+      const viewA = document.getElementById('viewOptionA');
+      const viewB = document.getElementById('viewOptionB');
+
+      if (opt === 'A') {
+        btnA.className = "px-3 py-1.5 rounded-md font-medium transition-all bg-blue-600 text-white shadow";
+        btnB.className = "px-3 py-1.5 rounded-md font-medium transition-all text-slate-400 hover:text-white";
+        viewA.classList.remove('hidden');
+        viewB.classList.add('hidden');
+      } else {
+        btnB.className = "px-3 py-1.5 rounded-md font-medium transition-all bg-blue-600 text-white shadow";
+        btnA.className = "px-3 py-1.5 rounded-md font-medium transition-all text-slate-400 hover:text-white";
+        viewB.classList.remove('hidden');
+        viewA.classList.add('hidden');
+      }
+      resetZoom();
+      updateFocusedView();
+    }
+
+    // Set Viewport Size
+    function setSize(w, h) {
+      const vp = document.getElementById('simViewport');
+      const b1440 = document.getElementById('btnSize1440');
+      const b1120 = document.getElementById('btnSize1120');
+
+      vp.style.width = w + 'px';
+      vp.style.height = h + 'px';
+
+      if (w === 1440) {
+        b1440.className = "px-2.5 py-1.5 rounded font-mono font-medium transition-all bg-[#353945] text-white";
+        b1120.className = "px-2.5 py-1.5 rounded font-mono font-medium transition-all text-slate-400 hover:text-white";
+      } else {
+        b1120.className = "px-2.5 py-1.5 rounded font-mono font-medium transition-all bg-[#353945] text-white";
+        b1440.className = "px-2.5 py-1.5 rounded font-mono font-medium transition-all text-slate-400 hover:text-white";
+      }
+    }
+
+    // Filter Switcher
+    function setFilter(mode) {
+      filterMode = mode;
+      renderOptionA();
+      renderOptionB();
+      // Ensure focused item is visible in filtered list
+      const visible = getVisiblePages();
+      if (!visible.some(p => p.id === pagesData[focusedIndex].id)) {
+        if (visible.length > 0) {
+          focusedIndex = pagesData.findIndex(p => p.id === visible[0].id);
+        }
+      }
+      updateFocusedView();
+    }
+
+    function getVisiblePages() {
+      if (filterMode === 'suspicious') {
+        return pagesData.filter(p => p.suspicious);
+      }
+      return pagesData;
+    }
+
+    // Focus Page
+    function focusPage(index) {
+      focusedIndex = index;
+      updateFocusedView();
+    }
+
+    function navigatePage(direction) {
+      const visible = getVisiblePages();
+      const currentPos = visible.findIndex(p => p.id === pagesData[focusedIndex].id);
+      const nextPos = currentPos + direction;
+      if (nextPos >= 0 && nextPos < visible.length) {
+        focusedIndex = pagesData.findIndex(p => p.id === visible[nextPos].id);
+        updateFocusedView();
+      }
+    }
+
+    // Toggle Inclusion of a Page
+    function togglePageInclusion(index, event) {
+      if (event) event.stopPropagation();
+      pagesData[index].included = !pagesData[index].included;
+      isDirty = true;
+      renderOptionA();
+      renderOptionB();
+      updateFocusedView();
+      updateDirtyUI();
+    }
+
+    function toggleCurrentPageInclusion() {
+      togglePageInclusion(focusedIndex);
+    }
+
+    function selectAll(state) {
+      pagesData.forEach(p => p.included = state);
+      isDirty = true;
+      renderOptionA();
+      renderOptionB();
+      updateFocusedView();
+      updateDirtyUI();
+    }
+
+    function toggleDirtyState() {
+      isDirty = !isDirty;
+      updateDirtyUI();
+    }
+
+    function rebuildPdf() {
+      isDirty = false;
+      updateDirtyUI();
+      alert("✅ 변경된 선택(총 " + pagesData.filter(p => p.included).length + "장)을 반영하여 새 PDF를 생성했습니다.");
+    }
+
+    function openPdf() {
+      if (isDirty) {
+        if (!confirm("⚠️ 주의: 선택 항목이 변경되었으나 아직 PDF가 다시 생성되지 않았습니다.\n이전 버전의 PDF를 여시겠습니까?")) return;
+      }
+      alert("📄 저장된 PDF 문서를 시스템 기본 뷰어로 엽니다.");
+    }
+
+    function savePdfAs() {
+      alert("💾 'PDF 다른 이름으로 저장…' 대화상자를 엽니다.");
+    }
+
+    function openFolder() {
+      alert("📁 산출물 저장 디렉토리를 탐색기/Finder로 엽니다.");
+    }
+
+    // Update Dirty / Rebuild status across all screens
+    function updateDirtyUI() {
+      const keptCount = pagesData.filter(p => p.included).length;
+
+      // Header Global Badge
+      const hBadge = document.getElementById('headerPdfStateBadge');
+      if (isDirty) {
+        hBadge.className = "inline-flex items-center gap-1.5 text-[11px] font-medium text-amber-400";
+        hBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span><span>선택 변경됨 (PDF 재생성 필요)</span>`;
+      } else {
+        hBadge.className = "inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-400";
+        hBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400"></span><span>최신본 생성됨</span>`;
+      }
+
+      // Option A
+      const statusPillA = document.getElementById('optionA_statusPill');
+      const statusTextA = document.getElementById('optionA_statusText');
+      const btnRebuildA = document.getElementById('optionA_btnRebuild');
+      const btnOpenA = document.getElementById('optionA_btnOpen');
+      const rebuildLabelA = document.getElementById('optionA_rebuildLabel');
+
+      if (isDirty) {
+        statusPillA.className = "flex items-center gap-2 text-xs px-2.5 py-1 rounded bg-amber-950/70 border border-amber-700 text-amber-300";
+        statusPillA.innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span><span>선택 변경됨 (PDF 재생성 대기)</span>`;
+        btnRebuildA.className = "h-8 px-3.5 rounded text-xs font-semibold transition-all flex items-center gap-1.5 bg-amber-600 hover:bg-amber-500 text-slate-950 shadow-md ring-2 ring-amber-400/40";
+        rebuildLabelA.innerText = `PDF 다시 만들기 (${keptCount}장 반영)`;
+        btnOpenA.className = "h-8 px-3.5 rounded text-xs font-medium transition-all flex items-center gap-1.5 bg-[#252834] text-slate-400 hover:bg-[#303444] border border-[#3b4052]";
+        btnOpenA.title = "현재 생성된 파일은 이전 선택본입니다.";
+      } else {
+        statusPillA.className = "flex items-center gap-2 text-xs px-2.5 py-1 rounded bg-emerald-950/60 border border-emerald-800/60 text-emerald-300";
+        statusPillA.innerHTML = `<svg class="w-3.5 h-3.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg><span>저장된 PDF와 일치함 (${keptCount} / 6장)</span>`;
+        btnRebuildA.className = "h-8 px-3.5 rounded text-xs font-medium transition-all flex items-center gap-1.5 bg-[#252834] text-slate-300 hover:bg-[#303444] border border-[#3b4052]";
+        rebuildLabelA.innerText = "PDF 다시 만들기";
+        btnOpenA.className = "h-8 px-3.5 rounded text-xs font-medium transition-all flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white shadow-sm";
+        btnOpenA.title = "최신 PDF 파일 열기";
+      }
+
+      // Option B
+      const tagB = document.getElementById('optionB_statusTag');
+      const btnRebuildB = document.getElementById('optionB_btnRebuild');
+      const btnOpenB = document.getElementById('optionB_btnOpen');
+      const rebuildLabelB = document.getElementById('optionB_rebuildLabel');
+
+      if (isDirty) {
+        tagB.className = "text-xs px-2.5 py-1 rounded font-medium bg-amber-950/80 border border-amber-600 text-amber-300";
+        tagB.innerText = `변경사항 미반영 (${keptCount}장)`;
+        btnRebuildB.className = "h-8 px-3.5 rounded text-xs font-semibold bg-amber-600 hover:bg-amber-500 text-slate-950 shadow-md ring-2 ring-amber-400/40 flex items-center gap-1.5";
+        rebuildLabelB.innerText = `PDF 다시 만들기`;
+        btnOpenB.className = "h-8 px-4 rounded text-xs font-medium bg-[#252834] text-slate-400 border border-[#3c4254]";
+      } else {
+        tagB.className = "text-xs px-2.5 py-1 rounded font-medium bg-emerald-950/70 border border-emerald-800 text-emerald-300";
+        tagB.innerText = `최신 PDF 준비됨 (${keptCount}장)`;
+        btnRebuildB.className = "h-8 px-3.5 rounded text-xs font-medium bg-[#252834] text-slate-300 border border-[#3c4254] hover:bg-[#2f3342] flex items-center gap-1.5";
+        rebuildLabelB.innerText = "PDF 다시 만들기";
+        btnOpenB.className = "h-8 px-4 rounded text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white shadow-sm flex items-center gap-1.5";
+      }
+
+      // Sidebar Summary in B
+      const summaryKeptB = document.getElementById('summaryKept_B');
+      const summaryExcludedB = document.getElementById('summaryExcluded_B');
+      if (summaryKeptB) summaryKeptB.innerText = `${keptCount} 페이지`;
+      if (summaryExcludedB) summaryExcludedB.innerText = `${pagesData.length - keptCount} 건`;
+
+      // Sidebar Summary in A
+      const keptCountLabelA = document.getElementById('keptCountLabel_A');
+      if (keptCountLabelA) keptCountLabelA.innerText = keptCount;
+    }
+
+    // Render Option A Sidebar Cards
+    function renderOptionA() {
+      const container = document.getElementById('cardList_A');
+      const visible = getVisiblePages();
+
+      // Counts
+      document.getElementById('countAll_A').innerText = pagesData.length;
+      document.getElementById('countSus_A').innerText = pagesData.filter(p => p.suspicious).length;
+
+      // Filter Tab Styles
+      const fAll = document.getElementById('filterAll_A');
+      const fSus = document.getElementById('filterSus_A');
+      if (filterMode === 'all') {
+        fAll.className = "px-2.5 py-1 rounded text-xs font-medium bg-[#2b2f3d] text-white";
+        fSus.className = "px-2.5 py-1 rounded text-xs font-medium text-amber-400 hover:text-amber-300";
+      } else {
+        fSus.className = "px-2.5 py-1 rounded text-xs font-medium bg-[#2b2f3d] text-amber-300";
+        fAll.className = "px-2.5 py-1 rounded text-xs font-medium text-slate-400 hover:text-white";
+      }
+
+      container.innerHTML = visible.map((page) => {
+        const isFocused = page.id === pagesData[focusedIndex].id;
+        const isIncluded = page.included;
+        const pageIdx = pagesData.findIndex(p => p.id === page.id);
+
+        return `
+          <div onclick="focusPage(${pageIdx})" class="group cursor-pointer rounded-lg border transition-all duration-150 p-2.5 flex gap-3 relative
+            ${isFocused ? 'bg-[#222633] border-blue-500 shadow-md ring-1 ring-blue-500/50' : 'bg-[#1b1d25] border-[#292c37] hover:border-slate-600'}
+            ${!isIncluded ? 'opacity-55 bg-[#171920]' : ''}">
+            
+            <!-- Left Indicator Bar for Focused Page -->
+            ${isFocused ? '<div class="absolute left-0 top-2 bottom-2 w-1 bg-blue-500 rounded-r"></div>' : ''}
+
+            <!-- Thumbnail Figure with Included/Excluded Badge -->
+            <div class="relative w-16 h-20 rounded bg-black shrink-0 overflow-hidden border ${isIncluded ? 'border-slate-700' : 'border-rose-900'}">
+              <img src="${page.thumb}" alt="${page.title}" class="w-full h-full object-cover">
+              ${!isIncluded ? '<div class="absolute inset-0 bg-rose-950/70 flex items-center justify-center text-[10px] font-bold text-rose-200">제외됨</div>' : ''}
+              ${page.suspicious && isIncluded ? '<div class="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-amber-400 ring-1 ring-black"></div>' : ''}
+            </div>
+
+            <!-- Card Body & Explicit Checkbox Toggle -->
+            <div class="flex-1 min-w-0 flex flex-col justify-between py-0.5">
+              <div>
+                <div class="flex items-center justify-between gap-1 mb-1">
+                  <span class="text-xs font-semibold ${isIncluded ? 'text-white' : 'text-slate-400 line-through'}">P.${page.num} · ${page.time}</span>
+                  <!-- Explicit Inclusion Checkbox with clear label -->
+                  <label class="flex items-center gap-1 cursor-pointer" onclick="event.stopPropagation()">
+                    <input type="checkbox" onchange="togglePageInclusion(${pageIdx}, event)" ${isIncluded ? 'checked' : ''} class="w-3.5 h-3.5 rounded text-blue-600 focus:ring-0 bg-[#2d3140] border-slate-600 cursor-pointer">
+                    <span class="text-[10px] ${isIncluded ? 'text-blue-400' : 'text-slate-500'} font-medium">포함</span>
+                  </label>
+                </div>
+                <div class="text-[11px] text-slate-300 truncate">${page.title}</div>
+              </div>
+
+              <!-- Warning Badges -->
+              <div class="flex items-center gap-1 mt-1">
+                ${page.autoExcludeCandidate ? '<span class="text-[10px] px-1.5 py-0.2 rounded bg-rose-950/80 text-rose-300 border border-rose-800">중복 제외권장</span>' : ''}
+                ${page.suspicious && !page.autoExcludeCandidate ? '<span class="text-[10px] px-1.5 py-0.2 rounded bg-amber-950/80 text-amber-300 border border-amber-800">확인 필요</span>' : ''}
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // Render Option B Filmstrip
+    function renderOptionB() {
+      const track = document.getElementById('filmstripTrack_B');
+      const visible = getVisiblePages();
+
+      track.innerHTML = visible.map((page) => {
+        const isFocused = page.id === pagesData[focusedIndex].id;
+        const isIncluded = page.included;
+        const pageIdx = pagesData.findIndex(p => p.id === page.id);
+
+        return `
+          <div onclick="focusPage(${pageIdx})" class="group cursor-pointer rounded-lg border shrink-0 transition-all duration-150 flex flex-col w-[110px] p-1.5 relative
+            ${isFocused ? 'bg-[#222635] border-blue-500 -translate-y-1 shadow-lg ring-2 ring-blue-500/40' : 'bg-[#1b1e27] border-[#292c38] hover:border-slate-500'}
+            ${!isIncluded ? 'opacity-50' : ''}">
+            
+            <!-- Top pointer wedge if focused -->
+            ${isFocused ? '<div class="absolute -top-1.5 left-1/2 -translate-x-1/2 w-2.5 h-2.5 bg-blue-500 rotate-45"></div>' : ''}
+
+            <!-- Header Info -->
+            <div class="flex items-center justify-between text-[10px] mb-1">
+              <span class="font-mono font-bold ${isIncluded ? 'text-white' : 'text-slate-400'}">P.${page.num}</span>
+              ${page.suspicious ? '<span class="text-amber-400" title="' + page.warningReason + '">⚠️</span>' : ''}
+            </div>
+
+            <!-- Thumbnail -->
+            <div class="w-full h-16 rounded bg-black overflow-hidden relative border border-slate-700">
+              <img src="${page.thumb}" alt="${page.title}" class="w-full h-full object-cover">
+              ${!isIncluded ? '<div class="absolute inset-0 bg-rose-950/80 flex items-center justify-center text-[10px] font-bold text-rose-200">제외됨</div>' : ''}
+            </div>
+
+            <!-- Bottom Inclusion Pill -->
+            <div class="mt-1 flex items-center justify-between text-[10px]">
+              <span class="text-[9px] text-slate-400 font-mono">${page.time}</span>
+              <button onclick="togglePageInclusion(${pageIdx}, event)" class="px-1.5 py-0.2 rounded text-[10px] font-medium transition-colors ${isIncluded ? 'bg-blue-600/30 text-blue-300 border border-blue-500/50' : 'bg-slate-800 text-slate-400'}">
+                ${isIncluded ? '✓ 포함' : '✕ 제외'}
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // Update Focused View for Current Option
+    function updateFocusedView() {
+      const page = pagesData[focusedIndex];
+      const visible = getVisiblePages();
+      const currentPos = visible.findIndex(p => p.id === page.id) + 1;
+
+      // Update Option A
+      const badgeA = document.getElementById('focusInclusionBadge_A');
+      const titleA = document.getElementById('focusPageTitle_A');
+      const warnA = document.getElementById('focusWarningReason_A');
+      const btnToggleA = document.getElementById('btnQuickToggle_A');
+      const navPosA = document.getElementById('pageNavPos_A');
+      const imgA = document.getElementById('scoreImg_A');
+      const overlayA = document.getElementById('excludedOverlay_A');
+
+      if (page.included) {
+        badgeA.className = "flex items-center gap-1.5 px-2.5 py-1 rounded font-medium bg-blue-950/80 text-blue-300 border border-blue-800";
+        badgeA.innerHTML = `<svg class="w-3.5 h-3.5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg><span>최종 PDF에 포함됨</span>`;
+        btnToggleA.className = "h-7 px-3 rounded text-xs font-medium border border-rose-800 bg-rose-950/40 text-rose-300 hover:bg-rose-900/60 transition-colors";
+        btnToggleA.innerText = "이 캡처 제외하기";
+        overlayA.classList.add('hidden');
+      } else {
+        badgeA.className = "flex items-center gap-1.5 px-2.5 py-1 rounded font-medium bg-rose-950/80 text-rose-300 border border-rose-800";
+        badgeA.innerHTML = `<svg class="w-3.5 h-3.5 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg><span>최종 PDF에서 제외됨</span>`;
+        btnToggleA.className = "h-7 px-3 rounded text-xs font-medium border border-blue-700 bg-blue-950/50 text-blue-300 hover:bg-blue-900/60 transition-colors";
+        btnToggleA.innerText = "PDF에 다시 포함하기";
+        overlayA.classList.remove('hidden');
+      }
+
+      titleA.innerText = `P.${page.num} (${page.time}) — ${page.title}`;
+      if (page.warningReason) {
+        warnA.innerHTML = `<span class="px-2 py-0.5 rounded bg-amber-950/90 text-amber-300 border border-amber-800 font-medium">⚠️ ${page.warningReason}</span>`;
+      } else {
+        warnA.innerHTML = "";
+      }
+      navPosA.innerText = `${currentPos} / ${visible.length}`;
+      imgA.src = page.img;
+
+      // Update Option B
+      const badgeB = document.getElementById('focusPageBadge_B');
+      const titleB = document.getElementById('focusPageTitle_B');
+      const warnB = document.getElementById('focusPageWarning_B');
+      const chkB = document.getElementById('chkFocusInclude_B');
+      const chkLabelB = document.getElementById('chkFocusIncludeLabel_B');
+      const imgB = document.getElementById('scoreImg_B');
+      const overlayB = document.getElementById('excludedOverlay_B');
+
+      badgeB.innerText = `P.${page.num}`;
+      badgeB.className = page.included ? "px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-blue-900/70 text-blue-300" : "px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-rose-900/70 text-rose-300";
+      titleB.innerText = `${page.time} · ${page.title}`;
+      if (page.warningReason) {
+        warnB.innerHTML = `<span class="text-amber-400 font-medium ml-2">⚠️ ${page.warningReason}</span>`;
+      } else {
+        warnB.innerHTML = "";
+      }
+      chkB.checked = page.included;
+      chkLabelB.className = page.included ? "text-slate-200 font-medium" : "text-rose-400 font-semibold";
+      chkLabelB.innerText = page.included ? "최종 PDF 포함" : "최종 PDF 제외됨";
+      imgB.src = page.img;
+      if (page.included) {
+        overlayB.classList.add('hidden');
+      } else {
+        overlayB.classList.remove('hidden');
+      }
+
+      // Re-highlight active cards in sidebar/track
+      renderOptionA();
+      renderOptionB();
+    }
+
+    // Zoom Controls
+    function changeZoom(delta) {
+      zoomLevel = Math.max(0.6, Math.min(2.5, zoomLevel + delta));
+      applyZoom();
+    }
+
+    function resetZoom() {
+      zoomLevel = 1.0;
+      applyZoom();
+    }
+
+    function applyZoom() {
+      const sA = document.getElementById('scoreSheet_A');
+      const sB = document.getElementById('scoreSheet_B');
+      const lblA = document.getElementById('zoomPercentLabel_A');
+      const lblB = document.getElementById('zoomPercentLabel_B');
+
+      if (zoomLevel === 1.0) {
+        sA.style.transform = 'none';
+        sB.style.transform = 'none';
+        lblA.innerText = "맞춤";
+        lblB.innerText = "맞춤";
+      } else {
+        const pct = Math.round(zoomLevel * 100) + '%';
+        sA.style.transform = `scale(${zoomLevel})`;
+        sB.style.transform = `scale(${zoomLevel})`;
+        lblA.innerText = pct;
+        lblB.innerText = pct;
+      }
+    }
+
+    // Keyboard Navigation
+    window.addEventListener('keydown', (e) => {
+      if (e.target.tagName === 'INPUT') return;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        navigatePage(1);
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        navigatePage(-1);
+      } else if (e.key === ' ') {
+        e.preventDefault();
+        toggleCurrentPageInclusion();
+      }
+    });
+
+    // Start
+    init();
+  </script>
+</body>
+</html>

@@ -309,8 +309,9 @@ export function renderSourceScreen(state) {
               </details>
             ` : ""}
           </div>
+          ${model.error ? `<p class="inline-error" role="alert">${escapeHtml(model.error)}</p>` : ""}
         </section>
-        <section class="source-registry panel" data-stitch-region="source-registry">
+        <section class="source-registry panel" data-stitch-region="source-registry" data-drop-zone="source-ingest" data-drop-label="${escapeHtml(t("source.canvasDrop", { locale: model.locale }))}">
           <div class="panel-heading">
 
             <h2>${escapeHtml(t("source.registryTitle", { locale: model.locale }))}</h2>
@@ -330,7 +331,6 @@ export function renderSourceScreen(state) {
           </div>
         </section>
       </div>
-      ${model.error ? `<p class="inline-error" role="alert">${escapeHtml(model.error)}</p>` : ""}
     </section>
   `;
 }

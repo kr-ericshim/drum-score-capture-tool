@@ -1,70 +1,246 @@
-/* Proposal A review layout, inheriting the shared light workspace tokens. */
-.app-shell[data-step="review"] {
-  grid-template-rows: 48px minmax(0, 1fr) 26px;
+/* Review & save on the Floating Dock Canvas (docs/DESIGN.md, 2026-09-27).
+   Capture strips in the task panel, the focused capture as paper on the canvas. */
+
+.app-shell[data-step] .screen-review .screen-headline-review {
+  display: block;
+  min-height: 0;
+  padding: 16px 16px 12px;
+  gap: 0;
 }
-.screen-review .screen-headline-review {
-  display: flex; min-height: 68px; padding: 10px 16px; gap: 16px;
-  align-items: center; border-bottom: 1px solid var(--line-soft);
-}
-.screen-review .review-heading-copy { flex: 1; min-width: 0; }
-.screen-review .review-heading-copy h1 { font-size: 16px; letter-spacing: -0.02em; }
+.screen-review .review-heading-copy h1 { font-size: 15px; }
 .screen-review .review-heading-copy p { margin: 3px 0 0; font-size: 12px; color: var(--text-2); }
-.screen-review .review-toolbar {
-  flex: none; width: auto; max-width: none; flex-wrap: nowrap; gap: 8px;
-  padding: 0; border: 0; margin: 0;
+
+/* Next action cluster (top right of canvas). */
+.app-shell[data-step] .screen-review .review-toolbar {
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  gap: 6px;
+  width: auto;
+  padding: 6px;
+  border-top: 1px solid var(--line-soft);
 }
-.screen-review .button { min-height: 32px; padding: 6px 10px; font-size: 12px; white-space: nowrap; }
-.screen-review .button-primary { background: #222725; color: #fff; border-color: #222725; }
-.screen-review .button-primary:hover:not(:disabled) { background: #3a433e; color: #fff; }
-.screen-review .button-secondary:hover:not(:disabled) { background: var(--surface-control-hover); color: var(--text-1); }
-.screen-review :is(button, input, [tabindex]):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; box-shadow: none; }
-.screen-review .review-save-state { font-size: 12px; color: var(--text-2); white-space: nowrap; }
-.screen-review .review-save-state.is-pending { color: var(--warning-text); }
-.screen-review .review-workspace { grid-template-columns: 290px minmax(0, 1fr); }
-.screen-review .review-list-tools { padding: 12px; gap: 8px; }
-.screen-review .review-filter .button { display: flex; justify-content: space-between; }
-.screen-review .review-filter span { font-variant-numeric: tabular-nums; }
-.screen-review .review-list-summary { display: flex; align-items: center; justify-content: space-between; padding: 0 14px 10px; }
-.screen-review .review-summary-pill { border: 0; background: none; padding: 0; font-size: 12px; color: var(--text-2); }
-.screen-review .review-grid { flex: 1; gap: 8px; padding: 0 12px 12px; scrollbar-color: #a7b5ad #ffffff; }
+.screen-review .review-toolbar .button { min-height: 34px; padding: 7px 12px; font-size: 13px; white-space: nowrap; }
+.screen-review .review-output-actions .button-secondary { border-color: transparent; background: transparent; }
+.screen-review .review-output-actions .button-secondary:hover:not(:disabled) { background: var(--surface-control-hover); }
+.screen-review .review-output-actions .button-secondary:disabled { color: var(--text-3); opacity: 0.7; }
+.screen-review .review-save-state { padding: 0 6px 0 4px; font-size: 12px; color: var(--text-2); white-space: nowrap; }
+.screen-review .review-save-state.is-pending { color: var(--warn-strong); }
+.screen-review .review-save-state.is-pending::before { content: "● "; }
+.screen-review .review-save-state.is-saved { color: var(--success); }
+/* Capture list panel. */
+.app-shell[data-step] .screen-review .review-grid-shell {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--line-soft);
+}
+.screen-review .review-list-tools {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 12px 12px 8px;
+  border: 0;
+}
+.screen-review .review-filter {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--surface-recessed);
+}
+.screen-review .review-filter .button {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+}
+.screen-review .review-filter .button[aria-pressed="true"] { background: var(--bg-panel); color: var(--text-1); box-shadow: var(--shadow-1); }
+.screen-review .review-filter span { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.screen-review .review-list-tools > .button { min-height: 28px; padding: 4px 8px; font-size: 12px; }
+.screen-review .review-list-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 14px 8px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.screen-review .review-summary-pill { padding: 0; border: 0; background: none; font-family: var(--mono); font-size: 11.5px; color: var(--text-2); }
+.screen-review .review-format-label { font-family: var(--mono); font-size: 11px; color: var(--text-3); }
+.app-shell[data-step] .screen-review .review-grid {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* Strip-first capture rows. */
 .screen-review .review-card {
-  display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 12px;
-  padding: 10px; min-height: 112px; border-radius: 6px;
+  position: relative;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  grid-template-areas:
+    "index figure"
+    ". meta";
+  gap: 4px 8px;
+  min-height: 0;
+  padding: 10px 12px 8px;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+  background: var(--bg-panel);
+  box-shadow: none;
+  outline: 0;
 }
 .screen-review .review-card:is(.is-selected, .is-excluded) { background: var(--bg-panel); border-color: var(--line-soft); }
-.screen-review .review-card:hover { border-color: #788a80; }
-.screen-review .review-card.is-focused { border-color: var(--accent); background: var(--accent-soft); outline: 1px solid var(--accent); outline-offset: -2px; }
-.screen-review .review-card .review-card-figure { height: 90px; border: 0; border-radius: 2px; background: var(--bg-stage); }
-.screen-review .review-card-figure img { width: 100%; height: 100%; object-fit: contain; }
-.screen-review .review-card-meta { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 5px; min-width: 0; }
-.screen-review .review-card-copy { width: 100%; }
-.screen-review .review-card-copy span { font-size: 13px; font-weight: 600; }
-.screen-review .review-excluded-label { color: var(--text-2); font-size: 12px; }
-.screen-review .choice-row { min-height: 28px; color: var(--text-2); font-size: 12px; padding: 0; }
-.screen-review .review-card-badges { gap: 4px; }
-.screen-review .review-inline-pill { font-size: 11px; padding: 1px 5px; }
-.screen-review .review-save-hint { flex: none; margin: 0; padding: 12px 14px; border-top: 1px solid var(--line-soft); color: var(--text-2); font-size: 12px; line-height: 1.55; }
-.screen-review .review-inspector { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; padding: 8px 16px; min-height: 48px; }
-.screen-review .review-inspector-heading { flex: 1; min-width: 0; gap: 8px 12px; }
-.screen-review .review-inspector-heading strong { max-width: 26ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.screen-review .review-inclusion-status { color: var(--accent); }
-.screen-review .review-inspector.is-excluded .review-inclusion-status { color: var(--warning-text); }
-.screen-review .review-inspector-actions { display: flex; align-items: center; gap: 16px; }
-.screen-review .review-position { min-width: 40px; }
-.screen-review .review-risk-note { flex-basis: 100%; max-width: none; max-height: 66px; overflow-y: auto; margin: 0; line-height: 1.5; }
-.screen-review .review-viewer-surface { padding: 12px 20px; scrollbar-color: #a7b5ad #f3f5f4; }
-.screen-review .review-full-image { opacity: 1; }
-.screen-review .review-viewer-toolbar { justify-content: center; padding: 8px 12px; gap: 8px 14px; border-top: 1px solid var(--line-soft); border-bottom: 0; }
-.screen-review .review-tool-group { flex-wrap: nowrap; }
-.screen-review .review-tool-group + .review-tool-group { padding-left: 14px; }
-.screen-review .review-keyboard-help { padding: 4px 16px 6px; text-align: center; border: 0; font-size: 11px; }
-.screen-review ::selection { background: var(--accent); color: #fff; }
-@media (max-width: 1200px) {
-  .screen-review .review-toolbar { gap: 6px; }
-  .screen-review .review-save-state { max-width: 90px; white-space: normal; line-height: 1.4; }
-  .screen-review .screen-headline-review { gap: 12px; }
-  .screen-review .review-inspector { padding-inline: 12px; }
+.screen-review .review-card:hover { background: var(--surface-control-hover); }
+.screen-review .review-card.is-focused { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent-bright); outline: 0; }
+.screen-review .review-card-index {
+  grid-area: index;
+  align-self: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+}
+.screen-review .review-card .review-card-figure {
+  grid-area: figure;
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 34px;
+  max-height: 96px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+  border-radius: 3px;
+  background: var(--surface-paper);
+  cursor: pointer;
+}
+.screen-review .review-card-figure img { display: block; width: 100%; height: auto; max-height: 94px; object-fit: contain; object-position: left center; }
+.screen-review .review-card.is-excluded .review-card-figure img { opacity: 0.35; }
+.screen-review .review-card.is-excluded .review-card-index { text-decoration: line-through; }
+.screen-review .review-card-meta {
+  grid-area: meta;
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+.screen-review .review-card-copy { display: flex; align-items: center; gap: 6px; min-width: 0; margin-left: auto; }
+.screen-review .review-card-copy > span { font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.screen-review .review-card-copy small { font-size: 11px; color: var(--text-2); }
+.screen-review .review-card-badges { display: flex; gap: 4px; margin-left: 4px; }
+.screen-review .review-inline-pill { padding: 0; border: 0; background: none; font-size: 11px; font-weight: 600; color: var(--warn-strong); }
+.screen-review .review-inline-pill::before { content: "● "; }
+.screen-review .choice-row { display: flex; align-items: center; gap: 6px; min-height: 22px; padding: 0; font-size: 11.5px; color: var(--text-2); }
+.screen-review .choice-row input { width: 14px; height: 14px; margin: 0; accent-color: var(--text-1); }
+.screen-review .review-panel-foot { flex: none; border-top: 1px solid var(--line-soft); }
+.screen-review .review-output-path { display: flex; align-items: center; gap: 8px; padding: 0 14px 10px; }
+.screen-review .review-output-path span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; font-family: var(--mono); font-size: 11px; color: var(--text-2); }
+.screen-review .review-output-path .button { min-height: 26px; padding: 2px 8px; font-size: 11.5px; }
+.screen-review .review-save-hint { flex: none; margin: 0; padding: 10px 14px; color: var(--text-2); font-size: 11.5px; line-height: 1.5; }
+.screen-review .review-grid-shell .review-empty { padding: 24px 16px; }
+
+/* Canvas: focused capture as paper. */
+.app-shell[data-step] .screen-review .review-viewer {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: transparent;
+}
+.screen-review .review-inspector {
+  position: absolute;
+  z-index: 3;
+  top: 72px;
+  left: var(--gap);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  max-width: calc(100% - 24px);
+  min-height: 0;
+  padding: 6px 6px 6px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+  box-shadow: var(--float-shadow);
+}
+.screen-review .review-inspector-heading { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12.5px; }
+.screen-review .review-inspector-heading strong { max-width: 18ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.screen-review .review-inclusion-status { color: var(--accent); font-size: 12px; }
+.screen-review .review-inspector.is-excluded .review-inclusion-status { color: var(--warn-strong); }
+.screen-review .review-inspector-actions { display: flex; align-items: center; gap: 6px; }
+.screen-review .review-inspector .button { min-height: 30px; padding: 4px 10px; font-size: 12px; white-space: nowrap; }
+.screen-review .review-tool-group { display: flex; flex-wrap: nowrap; align-items: center; gap: 2px; }
+.screen-review .review-tool-group + .review-tool-group { margin-left: 4px; padding-left: 8px; border-left: 1px solid var(--line-soft); }
+.screen-review .review-position { min-width: 44px; text-align: center; font-family: var(--mono); font-size: 11.5px; color: var(--text-2); }
+.screen-review .review-risk-note { flex-basis: 100%; max-height: 66px; overflow-y: auto; margin: 0 6px 4px 0; font-size: 12px; line-height: 1.5; color: var(--warning-text); }
+.screen-review .review-viewer-surface {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  padding: 132px 32px 96px;
+  overflow: auto;
+  background: transparent;
+}
+.screen-review .review-viewer-surface:focus-visible { outline: none; }
+.screen-review .review-full-image { background: var(--surface-paper); box-shadow: var(--paper-shadow); opacity: 1; }
+.screen-review .review-full-image.is-fit { width: auto; height: auto; max-width: 100%; max-height: 100%; margin: auto; object-fit: contain; }
+.screen-review .review-crop-stage { margin: 72px 32px 84px; }
+.screen-review .review-crop-actions {
+  position: absolute;
+  z-index: 4;
+  top: var(--gap);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+  box-shadow: var(--float-shadow);
+}
+
+/* Bottom-centre tool bar. */
+.app-shell[data-step] .screen-review .review-viewer-toolbar { border: 1px solid var(--line-soft); gap: 0; justify-content: center; }
+.screen-review .review-viewer-toolbar .button { min-height: 30px; padding: 4px 10px; border: 0; background: transparent; font-size: 12.5px; }
+.screen-review .review-viewer-toolbar .button:hover:not(:disabled) { background: var(--surface-control-hover); }
+.screen-review .review-viewer-toolbar .button:disabled { background: transparent; color: var(--text-3); opacity: 0.6; }
+.screen-review .review-keyboard-help {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 68px;
+  white-space: nowrap;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-2);
+  text-align: center;
+}
+.screen-review ::selection { background: var(--accent); color: var(--text-inverse); }
+
+@media (max-width: 1240px) {
+  .screen-review .review-viewer-surface { padding-inline: 20px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .screen-review *, .app-shell[data-step="review"] .process-step { transition: none; }
+  .screen-review * { transition: none; }
 }
