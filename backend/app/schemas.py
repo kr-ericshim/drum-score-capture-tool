@@ -362,6 +362,12 @@ class CacheClearResponse(BaseModel):
     skipped_paths: List[str] = Field(default_factory=list)
 
 
+class AppActivityResponse(BaseModel):
+    active_jobs: int = 0
+    active_source_jobs: int = 0
+    inflight_requests: int = 0
+
+
 class CacheUsageResponse(BaseModel):
     total_paths: int = 0
     total_bytes: int = 0

@@ -30,6 +30,10 @@ async function readJobAsset(assetPath) {
   };
 }
 
+// While an update installs, the backend is about to stop; starting new work now would be cut off.
+let updateInstalling = false;
+ipcRenderer.on("release-update-state", (_, state) => { updateInstalling = state?.status === "installing"; });
+
 async function requestJson(apiPath, options = {}) {
   const url = new URL(String(apiPath || ""), API_BASE);
   const apiOrigin = new URL(API_BASE).origin;
@@ -39,6 +43,9 @@ async function requestJson(apiPath, options = {}) {
   url.searchParams.delete("token");
 
   const method = String(options.method || "GET").toUpperCase();
+  if (updateInstalling && method !== "GET") {
+    throw new Error("An update is being installed.");
+  }
   const hasBody = options.body !== undefined && options.body !== null;
   const requestHeaders = hasBody ? { "Content-Type": "application/json" } : {};
   const response = await fetch(url.toString(), {
@@ -62,7 +69,19 @@ contextBridge.exposeInMainWorld("drumSheetAPI", {
   requestJson,
   openPath: (targetPath) => ipcRenderer.invoke("open-path", targetPath),
   savePdfAs: (options) => ipcRenderer.invoke("save-pdf-as", options),
-  checkReleaseUpdate: () => ipcRenderer.invoke("check-release-update"),
+  checkReleaseUpdate: async (options) => {
+    const state = await ipcRenderer.invoke("check-release-update", { manual: Boolean(options?.manual) });
+    updateInstalling = state?.status === "installing";
+    return state;
+  },
+  downloadReleaseUpdate: () => ipcRenderer.invoke("download-release-update"),
+  installReleaseUpdate: (options) => ipcRenderer.invoke("install-release-update", { unsavedWork: Boolean(options?.unsavedWork) }),
+  openReleaseInstaller: () => ipcRenderer.invoke("open-release-installer"),
+  onReleaseUpdateState: (handler) => {
+    const listener = (_, payload) => handler(payload);
+    ipcRenderer.on("release-update-state", listener);
+    return () => ipcRenderer.removeListener("release-update-state", listener);
+  },
   dismissReleaseUpdate: () => ipcRenderer.invoke("dismiss-release-update"),
   openReleasePage: () => ipcRenderer.invoke("open-release-page"),
   openSupportIssue: () => ipcRenderer.invoke("open-support-issue"),

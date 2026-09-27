@@ -471,7 +471,7 @@ export function createApp(root, dependencies = {}) {
       youtubePrepareError,
     },
   });
-  let releaseUpdate = null;
+  let releaseUpdate = { status: "idle" };
   let destroyed = false;
   let roiEditor = null;
   let mountingRoiEditor = false;
@@ -704,7 +704,7 @@ export function createApp(root, dependencies = {}) {
       || state.source.displayName
       || "";
     const laneMarkup = renderContextLane(state);
-    const topBarMarkup = renderTopBar(state, topBarSummary);
+    const topBarMarkup = renderTopBar(state, topBarSummary, releaseUpdate);
     const processRailMarkup = renderProcessRail(state, getProcessRailItems(state));
     const stageMarkupValue = stageMarkup(state);
     const archiveMarkupValue = renderArchiveModal(state);
@@ -718,7 +718,8 @@ export function createApp(root, dependencies = {}) {
       ? t("support.engineFailed", { locale })
       : t("support.engineStarting", { locale });
     const hasFailure = Boolean(state.ui.backend?.error || state.source.error || state.roi.error || state.exportConfig.error || state.review.error);
-    const inlineNotice = escapeHtml(state.ui.inlineNotice || (!state.ui.backend?.ready ? backendMessage : hasFailure ? t("support.failureHelp", { locale }) : releaseUpdate ? "" : t("status.sessionStable", { locale })));
+    const releaseUpdateMarkup = renderReleaseUpdateGroup(locale, hasFailure);
+    const inlineNotice = escapeHtml(state.ui.inlineNotice || (!state.ui.backend?.ready ? backendMessage : hasFailure ? t("support.failureHelp", { locale }) : releaseUpdateMarkup ? "" : t("status.sessionStable", { locale })));
     const pagesStatus = escapeHtml(state.review.pages.length
       ? t("status.pagesCount", { locale, replacements: { count: state.review.pages.length } })
       : t("status.pagesEmpty", { locale }));
@@ -746,11 +747,7 @@ export function createApp(root, dependencies = {}) {
         <button class="button button-secondary" data-action="copy-diagnostics">${t("support.copy", { locale })}</button>
         <button class="button button-secondary" data-action="open-support-issue">${t("support.issue", { locale })}</button>
       </div>` : ""}
-      ${releaseUpdate && !hasFailure && state.ui.backend?.ready ? `<div class="status-bar-group status-bar-recovery">
-        <span>${escapeHtml(t("update.available", { locale, replacements: { version: releaseUpdate.version } }))}</span>
-        <button class="button button-secondary" data-action="open-release-page">${t("update.open", { locale })}</button>
-        <button class="button button-ghost" data-action="dismiss-release-update">${t("update.dismiss", { locale })}</button>
-      </div>` : ""}
+      ${releaseUpdateMarkup}
     `;
     if (shell.appShell) {
       shell.appShell.dataset.step = state.ui.activeStep;
@@ -759,7 +756,7 @@ export function createApp(root, dependencies = {}) {
     shell.contextLane?.setAttribute?.("aria-label", t("app.aria.inspectionDetails", { locale }));
     shell.stagePane?.setAttribute?.("aria-label", t("app.aria.stagePane", { locale, replacements: { step: stepLabel } }));
     if (topBarMarkup !== lastTopBarMarkup) {
-      shell.topBar.innerHTML = topBarMarkup;
+      replaceKeepingFocus(shell.topBar, topBarMarkup);
       lastTopBarMarkup = topBarMarkup;
     }
     if (processRailMarkup !== lastProcessRailMarkup) {
@@ -790,10 +787,17 @@ export function createApp(root, dependencies = {}) {
       lastArchiveMarkup = archiveMarkupValue;
     }
     syncArchiveShellState(isArchiveOpen);
-    const statusNeedsAttention = !state.ui.backend?.ready || hasFailure || Boolean(releaseUpdate) || Boolean(String(state.ui.inlineNotice || "").trim());
+    if (isUpdateInstalling()) {
+      // The app is about to quit; only the status message stays readable.
+      if (shell.topBar) shell.topBar.inert = true;
+      if (shell.workspaceShell) shell.workspaceShell.inert = true;
+    }
+    const statusNeedsAttention = !state.ui.backend?.ready || hasFailure || Boolean(releaseUpdateMarkup) || Boolean(String(state.ui.inlineNotice || "").trim());
     shell.statusBar?.setAttribute?.("data-attention", statusNeedsAttention ? "true" : "false");
     if (statusMarkup !== lastStatusMarkup) {
-      shell.statusBar.innerHTML = statusMarkup;
+      // When the focused update control goes away, keep focus on the next update action or the dock button.
+      replaceKeepingFocus(shell.statusBar, statusMarkup, () => shell.statusBar.querySelector?.("button:not([disabled])")
+        || shell.topBar?.querySelector?.('[data-action="check-release-update"]'));
       lastStatusMarkup = statusMarkup;
     }
     attachRoiEditor(state);
@@ -1096,6 +1100,88 @@ export function createApp(root, dependencies = {}) {
     }
   }
 
+  // Restarting now would abandon a capture, a YouTube import or a review rebuild.
+  function isWorkRunning(state = store.getState()) {
+    return state.exportConfig.runStatus === "running"
+      || state.source.prepareStatus === "loading"
+      || ["running", "editing"].includes(state.review.status);
+  }
+
+  // Drafts that live only in this window: an unapplied score region, an open page crop, the file header form.
+  function hasUnsavedEdits(state = store.getState()) {
+    return hasDirtyRoiDraft(state) || Boolean(state.review.cropping) || Boolean(state.exportConfig.metadataModal?.isOpen);
+  }
+
+  function isUpdateInstalling() {
+    return releaseUpdate?.status === "installing";
+  }
+
+  function renderReleaseUpdateGroup(locale, hasFailure) {
+    const update = releaseUpdate || {};
+    const replacements = { version: String(update.version || ""), progress: Number(update.progress) || 0 };
+    const button = (action, key, tone = "secondary", disabled = false) =>
+      `<button class="button button-${tone}" data-action="${action}"${disabled ? " disabled" : ""}>${escapeHtml(t(key, { locale }))}</button>`;
+    let message = "";
+    let actions = "";
+    if (update.status === "available" && (!hasFailure || update.manual)) {
+      message = t("update.available", { locale, replacements });
+      actions = (update.canInstall ? button("download-release-update", "update.install") : button("open-release-page", "update.open"))
+        + button("dismiss-release-update", "update.dismiss", "ghost");
+    } else if (update.status === "error" && update.error === "download") {
+      message = t("update.downloadFailed", { locale });
+      actions = button("download-release-update", "update.retry") + button("open-release-page", "update.open", "ghost");
+    } else if (update.status === "downloading") {
+      message = t("update.downloading", { locale, replacements });
+    } else if (update.status === "ready") {
+      const busy = isWorkRunning() || hasUnsavedEdits();
+      message = update.error === "install"
+        ? t("update.installFailed", { locale })
+        : [t("update.ready", { locale, replacements }), busy || update.error === "busy" ? t("update.busy", { locale }) : ""].filter(Boolean).join(" ");
+      actions = button("install-release-update", update.error === "install" ? "update.retry" : "update.restart", "secondary", busy)
+        + (update.error === "install" ? button("open-release-page", "update.open", "ghost") : "");
+    } else if (update.status === "installing") {
+      message = t("update.installing", { locale });
+    } else if (update.status === "manual") {
+      message = t(update.reason === "swap-failed" ? "update.manualFailed" : "update.manual", { locale });
+      actions = button("open-release-installer", "update.openInstaller");
+    }
+    return message ? `<div class="status-bar-group status-bar-recovery"><span>${escapeHtml(message)}</span>${actions}</div>` : "";
+  }
+
+  // Status and dock markup is replaced wholesale; put keyboard focus back on the same control.
+  function replaceKeepingFocus(container, markup, fallback) {
+    const active = globalThis.document?.activeElement;
+    const focused = active && active !== container && container.contains?.(active) ? active : null;
+    const action = focused?.dataset?.action || "";
+    const locale = focused?.dataset?.locale || "";
+    container.innerHTML = markup;
+    if (!focused) return;
+    const selector = `[data-action="${action}"]${locale ? `[data-locale="${locale}"]` : ""}:not([disabled])`;
+    const next = (action && container.querySelector?.(selector)) || fallback?.();
+    next?.focus?.();
+  }
+
+  function applyReleaseUpdate(update) {
+    if (destroyed || !update || typeof update !== "object") return;
+    releaseUpdate = update;
+    render();
+  }
+
+  async function checkReleaseUpdateManually() {
+    const locale = store.getState().ui.locale;
+    // An update already found or in flight is the answer; checking again would only hide it.
+    if (["available", "downloading", "ready", "installing", "manual"].includes(releaseUpdate.status)) {
+      releaseUpdate = { ...releaseUpdate, manual: true };
+      render();
+      return;
+    }
+    const result = await runtimeBridge.checkReleaseUpdate?.({ manual: true });
+    applyReleaseUpdate(result);
+    if (!result || result.status === "unsupported") setInlineNotice(t("update.unsupported", { locale }));
+    else if (result.status === "current") setInlineNotice(t("update.current", { locale, replacements: { version: result.currentVersion } }));
+    else if (result.status === "error") setInlineNotice(t("update.checkFailed", { locale }));
+  }
+
   function setInlineNotice(message) {
     setState((next) => {
       next.ui.inlineNotice = String(message || "");
@@ -1320,7 +1406,7 @@ export function createApp(root, dependencies = {}) {
   const handleDrop = async (event) => {
     const dropZone = findSourceDropZone(event.target);
     clearActiveSourceDropZone();
-    if (!dropZone || store.getState().ui.activeStep !== "source") {
+    if (!dropZone || store.getState().ui.activeStep !== "source" || isUpdateInstalling()) {
       return;
     }
     if (!dataTransferHasFiles(event.dataTransfer)) {
@@ -1927,10 +2013,29 @@ export function createApp(root, dependencies = {}) {
 
   const handleClick = async (event) => {
     const target = event.target.closest("[data-action]");
-    if (!target) {
+    if (!target || isUpdateInstalling()) {
       return;
     }
     const action = target.dataset.action;
+    if (action === "check-release-update") {
+      if (target.getAttribute?.("aria-disabled") === "true") return;
+      await checkReleaseUpdateManually().catch(() => setInlineNotice(t("update.checkFailed", { locale: store.getState().ui.locale })));
+      return;
+    }
+    if (action === "download-release-update") {
+      applyReleaseUpdate(await runtimeBridge.downloadReleaseUpdate?.().catch(() => null));
+      return;
+    }
+    if (action === "install-release-update") {
+      if (isWorkRunning()) return;
+      applyReleaseUpdate(await runtimeBridge.installReleaseUpdate?.({ unsavedWork: hasUnsavedEdits() }).catch(() => null));
+      return;
+    }
+    if (action === "open-release-installer") {
+      const opened = await runtimeBridge.openReleaseInstaller?.().catch(() => false);
+      if (!opened) setInlineNotice(t("support.actionFailed", { locale: store.getState().ui.locale }));
+      return;
+    }
     if (["copy-diagnostics", "open-support-issue", "open-release-page", "dismiss-release-update"].includes(action)) {
       try {
         if (action === "copy-diagnostics") {
@@ -1940,7 +2045,7 @@ export function createApp(root, dependencies = {}) {
           setInlineNotice(t(copied ? "support.copied" : "support.copyFailed", { locale: state.ui.locale }));
         } else if (action === "open-support-issue") await runtimeBridge.openSupportIssue?.();
         else if (action === "open-release-page") await runtimeBridge.openReleasePage?.();
-        else { await runtimeBridge.dismissReleaseUpdate?.(); releaseUpdate = null; render(); }
+        else { await runtimeBridge.dismissReleaseUpdate?.(); releaseUpdate = { status: "idle" }; render(); }
       } catch (_) { setInlineNotice(t("support.actionFailed", { locale: store.getState().ui.locale })); }
       return;
     }
@@ -2274,6 +2379,7 @@ export function createApp(root, dependencies = {}) {
   };
 
   const handleKeyDown = (event) => {
+    if (isUpdateInstalling()) return;
     reviewController.handleKey(event);
     if (event.key === "Tab" && store.getState().exportConfig.metadataModal?.isOpen) {
       const tabTargetIndex = exportMetadataTabTargetIndex(event.target);
@@ -2336,9 +2442,8 @@ export function createApp(root, dependencies = {}) {
 
   refreshBackendState();
   render();
-  Promise.resolve(runtimeBridge.checkReleaseUpdate?.()).then(update => {
-    if (!destroyed && update?.version) { releaseUpdate = update; render(); }
-  }).catch(() => {});
+  const unsubscribeReleaseUpdate = runtimeBridge.onReleaseUpdateState?.(applyReleaseUpdate);
+  Promise.resolve(runtimeBridge.checkReleaseUpdate?.({ manual: false })).then(applyReleaseUpdate).catch(() => {});
 
   return {
     debug: dependencies.exposeTestApi
@@ -2366,6 +2471,7 @@ export function createApp(root, dependencies = {}) {
       unsubscribeBackend?.();
       unsubscribeSetupState?.();
       unsubscribeSetupLog?.();
+      unsubscribeReleaseUpdate?.();
       if (typeof root.removeEventListener === "function") {
         root.removeEventListener("click", handleClick);
         root.removeEventListener("input", handleInput);

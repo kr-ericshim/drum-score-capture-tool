@@ -7,7 +7,11 @@ const { spawn, spawnSync } = require("child_process");
 const { decidePackagedBackendLaunchMode } = require("./backend-launch-policy");
 const { resolveBackendJobsDir } = require("./backend-job-paths");
 const { savePdfAs } = require("./save-pdf-as");
-const { createReleaseUpdates, RELEASES_URL } = require("./release-updates");
+const { createReleaseUpdates, newerVersion, verifyInstallerFile, RELEASES_URL } = require("./release-updates");
+const {
+  resolveMacAppBundle, macUpdateWorkDir, macInstallBlocker, prepareMacUpdate, launchMacSwap, launchWindowsInstaller,
+  writeInstallMarker, takeInstallMarker,
+} = require("./release-install");
 const { createDiagnosticLog } = require("./support-diagnostics");
 const { resolveRendererIndexPath } = require("./renderer-entry");
 
@@ -18,11 +22,126 @@ const BACKEND_SESSION_TOKEN = String(process.env.DRUMSHEET_SESSION_TOKEN || "").
 
 const diagnosticLog = createDiagnosticLog([BACKEND_SESSION_TOKEN]);
 let releaseUpdates = null;
+let pendingReleaseInstall = null;
+function releaseDownloadDir() {
+  return path.join(app.getPath("userData"), "updates");
+}
+function releaseInstallMarkerPath() {
+  return path.join(app.getPath("userData"), "update-install.json");
+}
 function getReleaseUpdates() {
-  if (!releaseUpdates) releaseUpdates = createReleaseUpdates({
-    currentVersion: app.getVersion(), cachePath: path.join(app.getPath("userData"), "release-updates.json"),
+  if (releaseUpdates) return releaseUpdates;
+  const downloadDir = releaseDownloadDir();
+  const marker = takeInstallMarker(releaseInstallMarkerPath());
+  const installed = marker && (marker.version === app.getVersion() || newerVersion(app.getVersion(), marker.version));
+  const failed = marker && newerVersion(marker.version, app.getVersion()) && path.dirname(marker.filePath) === downloadDir && existsFile(marker.filePath);
+  if (installed && process.platform === "darwin") {
+    // This launch is the new version, so the old bundle kept for rollback is no longer needed.
+    const bundlePath = resolveMacAppBundle(process.execPath);
+    if (bundlePath) try { fs.rmSync(macUpdateWorkDir(bundlePath), { recursive: true, force: true }); } catch (_) { /* retry after the next update */ }
+  }
+  // A failed install keeps its verified file for a retry; otherwise these are leftovers.
+  // A still-running Windows installer may keep its file locked; the next launch retries.
+  if (!failed) try { fs.rmSync(downloadDir, { recursive: true, force: true }); } catch (_) { /* retry next launch */ }
+  releaseUpdates = createReleaseUpdates({
+    currentVersion: app.getVersion(),
+    cachePath: path.join(app.getPath("userData"), "release-updates.json"),
+    downloadDir,
+    installSupported: app.isPackaged && ["darwin", "win32"].includes(process.platform),
+    onState: state => sendToRenderer("release-update-state", state),
   });
+  if (failed) {
+    diagnosticLog.append(`update ${marker.version} did not take effect`);
+    // The macOS swap script opens the DMG itself when it gives up; Windows offers a retry.
+    releaseUpdates.restoreInstall(process.platform === "darwin"
+      ? { version: marker.version, filePath: marker.filePath, asset: marker.asset, status: "manual", reason: "swap-failed" }
+      : { version: marker.version, filePath: marker.filePath, asset: marker.asset, error: "install" });
+  }
   return releaseUpdates;
+}
+
+// The backend checks existing work and closes POST admission under one lock.
+// This remains authoritative if the renderer reloads or misses a state event.
+async function setBackendUpdateLock(locked) {
+  if (!backendProcess) return true;
+  if (!backendReady) return false;
+  try {
+    const action = locked ? "update-lock" : "update-unlock";
+    const response = await fetch(`${BACKEND_URL}/maintenance/${action}`, {
+      method: "POST", headers: { "X-DrumSheet-Token": BACKEND_SESSION_TOKEN }, signal: AbortSignal.timeout(3000),
+    });
+    if (!response.ok) return false;
+    return (await response.json()).locked === locked;
+  } catch (_) {
+    return false;
+  }
+}
+
+function installReleaseUpdate(options) {
+  if (!pendingReleaseInstall) {
+    pendingReleaseInstall = runReleaseInstall(options).finally(() => { pendingReleaseInstall = null; });
+  }
+  return pendingReleaseInstall;
+}
+
+async function runReleaseInstall({ unsavedWork = false } = {}) {
+  const updates = getReleaseUpdates();
+  const current = updates.getState();
+  if (!app.isPackaged || current.status !== "ready") return current;
+  if (unsavedWork) return updates.finishInstall({ status: "ready", version: current.version, error: "busy" });
+  const claim = updates.beginInstall();
+  if (!claim) return updates.getState();
+  const { version, filePath } = claim;
+  const backToReady = extra => updates.finishInstall({ status: "ready", version, ...extra });
+  const restartBackend = () => { if (!backendProcess) void startBackendAndWait({ showDialogOnFail: false }); };
+  let handedOff = false;
+  let lockRequested = false;
+  try {
+    if (!await verifyInstallerFile(claim)) return updates.invalidateInstaller();
+    lockRequested = true;
+    if (!await setBackendUpdateLock(true)) return backToReady({ error: "busy" });
+    if (process.platform === "win32") {
+      try {
+        await stopBackend();
+        writeInstallMarker(releaseInstallMarkerPath(), claim);
+        await launchWindowsInstaller({ installerPath: filePath });
+      } catch (error) {
+        diagnosticLog.append(`update install failed: ${error.message}`);
+        try { fs.rmSync(releaseInstallMarkerPath(), { force: true }); } catch (_) { /* retry cleanup next launch */ }
+        restartBackend();
+        return backToReady({ error: "install" });
+      }
+      handedOff = true;
+      setImmediate(() => app.quit());
+      return updates.getState();
+    }
+
+    const bundlePath = resolveMacAppBundle(process.execPath);
+    const blocker = macInstallBlocker(bundlePath);
+    if (!blocker) {
+      try {
+        const { stagedPath, backupPath } = await prepareMacUpdate({ dmgPath: filePath, bundlePath, expectedVersion: version });
+        await stopBackend();
+        writeInstallMarker(releaseInstallMarkerPath(), claim);
+        await launchMacSwap({
+          pid: process.pid, bundlePath, stagedPath, backupPath, dmgPath: filePath, scriptDir: releaseDownloadDir(),
+        });
+        handedOff = true;
+        setImmediate(() => app.quit());
+        return updates.getState();
+      } catch (error) {
+        diagnosticLog.append(`update install failed: ${error.message}`);
+        try { fs.rmSync(releaseInstallMarkerPath(), { force: true }); } catch (_) { /* retry cleanup next launch */ }
+        restartBackend();
+      }
+    }
+    const openError = await shell.openPath(filePath);
+    if (openError) return backToReady({ error: "install" });
+    return updates.finishInstall({ status: "manual", version, reason: blocker || "failed" });
+  } finally {
+    // Also release after an ambiguous network failure: the lock request may have arrived.
+    if (!handedOff && lockRequested) await setBackendUpdateLock(false);
+  }
 }
 
 let mainWindow = null;
@@ -696,8 +815,19 @@ function stopSetupProcess() {
 }
 
 function registerIpc() {
-  ipcMain.handle("check-release-update", () => app.isPackaged ? getReleaseUpdates().check() : null);
-  ipcMain.handle("dismiss-release-update", () => { if (releaseUpdates) releaseUpdates.dismiss(); });
+  ipcMain.handle("check-release-update", (_, options) => (app.isPackaged
+    ? getReleaseUpdates().check({ manual: Boolean(options?.manual) })
+    : { status: options?.manual ? "unsupported" : "idle", currentVersion: app.getVersion() }));
+  ipcMain.handle("download-release-update", () => (app.isPackaged ? getReleaseUpdates().download() : null));
+  ipcMain.handle("install-release-update", (_, options) => installReleaseUpdate({ unsavedWork: Boolean(options?.unsavedWork) }));
+  ipcMain.handle("open-release-installer", async () => {
+    const updates = getReleaseUpdates();
+    const filePath = updates.getInstallerFile();
+    if (!app.isPackaged || process.platform !== "darwin" || !filePath) return false;
+    if (!await verifyInstallerFile(updates.getInstaller())) { updates.invalidateInstaller(); return false; }
+    return !(await shell.openPath(filePath));
+  });
+  ipcMain.handle("dismiss-release-update", () => (releaseUpdates ? releaseUpdates.dismiss() : null));
   ipcMain.handle("open-release-page", () => shell.openExternal(RELEASES_URL));
   ipcMain.handle("open-support-issue", () => shell.openExternal("https://github.com/kr-ericshim/drum-score-capture-tool/issues/new"));
   ipcMain.handle("copy-diagnostics", (_, detail) => {

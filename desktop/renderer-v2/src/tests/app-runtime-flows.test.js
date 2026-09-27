@@ -2422,3 +2422,147 @@ test('capture range inputs reach the job payload without clearing existing revie
   assert.equal(app.debug.getState().exportConfig.rangeStart,'1:30');
   app.destroy();
 });
+
+test("release update moves from available to download to restart, and waits for running work", async () => {
+  let pushState = () => {};
+  const calls = [];
+  const available = { status: "available", version: "0.2.0", canInstall: true, currentVersion: "0.1.34" };
+  installBrowserStubs({
+    checkReleaseUpdate: async (options) => { calls.push(["check", options]); return available; },
+    onReleaseUpdateState: (handler) => { pushState = handler; return () => { pushState = () => {}; }; },
+    downloadReleaseUpdate: async () => {
+      calls.push(["download"]);
+      pushState({ status: "downloading", version: "0.2.0", progress: 42 });
+      return { status: "ready", version: "0.2.0" };
+    },
+    installReleaseUpdate: async (options) => { calls.push(["install", options]); return { status: "installing", version: "0.2.0" }; },
+  });
+  const root = createRoot();
+  let jobStatus = "running";
+  let createJobCalls = 0;
+  const app = createApp(root, {
+    exposeTestApi: true,
+    api: {
+      createJob: async () => { createJobCalls += 1; return "job-1"; },
+      getJob: async () => ({ job_id: "job-1", status: jobStatus, progress: 0.3, result: {} }),
+      cancelJob: async () => { jobStatus = "cancelled"; },
+    },
+  });
+  await flush();
+  const statusBar = () => root.querySelector("#statusBar").innerHTML;
+  assert.deepEqual(calls[0], ["check", { manual: false }]);
+  assert.match(statusBar(), /0\.2\.0/);
+  assert.match(statusBar(), /data-action="download-release-update"/);
+  assert.match(statusBar(), /data-action="dismiss-release-update"/);
+  assert.match(root.querySelector("#topBar").innerHTML, /topbar-update has-update/);
+
+  pushState({ status: "downloading", version: "0.2.0", progress: 42 });
+  assert.match(statusBar(), /42%/);
+  assert.doesNotMatch(statusBar(), /data-action="download-release-update"/);
+
+  await root.dispatchAction("download-release-update");
+  assert.match(statusBar(), /data-action="install-release-update"(?! disabled)/);
+
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/source-a.mp4";
+    next.source.displayName = "source-a.mp4";
+    next.roi.frameTime = 5;
+    next.roi.appliedRect = ROI_RECT;
+    next.exportConfig.formats = ["png"];
+    next.ui.activeStep = "export";
+    return next;
+  });
+  await root.dispatchAction("run-export");
+  await flush();
+  assert.match(statusBar(), /data-action="install-release-update" disabled/);
+  await root.dispatchAction("install-release-update");
+  assert.equal(calls.some(([name]) => name === "install"), false, "a running capture is never interrupted");
+
+  await root.dispatchAction("cancel-job");
+  await flush();
+  await flush();
+  assert.match(statusBar(), /data-action="install-release-update">/);
+  await root.dispatchAction("install-release-update");
+  assert.deepEqual(calls.at(-1), ["install", { unsavedWork: false }]);
+  assert.match(statusBar(), /(Installing the update|설치하고 있습니다)/);
+  assert.equal(root.querySelector("#workspaceShell").inert, true, "nothing new can start while installing");
+  assert.equal(root.querySelector("#topBar").inert, true);
+  const jobsBefore = createJobCalls;
+  assert.equal(jobsBefore, 1);
+  await root.dispatchAction("run-export");
+  assert.equal(createJobCalls, jobsBefore);
+  app.destroy?.();
+});
+
+test("manual update check reports the latest version, a failure, or source runs", async () => {
+  for (const [result, pattern] of [
+    [{ status: "current", currentVersion: "0.1.34" }, /0\.1\.34/],
+    [{ status: "error", error: "check" }, /(Could not check|확인하지 못했습니다)/],
+    [{ status: "unsupported" }, /(running from source|개발 실행)/],
+  ]) {
+    const calls = [];
+    installBrowserStubs({
+      checkReleaseUpdate: async (options) => {
+        calls.push(options);
+        return options?.manual ? result : { status: "idle" };
+      },
+    });
+    const root = createRoot();
+    const app = createApp(root, { exposeTestApi: true });
+    await flush();
+    assert.match(root.querySelector("#topBar").innerHTML, /data-action="check-release-update"/);
+    await root.dispatchAction("check-release-update");
+    assert.deepEqual(calls.at(-1), { manual: true });
+    assert.match(app.debug.getState().ui.inlineNotice, pattern);
+    app.destroy?.();
+  }
+});
+
+test("an unapplied score region or an open page crop keeps the update from restarting the app", async () => {
+  const calls = [];
+  installBrowserStubs({
+    checkReleaseUpdate: async () => ({ status: "ready", version: "0.2.0" }),
+    installReleaseUpdate: async (options) => { calls.push(options); return { status: "ready", version: "0.2.0", error: "busy" }; },
+  });
+  const root = createRoot();
+  const app = createApp(root, { exposeTestApi: true });
+  await flush();
+  const statusBar = () => root.querySelector("#statusBar").innerHTML;
+  assert.match(statusBar(), /data-action="install-release-update">/);
+
+  app.debug.setState((next) => {
+    next.roi.appliedRect = ROI_RECT;
+    next.roi.draftRect = [[10, 10], [300, 10], [300, 170], [10, 170]];
+    return next;
+  });
+  assert.match(statusBar(), /data-action="install-release-update" disabled/);
+  assert.match(statusBar(), /(unsaved edits|적용하지 않은 편집)/);
+
+  app.debug.setState((next) => {
+    next.roi.draftRect = ROI_RECT;
+    next.review.cropping = true;
+    return next;
+  });
+  assert.match(statusBar(), /data-action="install-release-update" disabled/);
+
+  app.debug.setState((next) => { next.review.cropping = false; return next; });
+  await root.dispatchAction("install-release-update");
+  assert.deepEqual(calls, [{ unsavedWork: false }]);
+  assert.match(statusBar(), /(unsaved edits|적용하지 않은 편집)/, "work the backend still reports keeps the install waiting");
+  app.destroy?.();
+});
+
+test("macOS manual fallback offers to reopen the installer window", async () => {
+  let opened = 0;
+  installBrowserStubs({
+    checkReleaseUpdate: async () => ({ status: "manual", version: "0.2.0", reason: "swap-failed" }),
+    openReleaseInstaller: async () => { opened += 1; return true; },
+  });
+  const root = createRoot();
+  const app = createApp(root, { exposeTestApi: true });
+  await flush();
+  assert.match(root.querySelector("#statusBar").innerHTML, /(could not be installed automatically|자동으로 설치하지 못했습니다)/);
+  await root.dispatchAction("open-release-installer");
+  assert.equal(opened, 1);
+  app.destroy?.();
+});

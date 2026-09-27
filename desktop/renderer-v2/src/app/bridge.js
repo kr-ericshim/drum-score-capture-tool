@@ -1,7 +1,16 @@
 import { fileUrl } from "../lib/paths.js";
 
 export const bridge = {
-  checkReleaseUpdate() { return window?.drumSheetAPI?.checkReleaseUpdate?.() || Promise.resolve(null); },
+  checkReleaseUpdate(options) { return window?.drumSheetAPI?.checkReleaseUpdate?.(options) || Promise.resolve(null); },
+  downloadReleaseUpdate() { return window?.drumSheetAPI?.downloadReleaseUpdate?.() || Promise.resolve(null); },
+  installReleaseUpdate(options) { return window?.drumSheetAPI?.installReleaseUpdate?.(options) || Promise.resolve(null); },
+  openReleaseInstaller() { return window?.drumSheetAPI?.openReleaseInstaller?.() || Promise.resolve(false); },
+  onReleaseUpdateState(handler) {
+    if (typeof window?.drumSheetAPI?.onReleaseUpdateState === "function") {
+      return window.drumSheetAPI.onReleaseUpdateState(handler);
+    }
+    return () => {};
+  },
   dismissReleaseUpdate() { return window?.drumSheetAPI?.dismissReleaseUpdate?.(); },
   openReleasePage() { return window?.drumSheetAPI?.openReleasePage?.(); },
   openSupportIssue() { return window?.drumSheetAPI?.openSupportIssue?.(); },

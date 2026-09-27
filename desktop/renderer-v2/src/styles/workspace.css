@@ -165,16 +165,44 @@
   box-shadow: inset 0 3px 0 -1.6px currentColor;
 }
 .app-shell[data-step] .topbar-archive:hover { background: var(--surface-control-hover); color: var(--text-1); }
+.app-shell[data-step] .topbar-update { position: relative; }
+.app-shell[data-step] .topbar-update::before {
+  content: "↻";
+  width: auto;
+  height: 14px;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 14px;
+}
+.app-shell[data-step] .topbar-update.has-update::after {
+  content: "";
+  position: absolute;
+  top: 7px;
+  right: calc(50% - 14px);
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.app-shell[data-step] .topbar-update[aria-disabled="true"] { cursor: progress; opacity: 0.7; }
+.app-shell[data-step] .topbar-update[aria-disabled="true"]:hover { background: transparent; color: var(--text-2); }
 .app-shell[data-step] .topbar-locale-group {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: stretch;
   gap: 2px;
+  margin: 0 2px;
   padding: 2px;
   border: 0;
   border-radius: 8px;
   background: var(--surface-recessed);
 }
 .app-shell[data-step] .topbar-locale {
+  flex: 1 1 0;
+  min-width: 0;
   min-height: 24px;
   padding: 0;
   border: 0;
@@ -186,6 +214,7 @@
   box-shadow: none;
 }
 .app-shell[data-step] .topbar-locale.is-active { background: var(--bg-panel); color: var(--text-1); box-shadow: var(--shadow-1); }
+.app-shell[data-step] .topbar-locale:focus-visible { outline-offset: 0; }
 .app-shell[data-step] .engine-badge {
   position: relative;
   align-self: center;

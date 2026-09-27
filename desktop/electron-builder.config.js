@@ -67,6 +67,7 @@ baseConfig.files = [
   "backend-job-paths.js",
   "save-pdf-as.js",
   "release-updates.js",
+  "release-install.js",
   "support-diagnostics.js",
   "package.json",
   "renderer-v2/index.html",

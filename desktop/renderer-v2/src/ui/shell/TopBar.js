@@ -7,6 +7,14 @@ function renderArchiveButton(locale) {
   return `<button class="topbar-archive" type="button" data-action="open-archive">${escapeHtml(t("topbar.archive", { locale }))}</button>`;
 }
 
+function renderUpdateButton(locale, update = {}) {
+  const checking = update.status === "checking" && update.manual;
+  const hasUpdate = ["available", "downloading", "ready", "manual"].includes(update.status);
+  const label = escapeHtml(t(checking ? "topbar.updateChecking" : "topbar.update", { locale }));
+  const name = escapeAttr(t(hasUpdate ? "topbar.updateAvailable" : "topbar.updateCheck", { locale }));
+  return `<button class="topbar-archive topbar-update${hasUpdate ? " has-update" : ""}" type="button" data-action="check-release-update" aria-label="${name}" title="${name}"${checking ? ' aria-busy="true" aria-disabled="true"' : ""}>${label}</button>`;
+}
+
 function renderLocaleButtons(locale) {
   const localeLabel = escapeAttr(t("topbar.localeLabel", { locale }));
   const koreanLabel = escapeHtml(t("topbar.locale.ko", { locale }));
@@ -19,7 +27,7 @@ function renderLocaleButtons(locale) {
   `;
 }
 
-export function renderTopBar(state, summary) {
+export function renderTopBar(state, summary, update = {}) {
   const locale = state.ui.locale || "ko";
   const backendReady = state.ui.backend?.ready;
   const stepLabel = escapeHtml(t(`topbar.step.${state.ui.activeStep}`, { locale }));
@@ -37,6 +45,7 @@ export function renderTopBar(state, summary) {
         </div>
         <div class="topbar-tools topbar-tools-compact">
           ${renderArchiveButton(locale)}
+          ${renderUpdateButton(locale, update)}
           ${renderLocaleButtons(locale)}
         </div>
       </div>
@@ -56,6 +65,7 @@ export function renderTopBar(state, summary) {
     </div>
     <div class="topbar-tools">
       ${renderArchiveButton(locale)}
+      ${renderUpdateButton(locale, update)}
       ${renderLocaleButtons(locale)}
       <span class="engine-badge ${backendReady ? "is-ready" : "is-waiting"}">${engineLabel}</span>
     </div>

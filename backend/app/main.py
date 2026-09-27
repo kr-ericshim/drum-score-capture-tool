@@ -28,6 +28,7 @@ from app.schemas import (
     CaptureCropResponse,
     CacheClearResponse,
     CacheUsageResponse,
+    AppActivityResponse,
     ExportOptions,
     JobCreate,
     JobCreateResponse,
@@ -89,7 +90,7 @@ SUPPORTED_YOUTUBE_HOSTS = {
 }
 
 
-app = FastAPI(title="Drum Sheet Capture API", version="0.1.34")
+app = FastAPI(title="Drum Sheet Capture API", version="0.1.35")
 
 app.add_middleware(
     CORSMiddleware,
@@ -107,6 +108,10 @@ executor = ThreadPoolExecutor(max_workers=1)
 source_prepare_store = SourcePrepareStore(jobs_root / "_preview_source_jobs")
 source_prepare_executor = ThreadPoolExecutor(max_workers=1)
 maintenance_lock = RLock()
+# Synchronous work such as review rebuilds and page crops runs inside the request itself.
+inflight_lock = RLock()
+inflight_requests = 0
+update_install_locked = False
 capture_controls: Dict[str, Event] = {}
 review_locks: Dict[str, RLock] = {}
 
@@ -290,6 +295,24 @@ async def enforce_session_token(request: Request, call_next):
     return await call_next(request)
 
 
+@app.middleware("http")
+async def count_inflight_mutations(request: Request, call_next):
+    global inflight_requests
+    if request.method != "POST":
+        return await call_next(request)
+    if request.url.path in {"/maintenance/update-lock", "/maintenance/update-unlock"}:
+        return await call_next(request)
+    with inflight_lock:
+        if update_install_locked:
+            return JSONResponse(status_code=409, content={"detail": "an update is being installed"})
+        inflight_requests += 1
+    try:
+        return await call_next(request)
+    finally:
+        with inflight_lock:
+            inflight_requests -= 1
+
+
 @app.get("/health")
 def health() -> Dict[str, str]:
     return {"status": "ok", **_runtime_metadata()}
@@ -336,6 +359,38 @@ def clear_cache() -> CacheClearResponse:
         reclaimed_human=_human_bytes(reclaimed_bytes),
         skipped_paths=skipped_paths,
     )
+
+
+@app.get("/maintenance/activity", response_model=AppActivityResponse)
+def app_activity() -> AppActivityResponse:
+    # The desktop shell asks before stopping the backend to install an update.
+    with inflight_lock:
+        requests = inflight_requests
+    return AppActivityResponse(
+        active_jobs=len(job_store.active_job_ids()),
+        active_source_jobs=len(source_prepare_store.active_job_ids()),
+        inflight_requests=max(0, requests),
+    )
+
+
+@app.post("/maintenance/update-lock")
+def acquire_update_lock() -> Dict[str, bool]:
+    global update_install_locked
+    # Request admission and the idle check use the same lock. A POST either
+    # counts as active work or sees this gate closed; it cannot slip between them.
+    with inflight_lock:
+        if inflight_requests or job_store.active_job_ids() or source_prepare_store.active_job_ids():
+            raise HTTPException(status_code=409, detail="work is still running")
+        update_install_locked = True
+    return {"locked": True}
+
+
+@app.post("/maintenance/update-unlock")
+def release_update_lock() -> Dict[str, bool]:
+    global update_install_locked
+    with inflight_lock:
+        update_install_locked = False
+    return {"locked": False}
 
 
 @app.get("/maintenance/cache-usage", response_model=CacheUsageResponse)
