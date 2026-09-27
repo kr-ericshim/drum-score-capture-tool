@@ -177,6 +177,8 @@ export function createInitialExportConfig(sourceFilePath = "", today = new Date(
   const documentHeader = createDocumentHeaderState(sourceFilePath, today, sourceDisplayName);
   return {
     formats: DEFAULT_FORMATS.slice(),
+    rangeStart: "",
+    rangeEnd: "",
     outputDir: "",
     pageFillMode: "performance",
     layoutHint: "auto",

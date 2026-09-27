@@ -1,3 +1,4 @@
+import { captureRange } from "../../features/export/captureRange.js";
 import { isRectValid } from "./selectors.js";
 
 export function createRuntimeGuards() {
@@ -141,6 +142,7 @@ export function invalidatePreviewFlow(state, {
 export function canRunExport(state) {
   return Boolean(state?.source?.filePath)
     && isRectValid(state?.roi?.appliedRect)
+    && !captureRange(state).error
     && !hasDirtyRoiDraft(state)
     && Array.isArray(state?.exportConfig?.formats)
     && state.exportConfig.formats.length > 0;

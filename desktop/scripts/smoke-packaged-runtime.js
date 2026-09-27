@@ -146,6 +146,8 @@ async function createFixtureVideo({ packagedBackendMainPath, jobsDir }) {
     "lavfi",
     "-i",
     drawing.join(","),
+    "-c:v",
+    "mpeg4",
     "-pix_fmt",
     "yuv420p",
     sourcePath,

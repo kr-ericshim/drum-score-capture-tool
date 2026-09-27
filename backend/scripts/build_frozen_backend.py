@@ -50,6 +50,9 @@ def main() -> int:
         str(BACKEND_DIR / "pyinstaller_hooks"),
     ]
 
+    for module in ("uvloop", "httptools", "watchfiles", "dotenv"):
+        command.extend(["--exclude-module", module])
+
     print("[build_frozen_backend] running:", " ".join(command))
     subprocess.run(command, check=True, cwd=str(ROOT))
     runtime_executable = runtime_executable_path()

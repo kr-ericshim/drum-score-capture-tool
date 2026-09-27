@@ -32,6 +32,10 @@ The workflow YAML below must stay aligned with:
   - otherwise `ko*` system locales start in Korean
   - all other locales start in English
 
+## Media and Python build prerequisite
+
+Follow [Media toolchain and local release builds](media-toolchain.md) before packaging. FFmpeg and ffprobe are built from pinned LGPL source, not downloaded by npm. Preserve the matching `ffmpeg-*-source.tar.gz` release assets alongside both installers. Use the Python version in `.python-version` and `backend/requirements-build.lock`; local builds can use the separate `backend/.venv-build` environment.
+
 ## Pre-Release Checklist
 
 1. Update `desktop/package.json`, both version fields in `desktop/package-lock.json`, and the FastAPI version in `backend/app/main.py`; add `docs/release/release-notes-vX.Y.Z.md`. Run `node desktop/scripts/check-release-version.js`. Tag builds reject an exact tag/version mismatch before installing dependencies.
@@ -40,7 +44,7 @@ The workflow YAML below must stay aligned with:
 
 ```bash
 PYTHONPATH=backend backend/.venv/bin/python -m unittest discover -s backend/tests -p 'test_*.py'
-backend/.venv/bin/pip install -r backend/requirements-build.txt
+uv pip sync --python backend/.venv-build/bin/python backend/requirements-build.lock
 
 cd desktop
 npm ci

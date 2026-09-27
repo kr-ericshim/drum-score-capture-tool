@@ -36,7 +36,7 @@ export function saveSession(storage, state) {
         autoRoiUserEdited: false,
         error: "",
       },
-      exportConfig: Object.fromEntries(["formats", "pageFillMode", "layoutHint", "jobId", "runStatus", "documentHeader"].map(key => [key, exportConfig[key]])),
+      exportConfig: Object.fromEntries(["rangeStart", "rangeEnd", "formats", "pageFillMode", "layoutHint", "jobId", "runStatus", "documentHeader"].map(key => [key, exportConfig[key]])),
       review: { selectedPaths: state.review.pages.length
         ? state.review.pages.filter(page => state.review.selectedPageIds.includes(page.id)).map(page => page.capturePath)
         : state.review.restoredSelectedPaths ?? null },

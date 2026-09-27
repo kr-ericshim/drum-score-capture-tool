@@ -2402,3 +2402,23 @@ test("Save As cancellation is quiet and errors allow retry", async t => {
   assert.match(app.debug.getState().ui.inlineNotice, /PDF를 저장하지 못했습니다: EACCES/);
   assert.equal(app.debug.getState().ui.savingPdfAs, false);
 });
+
+test('capture range inputs reach the job payload without clearing existing review output', async () => {
+  const root = createRoot();
+  const app = createApp(root, { exposeTestApi: true });
+  app.debug.setState(s => {
+    s.source.filePath='/fixture.mp4';s.source.metadata={durationSec:200};
+    s.roi.appliedRect=[[0,0],[100,0],[100,100],[0,100]];
+    s.review.pdfPath='/previous/score.pdf';return s;
+  });
+  root.dispatchInput({dataset:{action:'capture-range',field:'rangeStart'},value:'1:30'});
+  root.dispatchInput({dataset:{action:'capture-range',field:'rangeEnd'},value:'2:00'});
+  const state=app.debug.getState();
+  assert.equal(state.review.pdfPath,'/previous/score.pdf');
+  assert.equal(app.debug.buildJobPayload(state).options.extract.start_sec,90);
+  assert.equal(app.debug.buildJobPayload(state).options.extract.end_sec,120);
+  app.debug.setState(s=>{s.exportConfig.runStatus='running';return s;});
+  root.dispatchInput({dataset:{action:'capture-range',field:'rangeStart'},value:'10'});
+  assert.equal(app.debug.getState().exportConfig.rangeStart,'1:30');
+  app.destroy();
+});

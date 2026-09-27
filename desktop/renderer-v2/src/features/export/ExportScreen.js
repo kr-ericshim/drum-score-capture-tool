@@ -1,3 +1,4 @@
+import { captureRange } from "./captureRange.js";
 import { isPdfSelected, isRectValid } from "../../app/session/selectors.js";
 import { escapeAttr, escapeHtml } from "../../lib/html.js";
 import { t } from "../../lib/i18n.js";
@@ -112,7 +113,7 @@ export function buildExportScreenModel(state) {
   const hasFormats = formats.length > 0;
   const pdfSelected = isPdfSelected(formats);
   const formatsLabel = hasFormats ? formats.join(", ").toUpperCase() : t("export.formatsRequired", { locale });
-  const canRun = Boolean(state.source.filePath) && hasValidRoi && hasFormats && !running;
+  const canRun = Boolean(state.source.filePath) && hasValidRoi && hasFormats && !running && !captureRange(state).error;
   const statusMessage = state.exportConfig.message || t("export.ready", { locale });
   const previewSource = state.roi.previewImage ? normalizeAssetPath(state.roi.previewImage) : "";
   const cropBounds = rectToBounds(state.roi.appliedRect);
@@ -282,6 +283,17 @@ export function renderExportScreen(state) {
             ${model.metadata.helperText ? `<p class="panel-note export-metadata-hint">${safeMetadataHelper}</p>` : ""}
           </section>
           <section class="panel export-module">
+            <div class="panel-heading"><h2>${t("export.range.title", { locale: model.locale })}</h2></div>
+            <div class="capture-range-fields">
+              ${["rangeStart", "rangeEnd"].map(field => `<label class="capture-range-field">
+                <span>${t(`export.range.${field}`, { locale: model.locale })}</span>
+                <input type="text" data-action="capture-range" data-field="${field}" value="${escapeAttr(state.exportConfig[field] || "")}" placeholder="${field === "rangeStart" ? "0:00" : t("export.range.endPlaceholder", { locale: model.locale })}" maxlength="24" spellcheck="false" autocomplete="off" aria-describedby="captureRangeHelp${captureRange(state).error ? ' captureRangeError' : ''}" ${captureRange(state).error ? 'aria-invalid="true"' : ''} ${formatInputsDisabled ? "disabled" : ""} />
+              </label>`).join("")}
+            </div>
+            <p id="captureRangeHelp" class="panel-note">${t("export.range.help", { locale: model.locale })}</p>
+            ${captureRange(state).error ? `<p id="captureRangeError" class="inline-error" role="alert">${t(`export.range.error.${captureRange(state).error}`, { locale: model.locale })}</p>` : ""}
+          </section>
+          <section class="panel export-module">
             <div class="panel-heading">
               <h2>${t("export.processingProfile", { locale: model.locale })}</h2>
               <p>${t("export.processingProfileHelp", { locale: model.locale })}</p>
@@ -320,6 +332,7 @@ export function renderExportScreen(state) {
             </div>
             <div class="export-progress-strip" role="progressbar" aria-label="${t("export.progressAria", { locale: model.locale })}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${model.progress}">
               <span style="width:${model.progress}%"></span>
+            </div>
             </div>
           ` : ""}
           <div class="export-preview-stage">

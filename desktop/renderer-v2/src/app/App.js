@@ -1,3 +1,4 @@
+import { captureRange } from "../features/export/captureRange.js";
 import { bridge, readVideoMetadata } from "./bridge.js";
 import { createStore } from "./session/store.js";
 import { restoreSession, saveSession } from "./session/persistence.js";
@@ -247,9 +248,9 @@ function captureStageInputFocus() {
   if (!activeElement?.dataset?.action) {
     return null;
   }
-  if (activeElement.dataset.action === "update-export-metadata" && activeElement.dataset.field) {
+  if (["update-export-metadata", "capture-range"].includes(activeElement.dataset.action) && activeElement.dataset.field) {
     return {
-      selector: `[data-action="update-export-metadata"][data-field="${activeElement.dataset.field}"]`,
+      selector: `[data-action="${activeElement.dataset.action}"][data-field="${activeElement.dataset.field}"]`,
       selectionStart: Number.isInteger(activeElement.selectionStart) ? activeElement.selectionStart : null,
       selectionEnd: Number.isInteger(activeElement.selectionEnd) ? activeElement.selectionEnd : null,
     };
@@ -464,6 +465,8 @@ export function createApp(root, dependencies = {}) {
       youtubePrepareError,
     },
   });
+  let releaseUpdate = null;
+  let destroyed = false;
   let roiEditor = null;
   let mountingRoiEditor = false;
   let roiEditorKey = "";
@@ -705,14 +708,18 @@ export function createApp(root, dependencies = {}) {
     const sourceStatus = escapeHtml(sourceStatusLabel
       ? t("status.sourceLabel", { locale, replacements: { label: sourceStatusLabel } })
       : t("status.sourceIdle", { locale }));
-    const inlineNotice = escapeHtml(state.ui.inlineNotice || t("status.sessionStable", { locale }));
+    const backendMessage = state.ui.backend?.error
+      ? t("support.engineFailed", { locale })
+      : t("support.engineStarting", { locale });
+    const hasFailure = Boolean(state.ui.backend?.error || state.source.error || state.roi.error || state.exportConfig.error || state.review.error);
+    const inlineNotice = escapeHtml(state.ui.inlineNotice || (!state.ui.backend?.ready ? backendMessage : hasFailure ? t("support.failureHelp", { locale }) : releaseUpdate ? "" : t("status.sessionStable", { locale })));
     const pagesStatus = escapeHtml(state.review.pages.length
       ? t("status.pagesCount", { locale, replacements: { count: state.review.pages.length } })
       : t("status.pagesEmpty", { locale }));
-    const recoveryActions = state.ui.backend?.ready
+    const recoveryActions = state.ui.backend?.ready || state.ui.backend?.starting || state.ui.backend?.setupRunning
       ? ""
       : `
-        <div class="status-bar-group">
+        <div class="status-bar-group status-bar-recovery">
           <button class="button button-secondary" data-action="restart-backend">${escapeHtml(t("status.restartBackend", { locale }))}</button>
           <button class="button button-secondary" data-action="run-guided-setup">${escapeHtml(t("status.runSetup", { locale }))}</button>
         </div>
@@ -729,6 +736,15 @@ export function createApp(root, dependencies = {}) {
         <span>${pagesStatus}</span>
       </div>
       ${recoveryActions}
+      ${hasFailure ? `<div class="status-bar-group status-bar-recovery">
+        <button class="button button-secondary" data-action="copy-diagnostics">${t("support.copy", { locale })}</button>
+        <button class="button button-secondary" data-action="open-support-issue">${t("support.issue", { locale })}</button>
+      </div>` : ""}
+      ${releaseUpdate && !hasFailure && state.ui.backend?.ready ? `<div class="status-bar-group status-bar-recovery">
+        <span>${escapeHtml(t("update.available", { locale, replacements: { version: releaseUpdate.version } }))}</span>
+        <button class="button button-secondary" data-action="open-release-page">${t("update.open", { locale })}</button>
+        <button class="button button-ghost" data-action="dismiss-release-update">${t("update.dismiss", { locale })}</button>
+      </div>` : ""}
     `;
     if (shell.appShell) {
       shell.appShell.dataset.step = state.ui.activeStep;
@@ -768,6 +784,8 @@ export function createApp(root, dependencies = {}) {
       lastArchiveMarkup = archiveMarkupValue;
     }
     syncArchiveShellState(isArchiveOpen);
+    const statusNeedsAttention = !state.ui.backend?.ready || hasFailure || Boolean(releaseUpdate) || Boolean(String(state.ui.inlineNotice || "").trim());
+    shell.statusBar?.setAttribute?.("data-attention", statusNeedsAttention ? "true" : "false");
     if (statusMarkup !== lastStatusMarkup) {
       shell.statusBar.innerHTML = statusMarkup;
       lastStatusMarkup = statusMarkup;
@@ -1399,8 +1417,8 @@ export function createApp(root, dependencies = {}) {
         extract: {
           fps: 1.0,
           capture_sensitivity: "medium",
-          start_sec: 0,
-          end_sec: null,
+          start_sec: captureRange(state).start,
+          end_sec: captureRange(state).end,
         },
         detect: {
           roi,
@@ -1582,6 +1600,7 @@ export function createApp(root, dependencies = {}) {
     if (formats.length === 0) {
       return t("export.formatsRequiredError", { locale });
     }
+    if (captureRange(state).error) return t(`export.range.error.${captureRange(state).error}`, { locale });
     return t("export.startBlocked", { locale });
   }
 
@@ -1838,6 +1857,19 @@ export function createApp(root, dependencies = {}) {
       return;
     }
     const action = target.dataset.action;
+    if (["copy-diagnostics", "open-support-issue", "open-release-page", "dismiss-release-update"].includes(action)) {
+      try {
+        if (action === "copy-diagnostics") {
+          const state = store.getState();
+          const detail = [state.source.error, state.roi.error, state.exportConfig.error, state.review.error].filter(Boolean).join("\n");
+          const copied = await runtimeBridge.copyDiagnostics?.(detail);
+          setInlineNotice(t(copied ? "support.copied" : "support.copyFailed", { locale: state.ui.locale }));
+        } else if (action === "open-support-issue") await runtimeBridge.openSupportIssue?.();
+        else if (action === "open-release-page") await runtimeBridge.openReleasePage?.();
+        else { await runtimeBridge.dismissReleaseUpdate?.(); releaseUpdate = null; render(); }
+      } catch (_) { setInlineNotice(t("support.actionFailed", { locale: store.getState().ui.locale })); }
+      return;
+    }
     if (action?.startsWith("review-")) { await reviewController.handleAction(action, target.dataset.value); return; }
     if (action === "cancel-job") { await cancelCurrentJob(); return; }
     if (action === "reconnect-job") { reconnectJob(); return; }
@@ -2035,6 +2067,13 @@ export function createApp(root, dependencies = {}) {
 
   const handleInput = (event) => {
     const target = event.target;
+    if (target.dataset.action === "capture-range") {
+      const field = target.dataset.field;
+      const state = store.getState();
+      if (!["rangeStart", "rangeEnd"].includes(field) || state.exportConfig.runStatus === "running" || state.exportConfig.metadataModal?.isOpen) return;
+      setState(next => { next.exportConfig[field] = String(target.value).slice(0, 24); return next; });
+      return;
+    }
     if (target.dataset.action === "toggle-roi-auto-fit") {
       setState(next => { next.roi.autoFit = Boolean(target.checked); return next; });
       return;
@@ -2211,6 +2250,9 @@ export function createApp(root, dependencies = {}) {
 
   refreshBackendState();
   render();
+  Promise.resolve(runtimeBridge.checkReleaseUpdate?.()).then(update => {
+    if (!destroyed && update?.version) { releaseUpdate = update; render(); }
+  }).catch(() => {});
 
   return {
     debug: dependencies.exposeTestApi
@@ -2227,6 +2269,7 @@ export function createApp(root, dependencies = {}) {
         }
       : undefined,
     destroy() {
+      destroyed = true;
       reviewController.destroy();
       stopPersistence();
       stopPolling();

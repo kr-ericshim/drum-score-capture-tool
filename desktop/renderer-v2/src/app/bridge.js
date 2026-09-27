@@ -1,6 +1,11 @@
 import { fileUrl } from "../lib/paths.js";
 
 export const bridge = {
+  checkReleaseUpdate() { return window?.drumSheetAPI?.checkReleaseUpdate?.() || Promise.resolve(null); },
+  dismissReleaseUpdate() { return window?.drumSheetAPI?.dismissReleaseUpdate?.(); },
+  openReleasePage() { return window?.drumSheetAPI?.openReleasePage?.(); },
+  openSupportIssue() { return window?.drumSheetAPI?.openSupportIssue?.(); },
+  copyDiagnostics(detail) { return window?.drumSheetAPI?.copyDiagnostics?.(detail) || Promise.resolve(false); },
   selectVideoFile() {
     return window?.drumSheetAPI?.selectVideoFile?.() || Promise.resolve("");
   },

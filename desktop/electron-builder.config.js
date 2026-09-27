@@ -10,6 +10,8 @@ const baseConfig = {
       "to": "backend",
       "filter": [
         "**/*",
+        "!.venv-build",
+        "!.venv-build/**",
         "!jobs",
         "!jobs/**/*",
         "!output",
@@ -64,6 +66,8 @@ baseConfig.files = [
   "backend-launch-policy.js",
   "backend-job-paths.js",
   "save-pdf-as.js",
+  "release-updates.js",
+  "support-diagnostics.js",
   "package.json",
   "renderer-v2/index.html",
   "renderer-v2/src/**/*",

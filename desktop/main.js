@@ -7,12 +7,23 @@ const { spawn, spawnSync } = require("child_process");
 const { decidePackagedBackendLaunchMode } = require("./backend-launch-policy");
 const { resolveBackendJobsDir } = require("./backend-job-paths");
 const { savePdfAs } = require("./save-pdf-as");
+const { createReleaseUpdates, RELEASES_URL } = require("./release-updates");
+const { createDiagnosticLog } = require("./support-diagnostics");
 const { resolveRendererIndexPath } = require("./renderer-entry");
 
 const BACKEND_PORT = Number(process.env.DRUMSHEET_PORT || 8000);
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 const BACKEND_SESSION_TOKEN = String(process.env.DRUMSHEET_SESSION_TOKEN || "").trim()
   || crypto.randomBytes(24).toString("hex");
+
+const diagnosticLog = createDiagnosticLog([BACKEND_SESSION_TOKEN]);
+let releaseUpdates = null;
+function getReleaseUpdates() {
+  if (!releaseUpdates) releaseUpdates = createReleaseUpdates({
+    currentVersion: app.getVersion(), cachePath: path.join(app.getPath("userData"), "release-updates.json"),
+  });
+  return releaseUpdates;
+}
 
 let mainWindow = null;
 let backendProcess = null;
@@ -568,9 +579,11 @@ function runBackend() {
   });
 
   backendProcess.stdout.on("data", (chunk) => {
+    diagnosticLog.append(chunk.toString("utf8"));
     console.log("[backend]", chunk.toString("utf8").trim());
   });
   backendProcess.stderr.on("data", (chunk) => {
+    diagnosticLog.append(chunk.toString("utf8"));
     console.error("[backend][stderr]", chunk.toString("utf8").trim());
   });
 
@@ -683,6 +696,14 @@ function stopSetupProcess() {
 }
 
 function registerIpc() {
+  ipcMain.handle("check-release-update", () => app.isPackaged ? getReleaseUpdates().check() : null);
+  ipcMain.handle("dismiss-release-update", () => { if (releaseUpdates) releaseUpdates.dismiss(); });
+  ipcMain.handle("open-release-page", () => shell.openExternal(RELEASES_URL));
+  ipcMain.handle("open-support-issue", () => shell.openExternal("https://github.com/kr-ericshim/drum-score-capture-tool/issues/new"));
+  ipcMain.handle("copy-diagnostics", (_, detail) => {
+    clipboard.writeText(diagnosticLog.report({ version: app.getVersion(), backend: getBackendStatePayload(), detail: typeof detail === "string" ? detail : "" }));
+    return true;
+  });
 ipcMain.handle("select-video-file", async () => {
     const result = await dialog.showOpenDialog({
       title: "악보 영상 선택",

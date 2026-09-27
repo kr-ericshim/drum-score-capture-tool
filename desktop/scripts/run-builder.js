@@ -52,51 +52,31 @@ if (!fs.existsSync(localBuilder)) {
 }
 
 function stageRuntimeFfmpeg() {
-  const ffmpegPath = require("ffmpeg-static");
-  const ffprobeStatic = require("ffprobe-static");
-  const ffprobePath = ffprobeStatic && ffprobeStatic.path;
-  if (!ffmpegPath || !ffprobePath) {
-    console.error("[run-builder] ffmpeg-static / ffprobe-static could not resolve platform binaries.");
-    process.exit(1);
-  }
-
-  const backendBinDir = path.join(__dirname, "..", "..", "backend", "bin");
-  fs.mkdirSync(backendBinDir, { recursive: true });
-
-  const ffmpegName = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
-  const ffprobeName = process.platform === "win32" ? "ffprobe.exe" : "ffprobe";
-  const copies = [
-    [ffmpegPath, path.join(backendBinDir, ffmpegName)],
-    [ffprobePath, path.join(backendBinDir, ffprobeName)],
-  ];
-
-  for (const [source, target] of copies) {
-    if (fs.existsSync(target)) {
-      fs.chmodSync(target, 0o755);
-      fs.unlinkSync(target);
-    }
-    fs.copyFileSync(source, target);
-    fs.chmodSync(target, 0o755);
-    console.log(`[run-builder] staged runtime binary: ${target}`);
-  }
+  require("./media-tool-policy").validateMediaTools(path.join(projectRoot, "backend", "bin"));
 }
 
 function findBuildPython() {
   const backendDir = path.join(projectRoot, "backend");
-  const candidates = process.platform === "win32"
+  const defaultCandidates = process.platform === "win32"
     ? [
+        path.join(backendDir, ".venv-build", "Scripts", "python.exe"),
         path.join(backendDir, ".venv", "Scripts", "python.exe"),
         "py",
         "python",
       ]
     : [
+        path.join(backendDir, ".venv-build", "bin", "python"),
         path.join(backendDir, ".venv", "bin", "python3"),
         path.join(backendDir, ".venv", "bin", "python"),
         "python3",
         "python",
       ];
 
+  const candidates = process.env.DRUMSHEET_BUILD_PYTHON
+    ? [process.env.DRUMSHEET_BUILD_PYTHON] : defaultCandidates;
   for (const candidate of candidates) {
+    const version = spawnSync(candidate, [...(candidate === "py" ? ["-3"] : []), "-c", "import sys; print(\".\".join(map(str, sys.version_info[:2])))"], { encoding: "utf8" });
+    if (version.stdout?.trim() !== "3.11") continue;
     const probeArgs = candidate === "py" ? ["-3", "-m", "PyInstaller", "--version"] : ["-m", "PyInstaller", "--version"];
     const probe = spawnSync(candidate, probeArgs, {
       stdio: "ignore",
@@ -107,8 +87,8 @@ function findBuildPython() {
     }
   }
 
-  console.error("[run-builder] no Python interpreter with PyInstaller found for frozen backend build.");
-  console.error("[run-builder] install build dependencies first: backend/.venv/bin/pip install -r backend/requirements-build.txt");
+  console.error("[run-builder] no Python 3.11 interpreter with PyInstaller found for frozen backend build.");
+  console.error("[run-builder] install build dependencies first: use Python 3.11 and backend/requirements-build.lock; set DRUMSHEET_BUILD_PYTHON to its executable");
   process.exit(1);
 }
 
@@ -175,4 +155,8 @@ if (validator.error) {
   process.exit(1);
 }
 
+if (!validator.status && action === "dist") {
+  const filename = `ffmpeg-8.1.2-${process.platform}-${process.arch}-source.tar.gz`;
+  fs.copyFileSync(path.join(projectRoot, ".tmp", "media-tools", filename), path.join(projectRoot, "dist", filename));
+}
 process.exit(validator.status || 0);
