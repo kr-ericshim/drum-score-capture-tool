@@ -247,16 +247,15 @@ class TestSheetFinalizePagination(unittest.TestCase):
     def test_finalize_sheet_sequence_can_skip_near_same_dedupe(self):
         h, w = 900, 1800
         page_a = np.full((h, w, 3), 255, dtype=np.uint8)
-        page_b = page_a.copy()
-
         for offset in [0, 12, 24, 36, 48]:
             y = 220 + offset
             cv2.line(page_a, (80, y), (1720, y), (0, 0, 0), 2)
-            cv2.line(page_b, (80, y), (1720, y), (0, 0, 0), 2)
+        for x in (300, 700, 1100):
+            cv2.ellipse(page_a, (x, 238), (7, 5), -20, 0, 360, (0, 0, 0), -1)
+            cv2.line(page_a, (x + 7, 238), (x + 7, 190), (0, 0, 0), 2)
 
-        # A tiny notation change is enough to be musically unique while still
-        # looking nearly identical to mean-pixel dedupe.
-        cv2.circle(page_b, (1510, 250), 8, (0, 0, 0), -1)
+        # Same score, only tone drift and slight blur: a repeated frame.
+        page_b = cv2.GaussianBlur(np.clip(page_a.astype(np.float32) * 0.92 + 10, 0, 255).astype(np.uint8), (3, 3), 0)
 
         _pages_default, _merged_default, used_default = finalize_sheet_sequence([page_a, page_b])
         _pages_no_dedupe, _merged_no_dedupe, used_no_dedupe = finalize_sheet_sequence(
@@ -267,6 +266,26 @@ class TestSheetFinalizePagination(unittest.TestCase):
 
         self.assertEqual(used_default, 1)
         self.assertEqual(used_no_dedupe, 2)
+
+    def test_finalize_sheet_sequence_keeps_frame_with_single_note_change(self):
+        h, w = 900, 1800
+        page_a = np.full((h, w, 3), 255, dtype=np.uint8)
+        for offset in [0, 12, 24, 36, 48]:
+            y = 220 + offset
+            cv2.line(page_a, (80, y), (1720, y), (0, 0, 0), 2)
+        for x in (300, 700, 1100):
+            cv2.ellipse(page_a, (x, 238), (7, 5), -20, 0, 360, (0, 0, 0), -1)
+            cv2.line(page_a, (x + 7, 238), (x + 7, 190), (0, 0, 0), 2)
+        page_b = page_a.copy()
+
+        # A single added note head is musically a different page even though
+        # the mean pixel difference is negligible.
+        cv2.ellipse(page_b, (1510, 250), (7, 5), -20, 0, 360, (0, 0, 0), -1)
+        cv2.line(page_b, (1517, 250), (1517, 190), (0, 0, 0), 2)
+
+        _pages, _merged, used = finalize_sheet_sequence([page_a, page_b])
+
+        self.assertEqual(used, 2)
 
 
 if __name__ == "__main__":

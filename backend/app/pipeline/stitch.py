@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections import deque
 from pathlib import Path
-from typing import Deque, List, Optional, Tuple
+from typing import Any, Deque, Dict, List, Optional, Tuple
 
 import cv2
 
@@ -11,6 +11,7 @@ from app.pipeline.process_control import checkpoint
 import numpy as np
 
 from app.pipeline.layout_profiles import LAYOUT_BOTTOM_BAR, LAYOUT_FULL_SCROLL, LAYOUT_PAGE_TURN, resolve_layout_hint
+from app.pipeline.page_diff import FrameDiffVerdict, VERDICT_AMBIGUOUS, compare_frames, playhead_jumped_back
 from app.pipeline.sheet_finalize import _estimate_vertical_overlap, _merge_vertical_sheet
 from app.schemas import StitchOptions
 
@@ -21,7 +22,11 @@ def select_review_candidates(
     options: StitchOptions,
     source_type: Optional[str] = None,
     logger,
+    report: Optional[Dict[str, Any]] = None,
 ) -> List[Path]:
+    """Drop repeated frames; `report` (if given) receives "similar_pairs": frames
+    that were kept although they look almost identical to the previous kept frame,
+    so the review screen can show the pair instead of the pipeline guessing."""
     if not frame_paths:
         return []
 
@@ -32,6 +37,7 @@ def select_review_candidates(
         layout_mode=layout_mode,
         dedupe_level=options.dedupe_level,
         logger=logger,
+        report=report,
     )
     if filtered_frames:
         logger(f"review candidates prepared: {len(filtered_frames)}")
@@ -67,12 +73,17 @@ def stitch_pages(
         return []
 
     if layout_mode == LAYOUT_PAGE_TURN:
-        logger("page-turn mode: compressing repeated pages")
+        # Frames handed in as `prepared_frames` were already deduped (and possibly
+        # hand-picked in review); merging them again could silently drop a page
+        # the user chose to keep.
+        compress = prepared_frames is None
+        logger("page-turn mode: compressing repeated pages" if compress else "page-turn mode: keeping prepared pages")
         return _collect_page_turn_pages(
             frame_paths=filtered_frames,
             options=options,
             workspace=workspace,
             logger=logger,
+            compress=compress,
         )
 
     if not options.enable:
@@ -172,6 +183,7 @@ def _filter_redundant_frames(
     layout_mode: str,
     dedupe_level: str = "normal",
     logger,
+    report: Optional[Dict[str, Any]] = None,
 ) -> List[Path]:
     if len(frame_paths) <= 1:
         return frame_paths
@@ -181,35 +193,61 @@ def _filter_redundant_frames(
     if prev is None:
         return frame_paths
 
-    recent_hashes: Deque[int] = deque(maxlen=8)
+    similar_pairs: List[Dict[str, Any]] = []
+    recent_frames: Deque[Tuple[int, np.ndarray]] = deque(maxlen=8)
     first_hash = _frame_dhash(prev)
     if first_hash is not None:
-        recent_hashes.append(first_hash)
+        recent_frames.append((first_hash, prev))
 
     removed = 0
     clarity_replacements = 0
+    ambiguous_kept = 0
     scroll_direction = 0
+    last_seen_playhead_x: Optional[float] = None
     for path in frame_paths[1:]:
         checkpoint()
         current = cv2.imread(str(path))
         if current is None:
             continue
-        if _is_near_duplicate(prev, current, layout_mode=layout_mode, dedupe_level=dedupe_level):
+        verdict = compare_frames(prev, current, dedupe_level=dedupe_level)
+        if verdict.is_same and playhead_jumped_back(last_seen_playhead_x, verdict.playhead_cur_x):
+            # Same-looking score but playback restarted at the left edge: a
+            # repeat, or the next page happens to be identical. Keep for review.
+            verdict.verdict = VERDICT_AMBIGUOUS
+            verdict.reason = "playhead_reset"
+        last_seen_playhead_x = verdict.playhead_cur_x
+        if _is_duplicate_verdict(verdict, layout_mode=layout_mode, dedupe_level=dedupe_level):
             if _should_replace_with_clearer_duplicate(prev, current):
                 kept_paths[-1] = path
                 prev = current
                 current_hash = _frame_dhash(current)
                 if current_hash is not None:
-                    recent_hashes.append(current_hash)
+                    recent_frames.append((current_hash, current))
                 clarity_replacements += 1
             removed += 1
             continue
 
+        if verdict.is_ambiguous:
+            # Keep it, but hand the pair to the review step instead of guessing.
+            ambiguous_kept += 1
+            similar_pairs.append(
+                {
+                    "kept": str(kept_paths[-1]),
+                    "candidate": str(path),
+                    "reason": verdict.reason,
+                    "metrics": verdict.to_dict(),
+                }
+            )
+            logger(f"similar frame kept for review ({verdict.reason}): {path.name}")
+
         current_hash = _frame_dhash(current)
-        if layout_mode in {LAYOUT_BOTTOM_BAR, LAYOUT_PAGE_TURN}:
-            if current_hash is not None and _looks_like_recent_hash_duplicate(
+        if layout_mode in {LAYOUT_BOTTOM_BAR, LAYOUT_PAGE_TURN} and not verdict.is_ambiguous:
+            # Flicker back to a recently seen page: the hash only nominates a
+            # candidate; the blob-level comparison has to confirm it.
+            if current_hash is not None and _matches_recent_frame(
+                current,
                 current_hash,
-                recent_hashes=recent_hashes,
+                recent_frames=recent_frames,
                 layout_mode=layout_mode,
                 dedupe_level=dedupe_level,
             ):
@@ -217,12 +255,10 @@ def _filter_redundant_frames(
                 continue
 
         if layout_mode == LAYOUT_FULL_SCROLL:
+            # Static near-duplicates were already removed above (blob-level
+            # verdict); here only the scroll direction jitter filter remains.
             shift_px, shift_conf = _estimate_vertical_shift(prev, current)
             min_scroll_shift = _min_scroll_shift_by_level(dedupe_level)
-            if shift_conf >= 0.34 and abs(shift_px) < min_scroll_shift:
-                removed += 1
-                continue
-
             if shift_conf >= 0.4 and abs(shift_px) >= 1.0:
                 direction = 1 if shift_px > 0 else -1
                 # Ignore tiny opposite-direction jitter while scrolling.
@@ -234,13 +270,54 @@ def _filter_redundant_frames(
         kept_paths.append(path)
         prev = current
         if current_hash is not None:
-            recent_hashes.append(current_hash)
+            recent_frames.append((current_hash, current))
 
     if removed > 0:
         logger(f"temporal dedupe removed {removed} near-duplicate frames")
     if clarity_replacements > 0:
         logger(f"temporal dedupe replaced {clarity_replacements} low-clarity duplicate frames")
+    if ambiguous_kept > 0:
+        logger(f"temporal dedupe kept {ambiguous_kept} near-identical frames for review")
+    if report is not None:
+        report["similar_pairs"] = similar_pairs
     return kept_paths
+
+
+def _is_duplicate_verdict(verdict: FrameDiffVerdict, *, layout_mode: str, dedupe_level: str) -> bool:
+    """A frame is redundant only when the score content is the same AND nothing
+    new scrolled into view. Ambiguous verdicts are never treated as duplicates."""
+    if not verdict.is_same:
+        return False
+    if layout_mode == LAYOUT_PAGE_TURN:
+        # Pages do not scroll; any small shift is ROI jitter.
+        return True
+    max_jitter = _min_scroll_shift_by_level(dedupe_level)
+    return max(abs(verdict.shift_x), abs(verdict.shift_y)) < max_jitter
+
+
+def _matches_recent_frame(
+    current: np.ndarray,
+    current_hash: int,
+    *,
+    recent_frames: Deque[Tuple[int, np.ndarray]],
+    layout_mode: str,
+    dedupe_level: str,
+) -> bool:
+    if not recent_frames:
+        return False
+    if not _looks_like_recent_hash_duplicate(
+        current_hash,
+        recent_hashes=deque(hash_value for hash_value, _image in recent_frames),
+        layout_mode=layout_mode,
+        dedupe_level=dedupe_level,
+    ):
+        return False
+    ranked = sorted(recent_frames, key=lambda item: _hamming_u64(current_hash, item[0]))
+    for _hash_value, image in ranked[:3]:
+        verdict = compare_frames(image, current, dedupe_level=dedupe_level)
+        if _is_duplicate_verdict(verdict, layout_mode=layout_mode, dedupe_level=dedupe_level):
+            return True
+    return False
 
 
 def _should_replace_with_clearer_duplicate(prev_img, cur_img) -> bool:
@@ -256,108 +333,6 @@ def _sheet_clarity_score(image: np.ndarray) -> float:
         return 0.0
     gray = cv2.cvtColor(cv2.resize(image, (w, h)), cv2.COLOR_BGR2GRAY)
     return float(cv2.Laplacian(gray, cv2.CV_64F).var())
-
-
-def _is_near_duplicate(prev_img, cur_img, *, layout_mode: str, dedupe_level: str) -> bool:
-    h = min(prev_img.shape[0], cur_img.shape[0], 900)
-    w = min(prev_img.shape[1], cur_img.shape[1], 1600)
-    if h <= 16 or w <= 16:
-        return False
-
-    prev_gray = cv2.cvtColor(cv2.resize(prev_img, (w, h)), cv2.COLOR_BGR2GRAY)
-    cur_gray = cv2.cvtColor(cv2.resize(cur_img, (w, h)), cv2.COLOR_BGR2GRAY)
-
-    prev_gray = cv2.GaussianBlur(prev_gray, (3, 3), 0)
-    cur_gray = cv2.GaussianBlur(cur_gray, (3, 3), 0)
-
-    diff = cv2.absdiff(prev_gray, cur_gray)
-    _, mask = cv2.threshold(diff, 22, 255, cv2.THRESH_BINARY)
-    changed = float(cv2.countNonZero(mask))
-    total = float(max(1, h * w))
-    changed_ratio = changed / total
-
-    structure_diff = _structure_diff_ratio(prev_gray, cur_gray)
-
-    if layout_mode == LAYOUT_BOTTOM_BAR:
-        static_threshold = _threshold_by_level(dedupe_level, aggressive=0.045, normal=0.028, sensitive=0.016)
-        structure_threshold = _threshold_by_level(dedupe_level, aggressive=0.085, normal=0.062, sensitive=0.042)
-        playhead_threshold = _threshold_by_level(dedupe_level, aggressive=0.22, normal=0.14, sensitive=0.09)
-
-        if changed_ratio < static_threshold:
-            return True
-        if structure_diff < structure_threshold:
-            return True
-        if changed_ratio < playhead_threshold and _looks_like_moving_playhead(mask):
-            return True
-        return False
-
-    if layout_mode == LAYOUT_PAGE_TURN:
-        static_threshold = _threshold_by_level(dedupe_level, aggressive=0.012, normal=0.008, sensitive=0.005)
-        structure_threshold = _threshold_by_level(dedupe_level, aggressive=0.032, normal=0.024, sensitive=0.017)
-        return changed_ratio < static_threshold or structure_diff < structure_threshold
-
-    static_threshold = _threshold_by_level(dedupe_level, aggressive=0.026, normal=0.018, sensitive=0.012)
-    structure_threshold = _threshold_by_level(dedupe_level, aggressive=0.052, normal=0.038, sensitive=0.026)
-    return changed_ratio < static_threshold or structure_diff < structure_threshold
-
-
-def _looks_like_moving_playhead(binary_mask) -> bool:
-    h, w = binary_mask.shape[:2]
-    if h <= 0 or w <= 0:
-        return False
-
-    changed_idx = np.where(binary_mask > 0)
-    if changed_idx[0].size > 0:
-        x_min = int(changed_idx[1].min())
-        x_max = int(changed_idx[1].max())
-        y_min = int(changed_idx[0].min())
-        y_max = int(changed_idx[0].max())
-        box_w_ratio = float(x_max - x_min + 1) / float(max(1, w))
-        box_h_ratio = float(y_max - y_min + 1) / float(max(1, h))
-        changed_ratio = float(changed_idx[0].size) / float(max(1, w * h))
-        if box_w_ratio <= 0.22 and box_h_ratio >= 0.42 and changed_ratio <= 0.25:
-            return True
-
-    col_density = (binary_mask > 0).sum(axis=0).astype(np.float32) / float(max(1, h))
-    active_cols = np.where(col_density > 0.45)[0]
-    if active_cols.size == 0:
-        return False
-
-    width = int(active_cols.max() - active_cols.min() + 1)
-    max_width = max(6, int(w * 0.16))
-    if width > max_width:
-        return False
-
-    changed_total = float(np.count_nonzero(binary_mask))
-    if changed_total <= 0:
-        return False
-
-    concentrated = float(np.count_nonzero(binary_mask[:, active_cols])) / changed_total
-    return concentrated > 0.52
-
-
-def _structure_diff_ratio(prev_gray, cur_gray) -> float:
-    prev_inv = cv2.adaptiveThreshold(
-        prev_gray,
-        255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY_INV,
-        31,
-        7,
-    )
-    cur_inv = cv2.adaptiveThreshold(
-        cur_gray,
-        255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY_INV,
-        31,
-        7,
-    )
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-    prev_clean = cv2.morphologyEx(prev_inv, cv2.MORPH_OPEN, kernel)
-    cur_clean = cv2.morphologyEx(cur_inv, cv2.MORPH_OPEN, kernel)
-    xor = cv2.bitwise_xor(prev_clean, cur_clean)
-    return float(cv2.countNonZero(xor)) / float(max(1, prev_gray.shape[0] * prev_gray.shape[1]))
 
 
 def _threshold_by_level(level: str, *, aggressive: float, normal: float, sensitive: float) -> float:
@@ -543,13 +518,27 @@ def _collect_page_turn_pages(
     options: StitchOptions,
     workspace: Path,
     logger,
+    compress: bool = True,
 ) -> List[Path]:
     saved_paths: List[Path] = []
     current = cv2.imread(str(frame_paths[0]))
     if current is None:
         raise RuntimeError("failed to read first rectified frame")
 
+    if not compress:
+        for path in frame_paths:
+            checkpoint()
+            image = cv2.imread(str(path))
+            if image is None:
+                continue
+            out_path = workspace / f"page_{len(saved_paths):04d}.png"
+            cv2.imwrite(str(out_path), image)
+            saved_paths.append(out_path)
+        logger(f"page-turn pages generated: {len(saved_paths)}")
+        return saved_paths
+
     similarity_threshold = max(0.88, min(0.98, 1.0 - (options.overlap_threshold * 0.25)))
+    last_seen_playhead_x: Optional[float] = None
     for path in frame_paths[1:]:
         checkpoint()
         next_image = cv2.imread(str(path))
@@ -557,12 +546,25 @@ def _collect_page_turn_pages(
             continue
         similarity = _frame_similarity(current, next_image)
         if similarity >= similarity_threshold:
-            continue
+            # Looks the same on average; only a blob-level "same" may merge it.
+            verdict = compare_frames(current, next_image, dedupe_level=options.dedupe_level)
+            if verdict.is_same and playhead_jumped_back(last_seen_playhead_x, verdict.playhead_cur_x):
+                verdict.verdict = VERDICT_AMBIGUOUS
+                verdict.reason = "playhead_reset"
+            last_seen_playhead_x = verdict.playhead_cur_x
+            if _is_duplicate_verdict(verdict, layout_mode=LAYOUT_PAGE_TURN, dedupe_level=options.dedupe_level):
+                continue
+            logger(
+                f"page transition detected ({similarity:.2f}, {verdict.reason}, "
+                f"blobs={verdict.significant_blobs}+{verdict.minor_blobs}) -> new page"
+            )
+        else:
+            last_seen_playhead_x = None
+            logger(f"page transition detected ({similarity:.2f}) -> new page")
 
         out_path = workspace / f"page_{len(saved_paths):04d}.png"
         cv2.imwrite(str(out_path), current)
         saved_paths.append(out_path)
-        logger(f"page transition detected ({similarity:.2f}) -> new page")
         current = next_image
 
     out_path = workspace / f"page_{len(saved_paths):04d}.png"

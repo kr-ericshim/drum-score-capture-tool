@@ -5,6 +5,8 @@ from typing import List, Literal, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 
+from app.pipeline.page_diff import compare_frames
+
 
 PORTRAIT_PAGE_RATIO = 1.0 / 1.4142  # A-series portrait, width / height ~= 0.707
 PageFillMode = Literal["balanced", "performance"]
@@ -120,14 +122,17 @@ def _normalize_score_tone(image) -> np.ndarray:
 
 
 def _is_near_same_frame(a, b) -> bool:
-    h = min(a.shape[0], b.shape[0], 900)
-    w = min(a.shape[1], b.shape[1], 1600)
+    """Same score content at blob level (a few changed note heads count as
+    different; tone drift, blur and a moving playhead do not)."""
+    h = min(a.shape[0], b.shape[0])
+    w = min(a.shape[1], b.shape[1])
     if h < 24 or w < 24:
         return False
-    a_gray = cv2.cvtColor(cv2.resize(a, (w, h)), cv2.COLOR_BGR2GRAY)
-    b_gray = cv2.cvtColor(cv2.resize(b, (w, h)), cv2.COLOR_BGR2GRAY)
-    diff = float(np.mean(np.abs(a_gray.astype(np.float32) - b_gray.astype(np.float32))))
-    return diff < 5.8
+    verdict = compare_frames(a, b, dedupe_level="normal")
+    if not verdict.is_same:
+        return False
+    # A large shift means new content scrolled in, not a repeated frame.
+    return max(abs(verdict.shift_x), abs(verdict.shift_y)) < max(4.0, verdict.staff_gap * 0.5)
 
 
 def _merge_vertical_sheet(top, bottom) -> np.ndarray:

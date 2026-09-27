@@ -1266,12 +1266,18 @@ def _execute_job(job_id: str, payload: JobCreate) -> None:
         job_store.set_state(job_id, JobStatus.RUNNING, 0.68, "stitching", "rectification completed")
 
         checkpoint()
+        dedupe_report: dict = {}
         review_candidate_paths = select_review_candidates(
             frame_paths=rectified_paths,
             options=stitch_opts,
             source_type=payload.source_type,
             logger=lambda msg: _append(job_id, msg),
+            report=dedupe_report,
         )
+        # Frames kept although they look almost identical to the previous kept
+        # frame (few note heads changed, or the playhead jumped back): the review
+        # screen can present these pairs instead of the pipeline guessing.
+        result["similar_capture_pairs"] = dedupe_report.get("similar_pairs", [])
 
         from app.pipeline.export import diagnose_capture_sequence
         result["capture_diagnostics"] = diagnose_capture_sequence(review_candidate_paths)
