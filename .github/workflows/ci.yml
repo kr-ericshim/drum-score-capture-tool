@@ -53,6 +53,9 @@ jobs:
         working-directory: desktop
         run: npm run test:desktop-node
 
+      - name: Test media bundle validation
+        run: python -m unittest discover -s scripts/tests -p 'test_*.py'
+
       - name: Verify release docs exist
         shell: bash
         run: |

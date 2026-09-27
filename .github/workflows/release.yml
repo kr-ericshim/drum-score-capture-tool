@@ -79,32 +79,8 @@ jobs:
         shell: bash
         run: npm run test:desktop-node
 
-      - name: Install Windows media build toolchain
-        if: runner.os == 'Windows'
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          path-type: inherit
-          install: >-
-            make
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-nasm
-            mingw-w64-x86_64-pkgconf
-            mingw-w64-x86_64-zlib
-            mingw-w64-x86_64-meson
-            mingw-w64-x86_64-ninja
-
-      - name: Build macOS LGPL media tools
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          command -v pkg-config >/dev/null || brew install pkgconf
-          bash scripts/build-media-tools.sh
-
-      - name: Build Windows LGPL media tools
-        if: runner.os == 'Windows'
-        shell: msys2 {0}
-        run: bash scripts/build-media-tools.sh
+      - name: Restore and verify pinned media tools
+        run: python scripts/media_bundle.py restore
 
       - name: Build release artifacts
         working-directory: desktop

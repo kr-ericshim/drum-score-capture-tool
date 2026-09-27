@@ -1,0 +1,108 @@
+name: Media tools
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/media-tools-*]
+    paths:
+      - scripts/build-media-tools.sh
+      - scripts/media_bundle.py
+      - desktop/scripts/media-tool-policy.js
+      - .github/workflows/media-tools.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: media-tools-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test bundle validation
+        run: python -m unittest discover -s scripts/tests -p 'test_*.py'
+      - name: Install macOS media build toolchain
+        if: runner.os == 'macOS'
+        shell: bash
+        run: brew install pkgconf meson ninja nasm
+      - name: Install Windows media build toolchain
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          path-type: inherit
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-nasm
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-zlib
+            mingw-w64-x86_64-meson
+            mingw-w64-x86_64-ninja
+      - name: Build macOS media tools
+        if: runner.os == 'macOS'
+        shell: bash
+        run: bash scripts/build-media-tools.sh
+      - name: Build Windows media tools
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: bash scripts/build-media-tools.sh
+      - name: Validate and package media tools with licenses and source
+        run: python scripts/media_bundle.py pack
+      - uses: actions/upload-artifact@v4
+        with:
+          name: media-${{ matrix.os }}
+          path: .tmp/media-bundle/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: media-*
+          path: .tmp/media-bundle
+          merge-multiple: true
+      - name: Verify both bundles and generate application lock
+        run: python scripts/media_bundle.py combine
+      - name: Publish versioned tools without changing latest app release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag=$(python -c "import json; print(json.load(open('.tmp/media-bundle/media-tools.lock.json'))['tag'])")
+          # Never overwrite a previously published bundle or silently repin it.
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "This recipe already has a release. Restore its lock; do not overwrite it."
+            exit 1
+          fi
+          gh release create "$tag" .tmp/media-bundle/*.tar.gz .tmp/media-bundle/media-tools.lock.json \
+            --target "$GITHUB_SHA" --prerelease --latest=false \
+            --title "Media tools ${tag#media-tools-}" \
+            --notes "Build dependency for Drum Sheet Capture, not an app installer. Bundles include native FFmpeg/FFprobe, licenses and corresponding source. Pin media-tools.lock.json in the app repository."
+      - uses: actions/upload-artifact@v4
+        with:
+          name: media-tools-lock
+          path: .tmp/media-bundle/media-tools.lock.json
