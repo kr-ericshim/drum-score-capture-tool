@@ -1,4 +1,4 @@
-import { summarizeSelection } from "../../app/session/selectors.js";
+import { needsAttention, summarizeSelection } from "../../app/session/selectors.js";
 import { t } from "../../lib/i18n.js";
 import { normalizeAssetPath } from "../../lib/paths.js";
 
@@ -33,6 +33,7 @@ function renderPageCard(page, selected, focused, locked, locale, index = 0) {
   const includeLabel = escapeHtml(t("review.include", { locale }));
   const checkLabel = escapeHtml(t("review.check", { locale }));
   const excludeCandidateLabel = escapeHtml(t("review.excludeCandidate", { locale }));
+  const similarLabel = escapeHtml(t("review.similar", { locale }));
   return `
     <article class="review-card ${selected ? "is-selected" : "is-excluded"} ${focused ? "is-focused" : ""}" role="listitem">
       <span class="review-card-index" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span>
@@ -48,6 +49,7 @@ function renderPageCard(page, selected, focused, locked, locale, index = 0) {
         <div class="review-card-badges">
           ${page.autoExcludeCandidate ? `<span class="review-inline-pill review-inline-pill-risk">${excludeCandidateLabel}</span>` : ""}
           ${page.suspicious && !page.autoExcludeCandidate ? `<span class="review-inline-pill review-inline-pill-risk">${checkLabel}</span>` : ""}
+          ${page.similarTo ? `<span class="review-inline-pill review-inline-pill-similar">${similarLabel}</span>` : ""}
         </div>
         <label class="choice-row">
           <input aria-label="${includeAriaLabel}" data-action="toggle-review-page" data-page-id="${pageId}" type="checkbox" ${selected ? "checked" : ""} ${locked ? "disabled" : ""} />
@@ -58,6 +60,51 @@ function renderPageCard(page, selected, focused, locked, locale, index = 0) {
   `;
 }
 
+function similarNoteText(page, locale) {
+  const similar = page?.similarTo;
+  if (!similar) return "";
+  const reference = similar.referenceIndex
+    ? t("selector.pageTitle", { locale, replacements: { index: similar.referenceIndex } })
+    : t("review.previousPage", { locale });
+  if (similar.reason === "playhead_reset") {
+    return t("review.similarNotePlayhead", { locale, replacements: { reference } });
+  }
+  if (similar.reason === "low_alignment_confidence") {
+    return t("review.similarNoteAlign", { locale, replacements: { reference } });
+  }
+  return t("review.similarNote", { locale, replacements: { reference, count: similar.changeCount } });
+}
+
+function renderChangeBoxes(boxes, locale) {
+  const label = escapeHtml(t("review.changeBox", { locale }));
+  return (boxes || []).map((box) => {
+    const pct = (value) => `${(Number(value) * 100).toFixed(2)}%`;
+    return `<span class="review-change-box" role="img" aria-label="${label}" style="left:${pct(box.left)};top:${pct(box.top)};width:${pct(box.width)};height:${pct(box.height)}"></span>`;
+  }).join("");
+}
+
+function renderCompareStage(focused, reference, locale) {
+  const boxes = focused.similarTo?.changeBoxes || [];
+  // Wide (landscape) captures stack so each keeps the full width; portrait pages sit side by side.
+  const stacked = Number(focused.similarTo?.frameAspect || 0) >= 1.2;
+  const frame = (page, caption, extraClass = "") => `
+    <figure class="review-compare-frame ${extraClass}">
+      <div class="review-compare-canvas">
+        <img src="${escapeHtml(normalizeAssetPath(page.previewPath))}" alt="${escapeHtml(page.title)}" />
+        ${renderChangeBoxes(boxes, locale)}
+      </div>
+      <figcaption>${escapeHtml(caption)}</figcaption>
+    </figure>`;
+  const referenceCaption = reference
+    ? t("review.compareReference", { locale, replacements: { title: reference.title } })
+    : t("review.previousPage", { locale });
+  return `
+    <div class="review-compare-stage ${stacked ? "is-stacked" : "is-side-by-side"}" data-review-compare>
+      ${reference ? frame(reference, referenceCaption, "is-reference") : `<div class="review-compare-missing">${escapeHtml(t("review.compareMissing", { locale }))}</div>`}
+      ${frame(focused, t("review.compareCurrent", { locale, replacements: { title: focused.title } }), "is-current")}
+    </div>`;
+}
+
 export function renderReviewScreen(state) {
   const locale = state.ui.locale || "en";
   const pages = state.review.pages || [];
@@ -65,7 +112,7 @@ export function renderReviewScreen(state) {
   const summary = summarizeSelection(pages.map((page) => page.id), selectedSet);
   const reviewDone = state.review.status === "applied";
   const busy = ["running", "editing"].includes(state.review.status);
-  const visiblePages = state.review.filter === "suspicious" ? pages.filter(page => page.suspicious || page.autoExcludeCandidate) : pages;
+  const visiblePages = state.review.filter === "suspicious" ? pages.filter(needsAttention) : pages;
   const focused = visiblePages.find(page => page.id === state.review.focusedPageId) || visiblePages[0];
   const focusedIndex = visiblePages.findIndex(page => page.id === focused?.id);
   const zoom = state.review.zoom || "fit";
@@ -73,7 +120,9 @@ export function renderReviewScreen(state) {
   const control = (action, key, disabled = false) => `<button type="button" class="button button-secondary" data-action="${action}" ${disabled ? "disabled" : ""}>${label(key)}</button>`;
   const hasPages = pages.length > 0;
   const selectedCount = summary.keptCount;
-  const attentionCount = pages.filter(page => page.suspicious || page.autoExcludeCandidate).length;
+  const attentionCount = pages.filter(needsAttention).length;
+  const comparing = Boolean(state.review.compare && focused?.similarTo && !state.review.cropping);
+  const compareReference = focused?.similarTo ? pages.find(page => page.id === focused.similarTo.referenceId) : null;
   const reviewTitle = escapeHtml(t("review.title", { locale }));
   const reviewLabel = escapeHtml(state.source.displayName || t("review.fallbackLabel", { locale }));
   const reviewCountLabel = escapeHtml(reviewDone
@@ -142,9 +191,11 @@ export function renderReviewScreen(state) {
             <span class="review-inclusion-status">${selectedSet.has(focused.id) ? label("included") : label("excluded")}</span>
             ${focused.autoExcludeCandidate ? `<span class="review-inline-pill review-inline-pill-risk">${label("excludeCandidate")}</span>` : ""}
             ${focused.suspicious && !focused.autoExcludeCandidate ? `<span class="review-inline-pill review-inline-pill-risk">${label("check")}</span>` : ""}
+            ${focused.similarTo ? `<span class="review-inline-pill review-inline-pill-similar">${label("similar")}</span>` : ""}
           </div>
           <div class="review-inspector-actions">
             <button type="button" class="button button-secondary" data-action="review-toggle-focused" ${busy ? "disabled" : ""}>${label(selectedSet.has(focused.id) ? "excludeCapture" : "includeCapture")}</button>
+            ${focused.similarTo ? `<button type="button" class="button button-secondary" data-action="review-compare" aria-pressed="${comparing}" ${state.review.cropping ? "disabled" : ""}>${label(comparing ? "closeCompare" : "compare")}</button>` : ""}
           <div class="review-tool-group" role="group" aria-label="${label("navigation")}">
             ${control("review-previous", "previous", focusedIndex <= 0 || busy)}
             <span class="review-position">${focused ? focusedIndex + 1 : 0} / ${visiblePages.length}</span>
@@ -152,6 +203,7 @@ export function renderReviewScreen(state) {
           </div>
           </div>
           ${focused.warningReason && (focused.suspicious || focused.autoExcludeCandidate) ? `<p class="review-risk-note">${escapeHtml(focused.warningReason)}</p>` : ""}
+          ${focused.similarTo ? `<p class="review-similar-note">${escapeHtml(similarNoteText(focused, locale))}${compareReference ? ` <button type="button" class="review-link-button" data-action="focus-review-page" data-page-id="${escapeHtml(compareReference.id)}">${escapeHtml(t("review.goToReference", { locale, replacements: { title: compareReference.title } }))}</button>` : ""}</p>` : ""}
         </div>` : `<div class="review-inspector">
           <div class="review-tool-group" role="group" aria-label="${label("navigation")}">
             ${control("review-previous", "previous", true)}
@@ -166,7 +218,9 @@ export function renderReviewScreen(state) {
             <input id="reviewCropInput" type="hidden" />
           </div>
           <div class="review-crop-actions">${control("review-apply-crop", "saveCrop", busy)}${control("review-close-crop", "closeCrop", busy)}</div>
-        ` : `<div class="review-viewer-surface" tabindex="0">
+        ` : comparing ? `<div class="review-viewer-surface is-comparing" tabindex="0">
+          ${renderCompareStage(focused, compareReference, locale)}
+        </div>` : `<div class="review-viewer-surface" tabindex="0">
           ${focused ? `<img class="review-full-image ${zoom === "fit" ? "is-fit" : "is-zoomed"}" ${zoom === "fit" ? "" : `style="zoom:${Number(zoom)}"`} src="${escapeHtml(normalizeAssetPath(focused.previewPath))}" alt="${escapeHtml(focused.title)}" />` : ""}
         </div>`}
         <div class="review-viewer-toolbar">

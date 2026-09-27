@@ -1,3 +1,4 @@
+import { needsAttention } from "../../app/session/selectors.js";
 import { normalizeAssetPath } from "../../lib/paths.js";
 
 export function createReviewController({ getState, setState, api, mountEditor, root }) {
@@ -71,7 +72,7 @@ export function createReviewController({ getState, setState, api, mountEditor, r
     syncJob();
     const state = getState();
     if (["running", "editing"].includes(state.review.status)) return;
-    const pages = state.review.filter === "suspicious" ? state.review.pages.filter(page => page.suspicious || page.autoExcludeCandidate) : state.review.pages;
+    const pages = state.review.filter === "suspicious" ? state.review.pages.filter(needsAttention) : state.review.pages;
     const focused = pages.find(page => page.id === state.review.focusedPageId) || pages[0];
     if (action === "review-toggle-focused" && focused) { toggle(focused.id, !state.review.selectedPageIds.includes(focused.id)); return; }
     if (action === "review-select-all") { select(state.review.pages.map(page => page.id)); return; }
@@ -102,11 +103,12 @@ export function createReviewController({ getState, setState, api, mountEditor, r
     setState(next => {
       if (action === "review-filter") {
         next.review.filter = value;
-        const filtered = value === "suspicious" ? next.review.pages.filter(page => page.suspicious || page.autoExcludeCandidate) : next.review.pages;
+        const filtered = value === "suspicious" ? next.review.pages.filter(needsAttention) : next.review.pages;
         if (!filtered.some(page => page.id === next.review.focusedPageId)) next.review.focusedPageId = filtered[0]?.id || "";
         next.review.cropping = false;
       }
-      if (action === "review-crop") next.review.cropping = true;
+      if (action === "review-compare") next.review.compare = !next.review.compare;
+      if (action === "review-crop") { next.review.cropping = true; next.review.compare = false; }
       if (action === "review-close-crop") next.review.cropping = false;
       if (action === "review-fit") next.review.zoom = "fit";
       if (action === "review-actual") next.review.zoom = 1;

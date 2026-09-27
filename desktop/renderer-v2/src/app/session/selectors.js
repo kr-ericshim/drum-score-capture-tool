@@ -330,6 +330,7 @@ export function createInitialSessionState() {
       keptCount: 0,
       outputDir: "",
       pdfPath: "",
+      compare: false,
     },
     archive: {
       isOpen: false,
@@ -513,8 +514,72 @@ export function summarizeSelection(allIds = [], selectedIds = new Set()) {
   return { totalCount, keptCount };
 }
 
+function pathKey(value) {
+  return String(value || "").trim().replace(/\\/g, "/");
+}
+
+function pathBaseName(value) {
+  const key = pathKey(value);
+  return key.slice(key.lastIndexOf("/") + 1);
+}
+
+function normalizeChangeBoxes(metrics = {}) {
+  const size = Array.isArray(metrics?.frame_size) ? metrics.frame_size : [];
+  const width = Number(size[0] || 0);
+  const height = Number(size[1] || 0);
+  const boxes = Array.isArray(metrics?.change_boxes) ? metrics.change_boxes : [];
+  if (!(width > 0) || !(height > 0)) {
+    return [];
+  }
+  return boxes
+    .filter((box) => Array.isArray(box) && box.length === 4)
+    .map(([x, y, w, h]) => ({
+      left: Math.max(0, Math.min(1, Number(x) / width)),
+      top: Math.max(0, Math.min(1, Number(y) / height)),
+      width: Math.max(0, Math.min(1, Number(w) / width)),
+      height: Math.max(0, Math.min(1, Number(h) / height)),
+    }))
+    .filter((box) => box.width > 0 && box.height > 0);
+}
+
+/**
+ * Pairs the backend kept although the candidate looks almost identical to the
+ * previous kept frame (few note heads changed, or the playhead jumped back).
+ * Returns a map keyed by the candidate capture path.
+ */
+function buildSimilarPairIndex(result = {}) {
+  const pairs = Array.isArray(result.similar_capture_pairs) ? result.similar_capture_pairs : [];
+  const byPath = new Map();
+  const byName = new Map();
+  for (const pair of pairs) {
+    const candidate = pathKey(pair?.candidate);
+    if (!candidate) continue;
+    const size = Array.isArray(pair?.metrics?.frame_size) ? pair.metrics.frame_size : [];
+    const frameAspect = Number(size[0]) > 0 && Number(size[1]) > 0 ? Number(size[0]) / Number(size[1]) : 0;
+    const entry = {
+      referencePath: pathKey(pair?.kept),
+      reason: String(pair?.reason || pair?.metrics?.reason || "").trim() || "small_change",
+      changeBoxes: normalizeChangeBoxes(pair?.metrics),
+      frameAspect,
+      metrics: pair?.metrics || {},
+    };
+    byPath.set(candidate, entry);
+    byName.set(pathBaseName(candidate), entry);
+  }
+  return {
+    lookup(capturePath) {
+      return byPath.get(pathKey(capturePath)) || byName.get(pathBaseName(capturePath)) || null;
+    },
+  };
+}
+
+export function needsAttention(page) {
+  return Boolean(page?.suspicious || page?.autoExcludeCandidate || page?.similarTo);
+}
+
 export function deriveCapturePages(result = {}, locale = "en") {
   const pageDiagnostics = Array.isArray(result.page_diagnostics) ? result.page_diagnostics : [];
+  const similarPairs = buildSimilarPairIndex(result);
   const droppedPages = Array.isArray(result.dropped_pages) ? result.dropped_pages : [];
   const previewImages = Array.isArray(result.preview_images) ? result.preview_images : [];
   const reviewCandidates = Array.isArray(result.review_candidates) ? result.review_candidates : [];
@@ -557,7 +622,7 @@ export function deriveCapturePages(result = {}, locale = "en") {
     }
   }
 
-  return capturePaths.map((capturePath, index) => {
+  const pages = capturePaths.map((capturePath, index) => {
     const diagnostic = result.capture_diagnostics?.[capturePath] || alignedDiagnostics[index] || {};
     const diagnosticCodes = Array.isArray(diagnostic?.diagnostic_codes)
       ? diagnostic.diagnostic_codes.map((value) => String(value || "").trim()).filter(Boolean)
@@ -589,8 +654,27 @@ export function deriveCapturePages(result = {}, locale = "en") {
       recommendedAction,
       autoExcludeCandidate,
       diagnostics: diagnostic,
+      similarTo: null,
     };
   });
+
+  for (const page of pages) {
+    const pair = similarPairs.lookup(page.capturePath);
+    if (!pair) continue;
+    const reference = pages.find((other) => other !== page && (
+      pathKey(other.capturePath) === pair.referencePath || pathBaseName(other.capturePath) === pathBaseName(pair.referencePath)
+    ));
+    page.similarTo = {
+      referenceId: reference?.id || "",
+      referenceIndex: reference?.index || 0,
+      referencePath: pair.referencePath,
+      reason: pair.reason,
+      changeBoxes: pair.changeBoxes,
+      changeCount: pair.changeBoxes.length,
+      frameAspect: pair.frameAspect,
+    };
+  }
+  return pages;
 }
 
 export function getTopBarSummary(state) {
