@@ -189,6 +189,15 @@ def _estimate_vertical_overlap(top, bottom) -> int:
     if max_overlap <= min_overlap:
         return 0
 
+    # Mostly-white bands score well on mean difference even when their content
+    # differs (a lyric line against the blank top of the next strip), and the
+    # cross-fade then ghosts both. Ink has to line up for an overlap to count.
+    top_ink = (top_gray[top_h - max_overlap :] < 140).astype(np.uint8)
+    bottom_ink = (bottom_gray[:max_overlap] < 140).astype(np.uint8)
+    ink_tolerance = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    top_ink_grown = cv2.dilate(top_ink, ink_tolerance)
+    bottom_ink_grown = cv2.dilate(bottom_ink, ink_tolerance)
+
     best_overlap = 0
     best_score = float("inf")
     step = 3 if max_overlap > 90 else 2
@@ -198,9 +207,17 @@ def _estimate_vertical_overlap(top, bottom) -> int:
         if a.shape != b.shape or a.size == 0:
             continue
         score = float(np.mean(np.abs(a.astype(np.float32) - b.astype(np.float32))))
-        if score < best_score:
-            best_score = score
-            best_overlap = overlap
+        if score >= best_score:
+            continue
+        if not _overlap_ink_agrees(
+            top_ink[max_overlap - overlap :],
+            bottom_ink[:overlap],
+            top_ink_grown[max_overlap - overlap :],
+            bottom_ink_grown[:overlap],
+        ):
+            continue
+        best_score = score
+        best_overlap = overlap
 
     if best_overlap <= 0:
         return 0
@@ -210,6 +227,29 @@ def _estimate_vertical_overlap(top, bottom) -> int:
     if best_score <= 19.5:
         return best_overlap
     return 0
+
+
+def _overlap_ink_agrees(
+    top_ink: np.ndarray,
+    bottom_ink: np.ndarray,
+    top_ink_grown: np.ndarray,
+    bottom_ink_grown: np.ndarray,
+) -> bool:
+    """Most ink in each band must sit on (or next to) ink in the other band.
+
+    Bands that are both blank agree trivially; a few stray pixels are ignored
+    so that noise does not veto an overlap of blank margins.
+    """
+    min_ink = max(16, int(top_ink.size * 0.0001))
+    top_count = int(np.count_nonzero(top_ink))
+    bottom_count = int(np.count_nonzero(bottom_ink))
+    if top_count < min_ink and bottom_count < min_ink:
+        return True
+    if top_count < min_ink or bottom_count < min_ink:
+        return False
+    top_matched = int(np.count_nonzero(top_ink & bottom_ink_grown)) / float(top_count)
+    bottom_matched = int(np.count_nonzero(bottom_ink & top_ink_grown)) / float(bottom_count)
+    return min(top_matched, bottom_matched) >= 0.6
 
 
 def _crop_to_content(image) -> np.ndarray:
@@ -610,7 +650,13 @@ def _slice_by_whitespace(
             total_h=h,
         )
         if protected_cut is not None:
-            cut = protected_cut
+            cut = _snap_protected_cut_to_whitespace(
+                protected_cut,
+                row_density=row_density,
+                boundaries=protected_split_boundaries,
+                start=start,
+                blank_threshold=blank_threshold,
+            )
             pages.append(image[start:cut].copy())
             start = cut
             continue
@@ -787,6 +833,59 @@ def _choose_protected_split_boundary(
     if before_or_at_target:
         return max(before_or_at_target)
     return min(candidates, key=lambda boundary: abs(boundary - hard_end))
+
+
+def _snap_protected_cut_to_whitespace(
+    boundary: int,
+    *,
+    row_density: np.ndarray,
+    boundaries: Optional[Sequence[int]],
+    start: int,
+    blank_threshold: float,
+) -> int:
+    """Move a stitch seam onto the whitespace between the two strips.
+
+    The seam row is where the next strip begins inside the blended overlap, so
+    it sits on the previous strip's last rows. When the capture ROI ends right
+    under the lyrics, cutting there slices the lyric line in half while the real
+    gap to the next system lies just below. A seam already on a blank row stays;
+    otherwise take the centre of the longest blank run near it. The longest run,
+    not the nearest, so the small gap between a staff and its own lyrics is not
+    mistaken for the system break.
+    """
+    total_h = int(row_density.shape[0])
+    threshold = min(float(blank_threshold), 0.008)
+    if row_density[max(0, min(total_h - 1, int(boundary)))] <= threshold:
+        return int(boundary)
+
+    neighbours = [0, total_h] + [int(b) for b in (boundaries or []) if int(b) != int(boundary)]
+    spacing = min(abs(int(boundary) - n) for n in neighbours)
+    window = int(spacing * 0.3)
+    lo = max(int(start) + 1, int(boundary) - window)
+    hi = min(total_h - 1, int(boundary) + window)
+    if hi - lo < 4:
+        return int(boundary)
+
+    blank = row_density[lo : hi + 1] <= threshold
+    best: Optional[Tuple[int, int]] = None
+    run_start = -1
+    for offset, is_blank in enumerate(list(blank) + [False]):
+        if is_blank and run_start < 0:
+            run_start = offset
+        elif not is_blank and run_start >= 0:
+            run = (run_start, offset)
+            if best is None:
+                best = run
+            else:
+                length, best_length = run[1] - run[0], best[1] - best[0]
+                centre_dist = abs(lo + (run[0] + run[1]) // 2 - int(boundary))
+                best_dist = abs(lo + (best[0] + best[1]) // 2 - int(boundary))
+                if length > best_length or (length == best_length and centre_dist < best_dist):
+                    best = run
+            run_start = -1
+    if best is None or best[1] - best[0] < 4:
+        return int(boundary)
+    return lo + (best[0] + best[1]) // 2
 
 
 def _refine_cut_boundary(

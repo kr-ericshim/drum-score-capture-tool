@@ -5,6 +5,7 @@ import numpy as np
 
 from app.pipeline.sheet_finalize import (
     _balance_short_edge_pages,
+    _estimate_vertical_overlap,
     _frame_pages_as_printed_set,
     _refine_cut_boundary,
     _resolve_overlapping_ranges,
@@ -203,6 +204,67 @@ class TestSheetFinalizePagination(unittest.TestCase):
 
         self.assertGreaterEqual(len(pages), 2)
         self.assertEqual(int(pages[0].shape[0]), 3200)
+
+    def test_protected_seam_on_lyrics_moves_to_gap_below(self):
+        # Bottom-bar strips whose ROI ends right under the lyrics: the stitch
+        # seam lands on the lyric row, the system break is the blank run below.
+        h, w = 8000, 2400
+        strip_h = 520
+        image = np.full((h, w, 3), 255, dtype=np.uint8)
+        seams = []
+        for top in range(0, h - strip_h, strip_h):
+            staff = top + 150
+            for offset in [0, 24, 48, 72, 96]:
+                cv2.line(image, (90, staff + offset), (w - 90, staff + offset), (0, 0, 0), 2)
+            for x in range(200, w - 200, 300):
+                cv2.circle(image, (x, staff + 60), 10, (0, 0, 0), -1)
+            # Lyrics: a gap under the staff, then glyphs down to the strip's last rows.
+            lyric_top = top + 300
+            for x in range(200, w - 200, 180):
+                cv2.rectangle(image, (x, lyric_top), (x + 70, lyric_top + 60), (0, 0, 0), 3)
+            seams.append(lyric_top + 40)
+
+        pages = _split_long_page(
+            image,
+            page_ratio=1.0 / 1.4142,
+            page_fill_mode="performance",
+            protected_split_boundaries=seams,
+        )
+
+        self.assertGreaterEqual(len(pages), 2)
+        cut = int(pages[0].shape[0])
+        lyric_top = max(s - 40 for s in seams if s - 40 < cut)
+        self.assertGreater(cut, lyric_top + 60, "cut must fall below the whole lyric line")
+        self.assertLess(cut, lyric_top + strip_h - 300 + 150, "cut must stay above the next staff")
+
+    def test_vertical_overlap_rejects_lyrics_against_blank_strip_top(self):
+        # Two bottom-bar strips of different lines: the first ends with a lyric
+        # row, the next starts blank. Mean difference is small (mostly white),
+        # but cross-fading them would wash out the lyrics.
+        w, strip_h = 2400, 520
+        top = np.full((strip_h, w, 3), 245, dtype=np.uint8)
+        bottom = np.full((strip_h, w, 3), 245, dtype=np.uint8)
+        for image in (top, bottom):
+            for offset in [0, 24, 48, 72, 96]:
+                cv2.line(image, (90, 150 + offset), (w - 90, 150 + offset), (0, 0, 0), 2)
+        for x in range(200, w - 200, 360):
+            cv2.putText(top, "ab", (x, strip_h - 20), cv2.FONT_HERSHEY_SIMPLEX, 1.6, (40, 40, 40), 3, cv2.LINE_AA)
+        cv2.circle(bottom, (1800, 40), 6, (0, 0, 0), -1)
+
+        self.assertEqual(_estimate_vertical_overlap(top, bottom), 0)
+
+    def test_vertical_overlap_keeps_real_scroll_overlap(self):
+        w, h = 1800, 2400
+        page = np.full((h, w, 3), 250, dtype=np.uint8)
+        for start in range(80, h - 120, 230):
+            for offset in [0, 18, 36, 54, 72]:
+                cv2.line(page, (60, start + offset), (w - 60, start + offset), (0, 0, 0), 2)
+            for x in range(120 + (start % 170), w - 120, 170):
+                cv2.circle(page, (x, start + 30), 8, (0, 0, 0), -1)
+        top = page[0:900]
+        bottom = page[900 - 180 : 900 - 180 + 900]
+
+        self.assertTrue(abs(_estimate_vertical_overlap(top, bottom) - 180) <= 3)
 
     def test_slice_by_whitespace_avoids_cutting_through_dense_boundary(self):
         h, w = 4300, 1800
