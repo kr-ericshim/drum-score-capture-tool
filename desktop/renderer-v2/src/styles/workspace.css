@@ -724,3 +724,78 @@
 .capture-range-field input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .app-shell[data-step] .status-bar { flex-wrap: wrap; right: 24px; }
 .app-shell[data-step] .status-bar-recovery { flex-wrap: wrap; align-items: center; }
+
+/* ---------- Problem report dialog (reuses the archive dialog frame) ---------- */
+.app-shell[data-step] .topbar-report::before {
+  content: "!";
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  border: 1.6px solid currentColor;
+  border-radius: 50%;
+  box-shadow: none;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+.bug-report-modal { width: min(600px, 100%); max-height: min(760px, calc(100vh - 64px)); }
+.bug-report-body { gap: 16px; }
+.bug-report-field { display: grid; gap: 6px; }
+.bug-report-label { font-size: 13px; font-weight: 550; color: var(--text-1); }
+.bug-report-label small { margin-left: 4px; font-size: 11.5px; font-weight: 400; color: var(--text-3); }
+.bug-report-field :is(textarea, input) {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-control);
+  color: var(--text-1);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.bug-report-field textarea { resize: vertical; min-height: 64px; }
+.bug-report-field input { min-height: 36px; }
+.bug-report-field :is(textarea, input)[aria-invalid="true"] { border-color: var(--danger-line); box-shadow: 0 0 0 2px var(--danger-soft); }
+.bug-report-field :is(textarea, input):disabled { opacity: 0.6; }
+.bug-report-field-error { margin: 0; font-size: 12.5px; color: var(--danger-text); }
+.bug-report-hint { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text-2); word-break: keep-all; }
+.bug-report-attachments {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: var(--surface-panel);
+}
+.bug-report-attachments .bug-report-check + .bug-report-hint { margin-bottom: 4px; padding-left: 24px; }
+.bug-report-check { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; color: var(--text-1); }
+.bug-report-check input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+.bug-report-diagnostics { margin: 0 0 6px 24px; }
+.bug-report-diagnostics summary { cursor: pointer; font-size: 12px; color: var(--text-2); }
+.bug-report-diagnostics pre {
+  max-height: 160px;
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--surface-control);
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.bug-report-screenshot { display: block; width: min(320px, calc(100% - 24px)); margin-left: 24px; border: 1px solid var(--line-soft); border-radius: 6px; }
+.bug-report-sent { margin: 12px 0; font-size: 14px; color: var(--text-1); }
+.bug-report-actions {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 20px 16px;
+  border-top: 1px solid var(--line-soft);
+}

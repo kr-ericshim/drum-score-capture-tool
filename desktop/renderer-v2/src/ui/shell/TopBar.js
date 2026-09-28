@@ -15,6 +15,11 @@ function renderUpdateButton(locale, update = {}) {
   return `<button class="topbar-archive topbar-update${hasUpdate ? " has-update" : ""}" type="button" data-action="check-release-update" aria-label="${name}" title="${name}"${checking ? ' aria-busy="true" aria-disabled="true"' : ""}>${label}</button>`;
 }
 
+function renderReportButton(locale) {
+  const name = escapeAttr(t("support.issue", { locale }));
+  return `<button class="topbar-archive topbar-report" type="button" data-action="open-bug-report" aria-label="${name}" title="${name}">${escapeHtml(t("topbar.report", { locale }))}</button>`;
+}
+
 function renderLocaleButtons(locale) {
   const localeLabel = escapeAttr(t("topbar.localeLabel", { locale }));
   const koreanLabel = escapeHtml(t("topbar.locale.ko", { locale }));
@@ -46,6 +51,7 @@ export function renderTopBar(state, summary, update = {}) {
         <div class="topbar-tools topbar-tools-compact">
           ${renderArchiveButton(locale)}
           ${renderUpdateButton(locale, update)}
+          ${renderReportButton(locale)}
           ${renderLocaleButtons(locale)}
         </div>
       </div>
@@ -66,6 +72,7 @@ export function renderTopBar(state, summary, update = {}) {
     <div class="topbar-tools">
       ${renderArchiveButton(locale)}
       ${renderUpdateButton(locale, update)}
+      ${renderReportButton(locale)}
       ${renderLocaleButtons(locale)}
       <span class="engine-badge ${backendReady ? "is-ready" : "is-waiting"}">${engineLabel}</span>
     </div>

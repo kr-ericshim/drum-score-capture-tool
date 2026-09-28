@@ -1,0 +1,10 @@
+{
+  "name": "drum-sheet-bug-report-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/",
+    "dev": "npx wrangler dev",
+    "deploy": "npx wrangler deploy"
+  }
+}

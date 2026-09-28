@@ -35,6 +35,7 @@ import { renderExportScreen } from "../features/export/ExportScreen.js";
 import { renderReviewScreen } from "../features/review/ReviewScreen.js";
 import { createReviewController } from "../features/review/reviewController.js";
 import { renderArchiveModal } from "../features/archive/ArchiveModal.js";
+import { createBugReportDraft, createBugReportState, renderBugReportModal } from "../features/support/BugReportModal.js";
 import { mountRoiEditor } from "../features/roi/roiEditor.js";
 import {
   createJob,
@@ -472,6 +473,11 @@ export function createApp(root, dependencies = {}) {
     },
   });
   let releaseUpdate = { status: "idle" };
+  // Kept out of the store: the report form is not part of the persisted session.
+  let bugReport = createBugReportState();
+  let bugReportPreparing = false;
+  let bugReportRestoreFocusTarget = null;
+  let lastBugReportOpen = false;
   let destroyed = false;
   let roiEditor = null;
   let mountingRoiEditor = false;
@@ -707,9 +713,10 @@ export function createApp(root, dependencies = {}) {
     const topBarMarkup = renderTopBar(state, topBarSummary, releaseUpdate);
     const processRailMarkup = renderProcessRail(state, getProcessRailItems(state));
     const stageMarkupValue = stageMarkup(state);
-    const archiveMarkupValue = renderArchiveModal(state);
+    const bugReportMarkup = renderBugReportModal(bugReport, locale);
+    const archiveMarkupValue = bugReportMarkup || renderArchiveModal(state);
     const archiveMarkupChanged = archiveMarkupValue !== lastArchiveMarkup;
-    const isArchiveOpen = Boolean(state.archive?.isOpen);
+    const isArchiveOpen = Boolean(state.archive?.isOpen) && !bugReport.isOpen;
     const engineStatus = escapeHtml(state.ui.backend?.ready ? t("status.engineReady", { locale }) : t("status.engineWaiting", { locale }));
     const sourceStatus = escapeHtml(sourceStatusLabel
       ? t("status.sourceLabel", { locale, replacements: { label: sourceStatusLabel } })
@@ -745,7 +752,7 @@ export function createApp(root, dependencies = {}) {
       ${recoveryActions}
       ${hasFailure ? `<div class="status-bar-group status-bar-recovery">
         <button class="button button-secondary" data-action="copy-diagnostics">${t("support.copy", { locale })}</button>
-        <button class="button button-secondary" data-action="open-support-issue">${t("support.issue", { locale })}</button>
+        <button class="button button-secondary" data-action="open-bug-report">${t("support.issue", { locale })}</button>
       </div>` : ""}
       ${releaseUpdateMarkup}
     `;
@@ -783,10 +790,11 @@ export function createApp(root, dependencies = {}) {
       restoreStageInputFocus(shell.stagePane, focusSnapshot);
     }
     if (archiveMarkupChanged) {
-      shell.modalLayer.innerHTML = archiveMarkupValue;
+      if (bugReport.isOpen && lastBugReportOpen) replaceBugReportKeepingFocus(archiveMarkupValue);
+      else shell.modalLayer.innerHTML = archiveMarkupValue;
       lastArchiveMarkup = archiveMarkupValue;
     }
-    syncArchiveShellState(isArchiveOpen);
+    syncArchiveShellState(isArchiveOpen || bugReport.isOpen);
     if (isUpdateInstalling()) {
       // The app is about to quit; only the status message stays readable.
       if (shell.topBar) shell.topBar.inert = true;
@@ -818,6 +826,14 @@ export function createApp(root, dependencies = {}) {
       nextFocusTarget?.focus?.();
     }
     lastArchiveOpen = isArchiveOpen;
+    if (bugReport.isOpen && !lastBugReportOpen) {
+      shell.modalLayer.querySelector?.('[data-bug-report-field="description"]')?.focus?.();
+    } else if (!bugReport.isOpen && lastBugReportOpen) {
+      const nextFocusTarget = bugReportRestoreFocusTarget;
+      bugReportRestoreFocusTarget = null;
+      nextFocusTarget?.focus?.();
+    }
+    lastBugReportOpen = bugReport.isOpen;
     if (metadataModalChanged) {
       if (isMetadataModalOpen) {
         focusMetadataTitleField(shell.stagePane);
@@ -1114,6 +1130,121 @@ export function createApp(root, dependencies = {}) {
 
   function isUpdateInstalling() {
     return releaseUpdate?.status === "installing";
+  }
+
+  function currentFailureDetail(state = store.getState()) {
+    return [state.source.error, state.roi.error, state.exportConfig.error, state.review.error].filter(Boolean).join("\n");
+  }
+
+  function setBugReport(patch) {
+    bugReport = { ...bugReport, ...patch };
+    render();
+  }
+
+  // Typing updates the draft without a render; this keeps a later render from resetting the caret.
+  function syncBugReportDraft(field, value) {
+    bugReport = { ...bugReport, draft: { ...bugReport.draft, [field]: value } };
+    lastArchiveMarkup = renderBugReportModal(bugReport, store.getState().ui.locale || "en");
+  }
+
+  function replaceBugReportKeepingFocus(markup) {
+    const active = globalThis.document?.activeElement;
+    const inside = active && shell.modalLayer.contains?.(active) ? active : null;
+    const field = inside?.dataset?.bugReportField || "";
+    const action = inside?.dataset?.action || "";
+    const selection = field && typeof inside.selectionStart === "number" ? [inside.selectionStart, inside.selectionEnd] : null;
+    const scrollTop = shell.modalLayer.querySelector?.(".bug-report-body")?.scrollTop || 0;
+    const logOpen = Boolean(shell.modalLayer.querySelector?.(".bug-report-diagnostics")?.open);
+    shell.modalLayer.innerHTML = markup;
+    const logDetails = shell.modalLayer.querySelector?.(".bug-report-diagnostics");
+    if (logDetails) logDetails.open = logOpen;
+    const body = shell.modalLayer.querySelector?.(".bug-report-body");
+    if (body) body.scrollTop = scrollTop;
+    if (!inside) return;
+    const selector = field ? `[data-bug-report-field="${field}"]` : action ? `[data-action="${action}"]:not([disabled])` : "";
+    const next = (selector && shell.modalLayer.querySelector?.(selector))
+      || shell.modalLayer.querySelector?.("[data-bug-report-dialog]");
+    next?.focus?.({ preventScroll: true });
+    if (selection) next?.setSelectionRange?.(selection[0], selection[1]);
+  }
+
+  async function openBugReport() {
+    if (bugReport.isOpen || bugReportPreparing) return;
+    bugReportPreparing = true;
+    bugReportRestoreFocusTarget = globalThis.document?.activeElement || null;
+    // The screenshot is taken now, before the dialog covers the screen being reported.
+    const prepared = await Promise.resolve(runtimeBridge.prepareBugReport?.(currentFailureDetail())).catch(() => null);
+    bugReportPreparing = false;
+    if (destroyed) return;
+    setBugReport({
+      isOpen: true,
+      status: "editing",
+      configured: Boolean(prepared?.configured),
+      diagnostics: String(prepared?.diagnostics || ""),
+      screenshotPreview: String(prepared?.screenshotPreview || ""),
+      invalid: "",
+      errorReason: "",
+      notice: "",
+    });
+  }
+
+  function closeBugReport() {
+    if (!bugReport.isOpen || bugReport.status === "sending") return;
+    // An unsent draft survives closing; a sent one starts over.
+    const draft = bugReport.status === "sent" ? createBugReportDraft() : bugReport.draft;
+    setBugReport({ isOpen: false, status: "editing", invalid: "", errorReason: "", notice: "", draft });
+  }
+
+  function focusBugReport(selector) {
+    shell.modalLayer.querySelector?.(selector)?.focus?.();
+  }
+
+  function invalidBugReportField(draft) {
+    if (!draft.description.trim()) return "description";
+    const email = draft.email.trim();
+    if (bugReport.configured && email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return "email";
+    return "";
+  }
+
+  async function submitBugReport() {
+    if (bugReport.status === "sending") return;
+    const invalid = invalidBugReportField(bugReport.draft);
+    if (invalid) {
+      setBugReport({ invalid, status: "editing", errorReason: "" });
+      focusBugReport(`[data-bug-report-field="${invalid}"]`);
+      return;
+    }
+    setBugReport({ status: "sending", invalid: "", errorReason: "", notice: "" });
+    const locale = store.getState().ui.locale || "en";
+    const result = await Promise.resolve(runtimeBridge.sendBugReport?.({ ...bugReport.draft, locale }))
+      .catch(() => ({ status: "error", reason: "network" }));
+    if (destroyed || !bugReport.isOpen) return;
+    if (result?.status === "sent") {
+      setBugReport({ status: "sent" });
+      focusBugReport('[data-action="close-bug-report"]:not(.archive-backdrop):not(.archive-close)');
+    } else if (result?.status === "invalid") {
+      setBugReport({ status: "editing", invalid: String(result.field || "description") });
+      focusBugReport(`[data-bug-report-field="${bugReport.invalid}"]`);
+    } else {
+      setBugReport({ status: "error", errorReason: String(result?.reason || "network") });
+      focusBugReport('[data-action="send-bug-report"]');
+    }
+  }
+
+  async function openBugReportIssue() {
+    const locale = store.getState().ui.locale || "en";
+    if (!bugReport.draft.description.trim()) {
+      setBugReport({ invalid: "description" });
+      focusBugReport('[data-bug-report-field="description"]');
+      return;
+    }
+    const { email: _email, ...draft } = bugReport.draft;
+    const result = await Promise.resolve(runtimeBridge.openBugReportIssue?.(draft)).catch(() => null);
+    if (destroyed) return;
+    setBugReport({
+      invalid: "",
+      notice: !result?.opened ? t("support.actionFailed", { locale }) : result.copied ? t("bugReport.githubCopied", { locale }) : "",
+    });
   }
 
   function renderReleaseUpdateGroup(locale, hasFailure) {
@@ -2017,6 +2148,10 @@ export function createApp(root, dependencies = {}) {
       return;
     }
     const action = target.dataset.action;
+    if (action === "open-bug-report") { await openBugReport(); return; }
+    if (action === "close-bug-report") { closeBugReport(); return; }
+    if (action === "send-bug-report") { await submitBugReport(); return; }
+    if (action === "open-bug-report-issue") { await openBugReportIssue(); return; }
     if (action === "check-release-update") {
       if (target.getAttribute?.("aria-disabled") === "true") return;
       await checkReleaseUpdateManually().catch(() => setInlineNotice(t("update.checkFailed", { locale: store.getState().ui.locale })));
@@ -2040,8 +2175,7 @@ export function createApp(root, dependencies = {}) {
       try {
         if (action === "copy-diagnostics") {
           const state = store.getState();
-          const detail = [state.source.error, state.roi.error, state.exportConfig.error, state.review.error].filter(Boolean).join("\n");
-          const copied = await runtimeBridge.copyDiagnostics?.(detail);
+          const copied = await runtimeBridge.copyDiagnostics?.(currentFailureDetail(state));
           setInlineNotice(t(copied ? "support.copied" : "support.copyFailed", { locale: state.ui.locale }));
         } else if (action === "open-support-issue") await runtimeBridge.openSupportIssue?.();
         else if (action === "open-release-page") await runtimeBridge.openReleasePage?.();
@@ -2258,6 +2392,22 @@ export function createApp(root, dependencies = {}) {
 
   const handleInput = (event) => {
     const target = event.target;
+    const bugReportField = target?.dataset?.bugReportField;
+    if (bugReportField && bugReport.isOpen) {
+      if (target.type === "checkbox") setBugReport({ draft: { ...bugReport.draft, [bugReportField]: Boolean(target.checked) } });
+      else {
+        // Clear a stale error in place; a render here would break an IME composition in progress.
+        if (bugReport.invalid === bugReportField) {
+          bugReport = { ...bugReport, invalid: "" };
+          shell.modalLayer.querySelector?.(`#bugReportError-${bugReportField}`)?.remove?.();
+          target.removeAttribute?.("aria-invalid");
+          if (bugReportField === "email") target.setAttribute?.("aria-describedby", "bugReportEmailHint");
+          else target.removeAttribute?.("aria-describedby");
+        }
+        syncBugReportDraft(bugReportField, String(target.value || ""));
+      }
+      return;
+    }
     if (target.dataset.action === "capture-range") {
       const field = target.dataset.field;
       const state = store.getState();
@@ -2380,7 +2530,7 @@ export function createApp(root, dependencies = {}) {
 
   const handleKeyDown = (event) => {
     if (isUpdateInstalling()) return;
-    reviewController.handleKey(event);
+    if (!bugReport.isOpen) reviewController.handleKey(event);
     if (event.key === "Tab" && store.getState().exportConfig.metadataModal?.isOpen) {
       const tabTargetIndex = exportMetadataTabTargetIndex(event.target);
       if (tabTargetIndex >= 0) {
@@ -2391,6 +2541,11 @@ export function createApp(root, dependencies = {}) {
         focusAdjacentExportMetadataTarget(shell.stagePane, event.target, Boolean(event.shiftKey));
         return;
       }
+    }
+    if (event.key === "Escape" && bugReport.isOpen) {
+      event.preventDefault?.();
+      closeBugReport();
+      return;
     }
     if (event.key === "Escape" && store.getState().archive.isOpen) {
       event.preventDefault?.();

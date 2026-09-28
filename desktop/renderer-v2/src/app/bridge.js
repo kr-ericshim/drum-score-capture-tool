@@ -15,6 +15,9 @@ export const bridge = {
   openReleasePage() { return window?.drumSheetAPI?.openReleasePage?.(); },
   openSupportIssue() { return window?.drumSheetAPI?.openSupportIssue?.(); },
   copyDiagnostics(detail) { return window?.drumSheetAPI?.copyDiagnostics?.(detail) || Promise.resolve(false); },
+  prepareBugReport(detail) { return window?.drumSheetAPI?.prepareBugReport?.(detail) || Promise.resolve(null); },
+  openBugReportIssue(input) { return window?.drumSheetAPI?.openBugReportIssue?.(input) || Promise.resolve(null); },
+  sendBugReport(input) { return window?.drumSheetAPI?.sendBugReport?.(input) || Promise.resolve({ status: "error", reason: "not-configured" }); },
   selectVideoFile() {
     return window?.drumSheetAPI?.selectVideoFile?.() || Promise.resolve("");
   },

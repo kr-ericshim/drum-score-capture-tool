@@ -2,7 +2,7 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 const crypto = require("crypto");
-const { app, BrowserWindow, clipboard, dialog, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, clipboard, dialog, ipcMain, net, shell } = require("electron");
 const { spawn, spawnSync } = require("child_process");
 const { decidePackagedBackendLaunchMode } = require("./backend-launch-policy");
 const { resolveBackendJobsDir } = require("./backend-job-paths");
@@ -13,6 +13,7 @@ const {
   writeInstallMarker, takeInstallMarker,
 } = require("./release-install");
 const { createDiagnosticLog } = require("./support-diagnostics");
+const { resolveBugReportEndpoint, buildBugReportPayload, sendBugReport, buildIssueUrl } = require("./bug-report");
 const { resolveRendererIndexPath } = require("./renderer-entry");
 
 const BACKEND_PORT = Number(process.env.DRUMSHEET_PORT || 8000);
@@ -22,6 +23,8 @@ const BACKEND_SESSION_TOKEN = String(process.env.DRUMSHEET_SESSION_TOKEN || "").
 
 const diagnosticLog = createDiagnosticLog([BACKEND_SESSION_TOKEN]);
 let releaseUpdates = null;
+// What the open report dialog showed the user; sending uses exactly this.
+let preparedBugReport = null;
 let pendingReleaseInstall = null;
 function releaseDownloadDir() {
   return path.join(app.getPath("userData"), "updates");
@@ -830,6 +833,38 @@ function registerIpc() {
   ipcMain.handle("dismiss-release-update", () => (releaseUpdates ? releaseUpdates.dismiss() : null));
   ipcMain.handle("open-release-page", () => shell.openExternal(RELEASES_URL));
   ipcMain.handle("open-support-issue", () => shell.openExternal("https://github.com/kr-ericshim/drum-score-capture-tool/issues/new"));
+  ipcMain.handle("prepare-bug-report", async (_, detail) => {
+    const diagnostics = diagnosticLog.report({ version: app.getVersion(), backend: getBackendStatePayload(), detail: typeof detail === "string" ? detail : "" });
+    let screenshot = null;
+    let screenshotPreview = "";
+    try {
+      // Captured before the dialog opens so it shows the screen the user is reporting.
+      let image = mainWindow && !mainWindow.isDestroyed() ? await mainWindow.webContents.capturePage() : null;
+      if (image && !image.isEmpty()) {
+        if (image.getSize().width > 1600) image = image.resize({ width: 1600 });
+        screenshot = image.toJPEG(80);
+        screenshotPreview = `data:image/jpeg;base64,${image.resize({ width: 480 }).toJPEG(75).toString("base64")}`;
+      }
+    } catch (error) {
+      diagnosticLog.append(`bug report screenshot failed: ${error.message}`);
+    }
+    preparedBugReport = { diagnostics, screenshot };
+    return { configured: Boolean(resolveBugReportEndpoint()), diagnostics, screenshotPreview };
+  });
+  ipcMain.handle("send-bug-report", async (_, input) => {
+    const built = buildBugReportPayload(input, preparedBugReport || {}, { version: app.getVersion(), locale: input?.locale });
+    if (built.error) return { status: "invalid", field: built.error };
+    const result = await sendBugReport(built.payload, { endpoint: resolveBugReportEndpoint(), fetchImpl: net.fetch.bind(net) });
+    if (result.status === "sent") preparedBugReport = null;
+    else diagnosticLog.append(`bug report not sent: ${result.reason}`);
+    return result;
+  });
+  ipcMain.handle("open-bug-report-issue", async (_, input) => {
+    const copied = Boolean(input?.includeDiagnostics && preparedBugReport?.diagnostics);
+    if (copied) clipboard.writeText(preparedBugReport.diagnostics);
+    await shell.openExternal(buildIssueUrl(input, { version: app.getVersion() }));
+    return { opened: true, copied };
+  });
   ipcMain.handle("copy-diagnostics", (_, detail) => {
     clipboard.writeText(diagnosticLog.report({ version: app.getVersion(), backend: getBackendStatePayload(), detail: typeof detail === "string" ? detail : "" }));
     return true;

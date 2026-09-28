@@ -2566,3 +2566,106 @@ test("macOS manual fallback offers to reopen the installer window", async () => 
   assert.equal(opened, 1);
   app.destroy?.();
 });
+
+test("problem report dialog captures the screen first, validates, sends the draft, and starts over once sent", async () => {
+  const calls = [];
+  const send = deferred();
+  installBrowserStubs({
+    prepareBugReport: async (detail) => { calls.push(["prepare", detail]); return { configured: true, diagnostics: "log line <b>", screenshotPreview: "data:image/jpeg;base64,AAAA" }; },
+    sendBugReport: (input) => { calls.push(["send", input]); return send.promise; },
+  });
+  const root = createRoot();
+  const app = createApp(root, { exposeTestApi: true });
+  await flush();
+  app.debug.setState((next) => { next.review.error = "Review failed"; return next; });
+  const modal = () => root.querySelector("#shellModalLayer").innerHTML;
+
+  assert.match(root.querySelector("#topBar").innerHTML, /data-action="open-bug-report"/);
+  assert.match(root.querySelector("#statusBar").innerHTML, /data-action="open-bug-report"/);
+  await root.dispatchAction("open-bug-report");
+  assert.deepEqual(calls[0], ["prepare", "Review failed"]);
+  assert.match(modal(), /data-bug-report-dialog/);
+  assert.match(modal(), /log line &lt;b&gt;/);
+  assert.doesNotMatch(modal(), /data:image\/jpeg/, "the screenshot is opt-in");
+  assert.equal(root.querySelector("#workspaceShell").inert, true);
+
+  await root.dispatchAction("send-bug-report");
+  assert.equal(calls.length, 1, "an empty description is not sent");
+  assert.match(modal(), /data-bug-report-field="description"[^>]*aria-invalid="true"/);
+
+  root.dispatchInput({ type: "checkbox", checked: true, dataset: { bugReportField: "includeScreenshot" } });
+  assert.match(modal(), /src="data:image\/jpeg;base64,AAAA"/);
+  root.dispatchInput({ type: "email", value: "bad", dataset: { bugReportField: "email" } });
+  root.dispatchInput({ type: "textarea", value: "x", dataset: { bugReportField: "description" } });
+  await root.dispatchAction("send-bug-report");
+  assert.match(modal(), /data-bug-report-field="email"[^>]*aria-describedby="bugReportEmailHint bugReportError-email"/);
+  assert.equal(calls.length, 1, "a malformed reply address is not sent");
+  const before = modal();
+  root.dispatchInput({ type: "textarea", value: "Page 2 is missing", dataset: { bugReportField: "description" } });
+  root.dispatchInput({ type: "email", value: "me@example.com", dataset: { bugReportField: "email" } });
+  app.debug.setState((next) => { next.ui.inlineNotice = "unrelated"; return next; });
+  assert.equal(modal(), before, "typing and unrelated renders do not rebuild the dialog under the caret");
+
+  const pending = root.dispatchAction("send-bug-report");
+  await flush();
+  assert.match(modal(), /data-action="send-bug-report" disabled/);
+  assert.equal((await root.dispatchKeydown("Escape")).defaultPrevented, true);
+  assert.match(modal(), /data-bug-report-dialog/, "the dialog stays open while sending");
+  send.resolve({ status: "sent" });
+  await pending;
+  assert.deepEqual(calls[1], ["send", {
+    description: "Page 2 is missing", steps: "", email: "me@example.com", includeDiagnostics: true, includeScreenshot: true, locale: app.debug.getState().ui.locale,
+  }]);
+  assert.match(modal(), /(Report sent|보고를 보냈습니다)/);
+
+  await root.dispatchAction("close-bug-report");
+  assert.equal(modal(), "");
+  assert.equal(root.querySelector("#workspaceShell").inert, false);
+  await root.dispatchAction("open-bug-report");
+  assert.match(modal(), /<textarea rows="4" data-bug-report-field="description"[^>]*><\/textarea>/, "a sent report starts over");
+  app.destroy?.();
+});
+
+test("a failed send keeps the draft and offers GitHub without the reply address", async () => {
+  const issues = [];
+  installBrowserStubs({
+    prepareBugReport: async () => ({ configured: true, diagnostics: "log", screenshotPreview: "" }),
+    sendBugReport: async () => ({ status: "error", reason: "rate-limited" }),
+    openBugReportIssue: async (input) => { issues.push(input); return { opened: true, copied: true }; },
+  });
+  const root = createRoot();
+  const app = createApp(root, { exposeTestApi: true });
+  await flush();
+  const modal = () => root.querySelector("#shellModalLayer").innerHTML;
+  await root.dispatchAction("open-bug-report");
+  root.dispatchInput({ type: "textarea", value: "Crash on export", dataset: { bugReportField: "description" } });
+  root.dispatchInput({ type: "email", value: "me@example.com", dataset: { bugReportField: "email" } });
+  await root.dispatchAction("send-bug-report");
+  assert.match(modal(), /role="alert"/);
+  assert.match(modal(), /data-action="open-bug-report-issue"/);
+
+  await root.dispatchAction("open-bug-report-issue");
+  assert.deepEqual(issues, [{ description: "Crash on export", steps: "", includeDiagnostics: true, includeScreenshot: false }]);
+  assert.match(modal(), /(Diagnostics copied|진단 로그를 클립보드에 복사)/);
+
+  await root.dispatchKeydown("Escape");
+  assert.equal(modal(), "");
+  await root.dispatchAction("open-bug-report");
+  assert.match(modal(), />Crash on export<\/textarea>/, "an unsent draft survives closing");
+  app.destroy?.();
+});
+
+test("without a relay the dialog goes straight to GitHub and asks for nothing that would be public", async () => {
+  installBrowserStubs({ prepareBugReport: async () => ({ configured: false, diagnostics: "log", screenshotPreview: "data:image/jpeg;base64,AAAA" }) });
+  const root = createRoot();
+  const app = createApp(root, { exposeTestApi: true });
+  await flush();
+  await root.dispatchAction("open-bug-report");
+  const modal = root.querySelector("#shellModalLayer").innerHTML;
+  assert.match(modal, /data-action="open-bug-report-issue"/);
+  assert.doesNotMatch(modal, /data-action="send-bug-report"/);
+  assert.doesNotMatch(modal, /data-bug-report-field="email"/);
+  assert.doesNotMatch(modal, /data-bug-report-field="includeScreenshot"/);
+  assert.match(modal, /(GitHub issues are public|누구나 볼 수 있으니)/);
+  app.destroy?.();
+});

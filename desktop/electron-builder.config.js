@@ -69,6 +69,7 @@ baseConfig.files = [
   "release-updates.js",
   "release-install.js",
   "support-diagnostics.js",
+  "bug-report.js",
   "package.json",
   "renderer-v2/index.html",
   "renderer-v2/src/**/*",

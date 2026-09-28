@@ -57,6 +57,7 @@ A saved language preference takes priority. Otherwise, Korean system locales sta
 
 - Video processing runs locally. YouTube import requires an internet connection.
 - The installed app checks GitHub for a new version at launch and when you press **Update** in the sidebar. It downloads only after you choose **Update**, verifies the file checksum, and installs when you choose **Restart to install**. On macOS, if the app runs from somewhere it cannot replace itself (inside the DMG or a read-only folder), it opens the installer window instead.
+- **Report a problem** sends only when you press **Send**: what you wrote, plus the diagnostics and app screenshot if you keep them checked. Videos and generated files are never sent.
 - Sign-in, age, or region restrictions and YouTube service changes can prevent imports. You can also use a local video file.
 - The file picker accepts MP4, MKV, MOV, AVI, and WEBM. A supported extension does not guarantee that every codec or damaged file can be read.
 - Working videos, frames, and results can use much more disk space than the installer. Save important PDFs to a separate folder.
