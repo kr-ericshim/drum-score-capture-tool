@@ -46,7 +46,9 @@ class PageSpec:
 
 @dataclass
 class Overlay:
-    kind: str  # "line" | "box" | "progress"
+    # "line" | "box" | "progress" | "beat" (pale translucent box over one slot,
+    # drawn over the ink, with the previous slot's note heads recolored)
+    kind: str
     position: float  # 0..1 along the page (line/box: x fraction within system; progress: fraction)
     system: int = 0
     color: Tuple[int, int, int] = (40, 40, 220)  # BGR
@@ -176,7 +178,34 @@ def render(spec: PageSpec, overlays: Optional[List[Overlay]] = None) -> np.ndarr
             y = spec.height - 6
             cv2.line(image, (0, y), (spec.width, y), (200, 200, 200), 4)
             cv2.line(image, (0, y), (int(spec.width * overlay.position), y), overlay.color, 4)
+        elif overlay.kind == "beat":
+            image = _draw_beat_highlight(image, spec, overlay)
     return image
+
+
+def _draw_beat_highlight(image: np.ndarray, spec: PageSpec, overlay: Overlay) -> np.ndarray:
+    total_slots = spec.bars_per_system * spec.slots_per_bar
+    index = int(min(total_slots - 1, max(0, overlay.position * total_slots)))
+    bar, slot = divmod(index, spec.slots_per_bar)
+    top = system_top(spec, overlay.system)
+    gap = spec.gap
+    head_rx = max(3, int(round(gap * 0.6)))
+    head_ry = max(2, int(round(gap * 0.45)))
+    if index > 0:
+        played_bar, played_slot = divmod(index - 1, spec.slots_per_bar)
+        x = slot_x(spec, played_bar, played_slot)
+        for line_index in spec.notes.get((overlay.system, played_bar, played_slot), []):
+            y = int(round(top + line_index * gap))
+            if line_index < 0:
+                cv2.line(image, (x - head_ry, y - head_ry), (x + head_ry, y + head_ry), (200, 80, 0), 2)
+                cv2.line(image, (x - head_ry, y + head_ry), (x + head_ry, y - head_ry), (200, 80, 0), 2)
+            else:
+                cv2.ellipse(image, (x, y), (head_rx, head_ry), -20, 0, 360, (70, 140, 20), -1)
+    slot_w = (spec.width - 2 * spec.margin_x) / float(total_slots)
+    x = slot_x(spec, bar, slot)
+    box = image.copy()
+    cv2.rectangle(box, (int(x - slot_w * 0.45), top - int(gap * 2.5)), (int(x + slot_w * 0.55), top + int(gap * 6.5)), overlay.color, -1)
+    return cv2.addWeighted(image, 0.7, box, 0.3, 0)
 
 
 def degrade(image: np.ndarray, spec_or_degrade: Degrade) -> np.ndarray:

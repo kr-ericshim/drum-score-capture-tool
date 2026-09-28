@@ -172,6 +172,34 @@ class TestCompareFramesPage(unittest.TestCase):
         b = render(add_note(self.page, 3, 1, 5, 1.5), [Overlay("box", 0.6, system=1, **box)])
         self.assertVerdict(a, b, VERDICT_DIFFERENT, levels=("sensitive", "normal"))
 
+    def test_moving_pale_beat_highlight_with_recolored_notes_is_same(self):
+        # Score-follow players tint the current beat with a pale translucent box
+        # (saturation ~40, below the solid-overlay cut) and recolor the note
+        # just played, which often sits beside the box rather than inside it.
+        beat = dict(color=(150, 85, 40))
+        a = render(self.page, [Overlay("beat", 0.3, system=1, **beat)])
+        b = render(self.page, [Overlay("beat", 0.5, system=1, **beat)])
+        self.assertVerdict(a, b, VERDICT_SAME)
+        verdict = compare_frames(_video(a), _video(b))
+        self.assertIsNotNone(verdict.playhead_prev_x)
+        self.assertIsNotNone(verdict.playhead_cur_x)
+        self.assertLess(verdict.playhead_prev_x, verdict.playhead_cur_x)
+
+    def test_pale_beat_highlight_moved_and_one_note_changed_is_different(self):
+        beat = dict(color=(150, 85, 40))
+        a = render(self.page, [Overlay("beat", 0.3, system=1, **beat)])
+        b = render(add_note(self.page, 3, 1, 5, 1.5), [Overlay("beat", 0.5, system=1, **beat)])
+        self.assertVerdict(a, b, VERDICT_DIFFERENT, levels=("sensitive", "normal"))
+
+    def test_cream_tinted_page_is_not_taken_for_a_highlight(self):
+        def cream(image):
+            tint = np.full_like(image, (200, 235, 250))
+            return cv2.addWeighted(image, 0.75, tint, 0.25, 0)
+
+        a = cream(render(self.page))
+        b = cream(render(add_note(self.page, 2, 1, 5, 1.5)))
+        self.assertVerdict(a, b, VERDICT_DIFFERENT, levels=("sensitive", "normal"))
+
     def test_identical_page_with_playhead_reset_is_ambiguous(self):
         a = render(self.page, [Overlay("line", 0.95, system=3)])
         b = render(self.page, [Overlay("line", 0.02, system=0)])

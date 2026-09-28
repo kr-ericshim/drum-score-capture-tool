@@ -522,6 +522,16 @@ def _overlay_mask(bgr: np.ndarray, ink_no_staff: np.ndarray, *, gap: float) -> T
                     cursor_score = score
                     cursor_x = x + bw / 2.0
 
+    for x, y, bw, bh in _tinted_highlight_boxes(hsv, gap=gap):
+        # The whole rectangle goes: the notes inside are recolored or darkened
+        # and the translucent edges binarize into bracket-shaped "ink".
+        pad = int(max(2, round(gap * 0.3)))
+        overlay[max(0, y - pad) : y + bh + pad, max(0, x - pad) : x + bw + pad] = 255
+        score = float(bh) * 1.5
+        if score > cursor_score:
+            cursor_score = score
+            cursor_x = x + bw / 2.0
+
     # Gray playhead: a solid vertical band, thicker than a stem and taller than
     # a stem (bar lines are one system tall, stems about six gaps).
     closed_ink = cv2.morphologyEx(ink_no_staff, cv2.MORPH_CLOSE, vertical_close)
@@ -537,6 +547,49 @@ def _overlay_mask(bgr: np.ndarray, ink_no_staff: np.ndarray, *, gap: float) -> T
             cursor_x = (x0 + x1) / 2.0
 
     return overlay, cursor_x
+
+
+def _tinted_highlight_boxes(hsv: np.ndarray, *, gap: float) -> List[Tuple[int, int, int, int]]:
+    """Pale translucent highlight boxes (a playhead tinting the current beat).
+
+    Their saturation (~40 on white paper) is far below the solid-overlay cut, so
+    they are found as light pixels tinted clearly above the paper's own tint.
+    Only tall, box-shaped regions narrower than the frame qualify: a cream or
+    sepia page tints everything and spans the full width.
+    """
+    h, w = hsv.shape[:2]
+    sat = hsv[:, :, 1]
+    val = hsv[:, :, 2]
+    paper_sat = float(np.median(sat))
+    # Pale tint only: strongly colored note heads (the just-played notes) often
+    # sit right next to the box and would otherwise widen it.
+    sat_f = sat.astype(np.float32)
+    tinted = ((sat_f >= paper_sat + 18.0) & (sat_f <= 130.0) & (val >= 110)).astype(np.uint8) * 255
+    if cv2.countNonZero(tinted) == 0:
+        return []
+    # Close over the dark notes and staff lines that cut through the box.
+    close = cv2.getStructuringElement(cv2.MORPH_RECT, (int(max(3, round(gap * 0.8))), int(max(3, round(gap * 1.2)))))
+    closed = cv2.morphologyEx(tinted, cv2.MORPH_CLOSE, close)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(closed, connectivity=8)
+    boxes: List[Tuple[int, int, int, int]] = []
+    for idx in range(1, count):
+        x, y, bw, bh, _area = stats[idx]
+        if bh < 2.5 * gap or bw < 0.8 * gap:
+            continue
+        # Keep the columns the box covers top to bottom; anything attached at
+        # the side (a colored note's anti-aliased rim) covers only a few rows.
+        comp = labels[y : y + bh, x : x + bw] == idx
+        cols = np.where(comp.sum(axis=0) >= 0.7 * bh)[0]
+        if cols.size == 0:
+            continue
+        cx0, cx1 = int(cols[0]), int(cols[-1]) + 1
+        core_w = cx1 - cx0
+        if core_w < 0.8 * gap or core_w > 0.4 * w:
+            continue
+        if float(comp[:, cx0:cx1].sum()) < 0.75 * core_w * bh:
+            continue
+        boxes.append((int(x + cx0), int(y), core_w, int(bh)))
+    return boxes
 
 
 def _tall_column_bands(mask: np.ndarray, *, gap: float) -> List[Tuple[int, int, int, int]]:
