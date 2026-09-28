@@ -76,8 +76,17 @@
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", system-ui, sans-serif;
   --accent-bright: #0d99ff;
   --canvas-dot: #d2d2d2;
-  --float-shadow: 0 8px 28px rgba(0, 0, 0, 0.09), 0 1px 2px rgba(0, 0, 0, 0.04);
-  --paper-shadow: 0 2px 14px rgba(0, 0, 0, 0.09);
+  --float-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 6px 20px -4px rgba(0, 0, 0, 0.10);
+  --float-shadow-lift: 0 1px 2px rgba(0, 0, 0, 0.06), 0 4px 14px -2px rgba(0, 0, 0, 0.14);
+  --paper-shadow: 0 0 0 1px rgba(0, 0, 0, 0.05), 0 2px 4px rgba(0, 0, 0, 0.04), 0 10px 28px -8px rgba(0, 0, 0, 0.14);
   --warn-strong: #d63a14;
   --focus: 0 0 0 3px rgba(13, 153, 255, 0.25), 0 0 0 1px #0a6ccc;
+  /* Status dots: amber asks for a look, red proposes removal. */
+  --dot-check: #d98a0b;
+  --dot-exclude: #d63a14;
+  --control-border: rgba(0, 0, 0, 0.13);
+  --control-border-hover: rgba(0, 0, 0, 0.22);
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --dur-press: 120ms;
+  --dur-enter: 180ms;
 }

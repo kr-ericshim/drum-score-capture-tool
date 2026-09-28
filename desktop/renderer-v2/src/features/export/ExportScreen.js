@@ -436,8 +436,8 @@ export function renderExportScreen(state) {
                 </div>
               ` : ""}
               <div class="export-metadata-actions">
-                <button class="button button-primary" data-action="confirm-export-metadata" ${model.metadata.controlsDisabled ? "disabled" : ""}>${model.metadata.confirmLabel}</button>
                 <button class="button button-secondary" data-action="close-export-metadata" ${model.metadata.controlsDisabled ? "disabled" : ""}>${model.metadata.closeLabel}</button>
+                <button class="button button-primary" data-action="confirm-export-metadata" ${model.metadata.controlsDisabled ? "disabled" : ""}>${model.metadata.confirmLabel}</button>
               </div>
             </section>
           </div>

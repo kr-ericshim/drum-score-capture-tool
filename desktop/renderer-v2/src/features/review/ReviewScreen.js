@@ -47,7 +47,7 @@ function renderPageCard(page, selected, focused, locked, locale, index = 0) {
           ${statusLabel ? `<small>${statusLabel}</small>` : ""}
         </div>
         <div class="review-card-badges">
-          ${page.autoExcludeCandidate ? `<span class="review-inline-pill review-inline-pill-risk">${excludeCandidateLabel}</span>` : ""}
+          ${page.autoExcludeCandidate ? `<span class="review-inline-pill review-inline-pill-exclude">${excludeCandidateLabel}</span>` : ""}
           ${page.suspicious && !page.autoExcludeCandidate ? `<span class="review-inline-pill review-inline-pill-risk">${checkLabel}</span>` : ""}
           ${page.similarTo ? `<span class="review-inline-pill review-inline-pill-similar">${similarLabel}</span>` : ""}
         </div>
@@ -189,7 +189,7 @@ export function renderReviewScreen(state) {
           <div class="review-inspector-heading">
             <strong>${escapeHtml(focused.title)}</strong>
             <span class="review-inclusion-status">${selectedSet.has(focused.id) ? label("included") : label("excluded")}</span>
-            ${focused.autoExcludeCandidate ? `<span class="review-inline-pill review-inline-pill-risk">${label("excludeCandidate")}</span>` : ""}
+            ${focused.autoExcludeCandidate ? `<span class="review-inline-pill review-inline-pill-exclude">${label("excludeCandidate")}</span>` : ""}
             ${focused.suspicious && !focused.autoExcludeCandidate ? `<span class="review-inline-pill review-inline-pill-risk">${label("check")}</span>` : ""}
             ${focused.similarTo ? `<span class="review-inline-pill review-inline-pill-similar">${label("similar")}</span>` : ""}
           </div>

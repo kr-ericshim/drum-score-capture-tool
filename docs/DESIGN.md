@@ -103,3 +103,18 @@ Two arrangements were compared for the export screen with the same settings and 
 Preserve the Floating Dock Canvas visual system. Capture start/end inputs live in the existing export inspector, before the processing profile. Blank endpoints mean the full source; accept seconds and minutes:seconds (hours also supported). Reject invalid ordering and ranges beyond known duration before a job is submitted. Lock edits during capture or metadata confirmation, preserve existing output until a new capture actually starts, and reset the range on source replacement.
 
 Keep update availability in the existing quiet status notice, with a releases-page action and per-version dismissal. Backend startup shows a preparation message; recovery actions appear after startup, with diagnostic copy and a user-initiated issue link on failures. No remote log submission and no new full-screen loading screen. PDF composition preview and change-point scrubber remain separate follow-up product work.
+
+## Detail polish pass (2026-09-28)
+
+Same Floating Dock Canvas system; this pass removes the unfinished feel without changing layout or behavior.
+
+- Signature: capture-frame corners (the ROI handle shape) mark the app mark in the dock and the source drop target, instead of a letter "D" and a dashed box.
+- Numbers: timecodes, counts, sizes and dates use system sans with tabular numerals. The monospace font is no longer applied to Korean text, dates or file-size lines, where it spread word spacing.
+- Korean wraps between words (`word-break: keep-all`); headline subtitles wrap to two lines instead of an ellipsis.
+- Panel hierarchy: section title 13px/650 primary text, helper 12px secondary text, values in primary text; export modules are separated by one divider each.
+- Controls: one inset treatment for text fields (hover border, accent border plus focus halo); checkboxes use the accent; disabled secondary buttons are a flat recessed fill; buttons press to 0.98 scale over 120ms.
+- A lone next-step action floats as a single elevated button, not a button inside a second white frame.
+- Dock tools use one drawn 18px icon set (archive, update, report) with a matching update dot.
+- Review status uses drawn dots: amber for "needs review", red for "exclude candidate", amber for unapplied selection. Warnings no longer paint most of the list red.
+- ROI representative frames are a three-row list (label left, time right); the draft/applied note is a dot plus text instead of another bordered box.
+- Dialogs dim the whole window including the dock, place the primary action last (right), and enter with a 180ms fade/scale that reduced-motion disables.

@@ -10,6 +10,19 @@
 .screen-review .review-heading-copy h1 { font-size: 15px; }
 .screen-review .review-heading-copy p { margin: 3px 0 0; font-size: 12px; color: var(--text-2); }
 
+/* Status dots: drawn, not typed. Amber = look at this, red = proposed removal. */
+.screen-review :is(.review-inline-pill, .review-save-state.is-pending)::before {
+  content: "";
+  display: inline-block;
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: 0.1em;
+}
+
 /* Next action cluster (top right of canvas). */
 .app-shell[data-step] .screen-review .review-toolbar {
   flex-wrap: nowrap;
@@ -19,13 +32,13 @@
   padding: 6px;
   border-top: 1px solid var(--line-soft);
 }
-.screen-review .review-toolbar .button { min-height: 34px; padding: 7px 12px; font-size: 13px; white-space: nowrap; }
+.screen-review .review-toolbar .button { min-height: 32px; padding: 6px 11px; font-size: 13px; white-space: nowrap; }
 .screen-review .review-output-actions .button-secondary { border-color: transparent; background: transparent; }
 .screen-review .review-output-actions .button-secondary:hover:not(:disabled) { background: var(--surface-control-hover); }
 .screen-review .review-output-actions .button-secondary:disabled { color: var(--text-3); opacity: 0.7; }
-.screen-review .review-save-state { padding: 0 6px 0 4px; font-size: 12px; color: var(--text-2); white-space: nowrap; }
-.screen-review .review-save-state.is-pending { color: var(--warn-strong); }
-.screen-review .review-save-state.is-pending::before { content: "● "; }
+.screen-review .review-save-state { display: inline-flex; align-items: center; padding: 0 8px 0 6px; font-size: 12px; font-weight: 500; color: var(--text-2); white-space: nowrap; }
+.screen-review .review-save-state.is-pending { color: var(--warning-text); }
+.screen-review .review-save-state.is-pending::before { background: var(--dot-check); }
 .screen-review .review-save-state.is-saved { color: var(--success); }
 /* Capture list panel. */
 .app-shell[data-step] .screen-review .review-grid-shell {
@@ -64,7 +77,8 @@
   font-size: 12px;
 }
 .screen-review .review-filter .button[aria-pressed="true"] { background: var(--bg-panel); color: var(--text-1); box-shadow: var(--shadow-1); }
-.screen-review .review-filter span { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.screen-review .review-filter span { font-variant-numeric: tabular-nums; color: var(--text-3); font-weight: 500; }
+.screen-review .review-filter .button[aria-pressed="true"] span { color: var(--text-2); }
 .screen-review .review-list-tools > .button { min-height: 28px; padding: 4px 8px; font-size: 12px; }
 .screen-review .review-list-summary {
   display: flex;
@@ -73,8 +87,8 @@
   padding: 2px 14px 8px;
   border-bottom: 1px solid var(--line-soft);
 }
-.screen-review .review-summary-pill { padding: 0; border: 0; background: none; font-family: var(--mono); font-size: 11.5px; color: var(--text-2); }
-.screen-review .review-format-label { font-family: var(--mono); font-size: 11px; color: var(--text-3); }
+.screen-review .review-summary-pill { padding: 0; border: 0; background: none; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 500; color: var(--text-2); }
+.screen-review .review-format-label { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; color: var(--text-3); }
 .app-shell[data-step] .screen-review .review-grid {
   display: flex;
   flex: 1;
@@ -102,6 +116,7 @@
   background: var(--bg-panel);
   box-shadow: none;
   outline: 0;
+  transition: background-color var(--dur-press) var(--ease-out);
 }
 .screen-review .review-card:is(.is-selected, .is-excluded) { background: var(--bg-panel); border-color: var(--line-soft); }
 .screen-review .review-card:hover { background: var(--surface-control-hover); }
@@ -109,10 +124,12 @@
 .screen-review .review-card-index {
   grid-area: index;
   align-self: center;
-  font-family: var(--mono);
   font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
   color: var(--text-3);
 }
+.screen-review .review-card.is-focused .review-card-index { color: var(--accent); }
 .screen-review .review-card .review-card-figure {
   grid-area: figure;
   display: block;
@@ -122,34 +139,39 @@
   max-height: 96px;
   padding: 0;
   overflow: hidden;
-  border: 1px solid var(--line-soft);
+  border: 0;
   border-radius: 3px;
   background: var(--surface-paper);
+  box-shadow: 0 0 0 1px var(--line-soft);
   cursor: pointer;
 }
+.screen-review .review-card.is-focused .review-card-figure { box-shadow: 0 0 0 1px var(--line-accent); }
 .screen-review .review-card-figure img { display: block; width: 100%; height: auto; max-height: 94px; object-fit: contain; object-position: left center; }
 .screen-review .review-card.is-excluded .review-card-figure img { opacity: 0.35; }
-.screen-review .review-card.is-excluded .review-card-index { text-decoration: line-through; }
+.screen-review .review-card.is-excluded .review-card-index { text-decoration: line-through; text-decoration-thickness: 1px; }
 .screen-review .review-card-meta {
   grid-area: meta;
   display: flex;
   flex-direction: row-reverse;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 2px 8px;
   min-width: 0;
 }
 .screen-review .review-card-copy { display: flex; align-items: center; gap: 6px; min-width: 0; margin-left: auto; }
-.screen-review .review-card-copy > span { font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.screen-review .review-card-copy small { font-size: 11px; color: var(--text-2); }
+.screen-review .review-card-copy > span { font-variant-numeric: tabular-nums; font-size: 11px; font-weight: 400; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.screen-review .review-card-copy small { font-size: 11px; color: var(--text-2); white-space: nowrap; }
 .screen-review .review-card-badges { display: flex; gap: 4px; margin-left: 4px; }
-.screen-review .review-inline-pill { padding: 0; border: 0; background: none; font-size: 11px; font-weight: 600; color: var(--warn-strong); }
-.screen-review .review-inline-pill::before { content: "● "; }
+.screen-review .review-inline-pill { display: inline-flex; align-items: center; padding: 0; border: 0; background: none; font-size: 11px; font-weight: 500; color: var(--warning-text); white-space: nowrap; }
+.screen-review .review-inline-pill-risk::before { background: var(--dot-check); }
+.screen-review .review-inline-pill-exclude { color: var(--danger-text); }
+.screen-review .review-inline-pill-exclude::before { background: var(--dot-exclude); }
 .screen-review .choice-row { display: flex; align-items: center; gap: 6px; min-height: 22px; padding: 0; font-size: 11.5px; color: var(--text-2); }
-.screen-review .choice-row input { width: 14px; height: 14px; margin: 0; accent-color: var(--text-1); }
+.screen-review .choice-row input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); }
 .screen-review .review-panel-foot { flex: none; border-top: 1px solid var(--line-soft); }
 .screen-review .review-output-path { display: flex; align-items: center; gap: 8px; padding: 0 14px 10px; }
-.screen-review .review-output-path span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; font-family: var(--mono); font-size: 11px; color: var(--text-2); }
+.screen-review .review-output-path span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; font-size: 11.5px; color: var(--text-2); }
 .screen-review .review-output-path .button { min-height: 26px; padding: 2px 8px; font-size: 11.5px; }
 .screen-review .review-save-hint { flex: none; margin: 0; padding: 10px 14px; color: var(--text-2); font-size: 11.5px; line-height: 1.5; }
 .screen-review .review-grid-shell .review-empty { padding: 24px 16px; }
@@ -182,13 +204,16 @@
 }
 .screen-review .review-inspector-heading { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12.5px; }
 .screen-review .review-inspector-heading strong { max-width: 18ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.screen-review .review-inclusion-status { color: var(--accent); font-size: 12px; }
+.screen-review .review-inclusion-status { color: var(--accent); font-size: 12px; font-weight: 500; }
 .screen-review .review-inspector.is-excluded .review-inclusion-status { color: var(--warn-strong); }
 .screen-review .review-inspector-actions { display: flex; align-items: center; gap: 6px; }
-.screen-review .review-inspector .button { min-height: 30px; padding: 4px 10px; font-size: 12px; white-space: nowrap; }
+.screen-review .review-inspector .button { min-height: 30px; padding: 4px 10px; font-size: 12.5px; white-space: nowrap; }
+.screen-review .review-inspector .button-secondary:not(:disabled) { border-color: transparent; background: var(--surface-recessed); }
+.screen-review .review-inspector .button-secondary:hover:not(:disabled) { border-color: transparent; background: var(--surface-control-hover); filter: brightness(0.97); }
+.screen-review .review-inspector .button-secondary:disabled { background: transparent; }
 .screen-review .review-tool-group { display: flex; flex-wrap: nowrap; align-items: center; gap: 2px; }
 .screen-review .review-tool-group + .review-tool-group { margin-left: 4px; padding-left: 8px; border-left: 1px solid var(--line-soft); }
-.screen-review .review-position { min-width: 44px; text-align: center; font-family: var(--mono); font-size: 11.5px; color: var(--text-2); }
+.screen-review .review-position { min-width: 52px; text-align: center; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 500; color: var(--text-2); }
 .screen-review .review-risk-note { flex-basis: 100%; max-height: 66px; overflow-y: auto; margin: 0 6px 4px 0; font-size: 12px; line-height: 1.5; color: var(--warning-text); }
 .screen-review .review-inline-pill-similar { color: var(--accent); }
 .screen-review .review-similar-note { flex-basis: 100%; max-height: 66px; overflow-y: auto; margin: 0 6px 4px 0; font-size: 12px; line-height: 1.5; color: var(--text-2); }
@@ -218,7 +243,7 @@
 }
 .screen-review .review-compare-stage.is-stacked { grid-template-columns: minmax(0, 1fr); max-width: 1240px; }
 .screen-review .review-compare-frame { margin: 0; min-width: 0; }
-.screen-review .review-compare-frame figcaption { margin: 6px 0 0; font-family: var(--mono); font-size: 11px; color: var(--text-2); }
+.screen-review .review-compare-frame figcaption { margin: 8px 0 0; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--text-2); }
 .screen-review .review-compare-frame.is-current figcaption { color: var(--accent); }
 .screen-review .review-compare-canvas {
   position: relative;
@@ -259,7 +284,7 @@
   background: transparent;
 }
 .screen-review .review-viewer-surface:focus-visible { outline: none; }
-.screen-review .review-full-image { background: var(--surface-paper); box-shadow: var(--paper-shadow); opacity: 1; }
+.screen-review .review-full-image { background: var(--surface-paper); box-shadow: var(--paper-shadow); border-radius: 3px; opacity: 1; }
 .screen-review .review-full-image.is-fit { width: auto; height: auto; max-width: 100%; max-height: 100%; margin: auto; object-fit: contain; }
 .screen-review .review-crop-stage { margin: 72px 32px 84px; }
 .screen-review .review-crop-actions {
@@ -277,7 +302,7 @@
 
 /* Bottom-centre tool bar. */
 .app-shell[data-step] .screen-review .review-viewer-toolbar { border: 1px solid var(--line-soft); gap: 0; justify-content: center; }
-.screen-review .review-viewer-toolbar .button { min-height: 30px; padding: 4px 10px; border: 0; background: transparent; font-size: 12.5px; }
+.screen-review .review-viewer-toolbar .button { min-height: 30px; padding: 4px 10px; border: 0; border-radius: 7px; background: transparent; font-size: 12.5px; }
 .screen-review .review-viewer-toolbar .button:hover:not(:disabled) { background: var(--surface-control-hover); }
 .screen-review .review-viewer-toolbar .button:disabled { background: transparent; color: var(--text-3); opacity: 0.6; }
 .screen-review .review-keyboard-help {
@@ -291,8 +316,8 @@
   padding: 0;
   border: 0;
   background: transparent;
-  font-family: var(--mono);
-  font-size: 11px;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
   color: var(--text-2);
   text-align: center;
 }

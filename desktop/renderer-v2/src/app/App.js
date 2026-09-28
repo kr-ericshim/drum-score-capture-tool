@@ -97,6 +97,8 @@ function isSupportedVideoPath(filePath = "") {
 
 function formatExportJobMessage(message, { status = "", locale = "en" } = {}) {
   if (status === "cancelled") return t("export.cancelled", { locale });
+  // The progress card already says the run finished; the backend's English log line adds nothing.
+  if (status === "done") return "";
   const raw = String(message || "").trim();
   if (!raw) {
     return "";

@@ -92,11 +92,12 @@ function renderActions(report, locale) {
   if (report.status === "sent") return button("close-bug-report", "bugReport.close", "primary");
   const sending = report.status === "sending";
   if (!report.configured) {
-    return button("open-bug-report-issue", "bugReport.github", "primary") + button("close-bug-report", "bugReport.cancel", "secondary");
+    return button("close-bug-report", "bugReport.cancel", "secondary") + button("open-bug-report-issue", "bugReport.github", "primary");
   }
-  return button("send-bug-report", sending ? "bugReport.sending" : "bugReport.send", "primary", sending)
+  // Primary action last, so it sits at the right edge as in the other dialogs.
+  return button("close-bug-report", "bugReport.cancel", "secondary", sending)
     + (report.status === "error" ? button("open-bug-report-issue", "bugReport.github", "secondary") : "")
-    + button("close-bug-report", "bugReport.cancel", "secondary", sending);
+    + button("send-bug-report", sending ? "bugReport.sending" : "bugReport.send", "primary", sending);
 }
 
 export function renderBugReportModal(report, locale) {
