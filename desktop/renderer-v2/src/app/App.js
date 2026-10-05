@@ -35,6 +35,7 @@ import { patchRoiStage } from "../features/roi/patchRoiStage.js";
 import { renderExportScreen } from "../features/export/ExportScreen.js";
 import { renderReviewScreen } from "../features/review/ReviewScreen.js";
 import { createReviewController } from "../features/review/reviewController.js";
+import { syncThumbShape } from "../features/review/thumbShape.js";
 import { renderArchiveModal } from "../features/archive/ArchiveModal.js";
 import { createBugReportDraft, createBugReportState, renderBugReportModal } from "../features/support/BugReportModal.js";
 import { mountRoiEditor } from "../features/roi/roiEditor.js";
@@ -251,6 +252,10 @@ function focusAdjacentExportMetadataTarget(stagePane, currentElement, reverse = 
 
 function captureStageInputFocus() {
   const activeElement = globalThis?.document?.activeElement;
+  // Focusable regions without an action (the review canvas) name themselves so keyboard shortcuts keep working after a re-render.
+  if (activeElement?.dataset?.focusKey) {
+    return { selector: `[data-focus-key="${cssAttributeValue(activeElement.dataset.focusKey)}"]`, selectionStart: null, selectionEnd: null };
+  }
   if (!activeElement?.dataset?.action) {
     return null;
   }
@@ -2592,6 +2597,9 @@ export function createApp(root, dependencies = {}) {
   root.addEventListener("dragover", handleDragOver);
   root.addEventListener("dragleave", handleDragLeave);
   root.addEventListener("drop", handleDrop);
+  // Image load does not bubble; listen in the capture phase to learn thumbnail aspect ratios.
+  const handleImageLoad = event => syncThumbShape(event.target);
+  root.addEventListener("load", handleImageLoad, true);
 
   const unsubscribeStore = store.subscribe(render);
   const unsubscribeBackend = runtimeBridge.onBackendState((payload) => {
@@ -2663,6 +2671,7 @@ export function createApp(root, dependencies = {}) {
         root.removeEventListener("dragover", handleDragOver);
         root.removeEventListener("dragleave", handleDragLeave);
         root.removeEventListener("drop", handleDrop);
+        root.removeEventListener("load", handleImageLoad, true);
       }
     },
   };
