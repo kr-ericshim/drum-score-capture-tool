@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { Writable } = require('node:stream');
-const { newerVersion, pickInstallerAsset, createReleaseUpdates, verifyInstallerFile } = require('../release-updates');
+const { newerVersion, olderSystem, parseMinimumOs, pickInstallerAsset, createReleaseUpdates, verifyInstallerFile } = require('../release-updates');
 
 const DOWNLOAD = 'https://github.com/kr-ericshim/drum-score-capture-tool/releases/download/v0.2.0/';
 const PAYLOAD = Buffer.from('installer bytes '.repeat(4096));
@@ -111,6 +111,36 @@ test('a release without a usable installer falls back to the download page', asy
   assert.equal((await service(dir, { installSupported: false }).check()).canInstall, false);
 });
 
+test('release notes declare a minimum OS per platform and versions compare numerically', () => {
+  assert.deepEqual(parseMinimumOs('Notes\n<!-- minimum-os: darwin=13.0 win32=10.0.19041 -->'), { darwin: '13.0', win32: '10.0.19041' });
+  assert.deepEqual(parseMinimumOs('No marker here'), {});
+  assert.deepEqual(parseMinimumOs('<!-- minimum-os: darwin=latest -->'), {});
+  assert.equal(olderSystem('12.7.6', '13.0'), true);
+  assert.equal(olderSystem('13.0', '13.0'), false);
+  assert.equal(olderSystem('26.1', '13.0'), false);
+  assert.equal(olderSystem('10.0.17763', '10.0.19041'), true);
+});
+
+test('an update this OS cannot run is reported without an install or download', async t => {
+  const dir = tempDir(t);
+  const calls = [];
+  const latest = release({ body: 'Notes\n<!-- minimum-os: darwin=13.0 -->' });
+  const old = service(dir, { systemVersion: '12.7.6', fetchImpl: fakeFetch({ latest, calls }) });
+  const state = await old.check();
+  assert.equal(state.status, 'available');
+  assert.equal(state.canInstall, false);
+  assert.deepEqual(state.requiredOs, { platform: 'darwin', version: '13.0' });
+  await old.download();
+  assert.equal(calls.some(url => url.endsWith('.dmg')), false);
+
+  const current = await service(tempDir(t), { systemVersion: '15.6', fetchImpl: fakeFetch({ latest }) }).check();
+  assert.equal(current.canInstall, true);
+  assert.equal(current.requiredOs, undefined);
+  // Without a declared minimum, or without a known OS version, the installer is offered as before.
+  assert.equal((await service(tempDir(t), { systemVersion: '12.7.6' }).check()).canInstall, true);
+  assert.equal((await service(tempDir(t), { fetchImpl: fakeFetch({ latest }) }).check()).canInstall, true);
+});
+
 test('download verifies size and sha256 before reporting ready, with progress along the way', async t => {
   const dir = tempDir(t);
   const states = [];
@@ -213,6 +243,27 @@ test('a failed earlier install is restored with its file for a retry or the manu
   assert.equal(restored.reason, 'swap-failed');
   assert.equal(updates.getInstallerFile(), filePath);
   assert.equal((await updates.check()).status, 'manual', 'the startup check does not hide the fallback');
+});
+
+test('the minimum OS stays with the installer, so a restored install is checked again', async t => {
+  const dir = tempDir(t);
+  const latest = release({ body: '<!-- minimum-os: darwin=13.0 -->' });
+  const supported = service(dir, { systemVersion: '15.6', fetchImpl: fakeFetch({ latest }) });
+  await supported.check();
+  await supported.download();
+  const claim = supported.beginInstall();
+  assert.equal(claim.asset.minimumOs, '13.0', 'the install marker records the minimum');
+
+  // The same marker read on a system that can no longer run the release is not offered again.
+  for (const status of ['ready', 'manual']) {
+    const older = service(dir, { systemVersion: '12.7.6' });
+    assert.equal(older.restoreInstall({ version: claim.version, filePath: claim.filePath, asset: claim.asset, status }).status, 'idle');
+    assert.equal(older.beginInstall(), null);
+    assert.equal(older.getInstallerFile(), '');
+  }
+  const same = service(dir, { systemVersion: '15.6' });
+  assert.equal(same.restoreInstall({ version: claim.version, filePath: claim.filePath, asset: claim.asset }).status, 'ready');
+  assert.ok(same.beginInstall());
 });
 
 test('restored installers must be newer and carry valid integrity metadata inside the download folder', t => {

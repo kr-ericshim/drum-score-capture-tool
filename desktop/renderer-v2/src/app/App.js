@@ -1277,7 +1277,10 @@ export function createApp(root, dependencies = {}) {
     let message = "";
     let actions = "";
     if (update.status === "available" && (!hasFailure || update.manual)) {
-      message = t("update.available", { locale, replacements });
+      const requiredOs = update.requiredOs;
+      message = requiredOs
+        ? t("update.requiresOs", { locale, replacements: { ...replacements, os: `${requiredOs.platform === "darwin" ? "macOS" : "Windows"} ${requiredOs.version}` } })
+        : t("update.available", { locale, replacements });
       actions = (update.canInstall ? button("download-release-update", "update.install") : button("open-release-page", "update.open"))
         + button("dismiss-release-update", "update.dismiss", "ghost");
     } else if (update.status === "error" && update.error === "download") {

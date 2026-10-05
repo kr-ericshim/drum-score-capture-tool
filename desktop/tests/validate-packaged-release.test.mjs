@@ -338,3 +338,10 @@ test("assertInstallerArtifacts requires a platform installer with the desktop ve
     [installerPath],
   );
 });
+
+test("assertReleaseNotesMinimumOs requires release notes to declare the packaged minimum OS", () => {
+  const check = (notesText) => validator.assertReleaseNotesMinimumOs({ notesText, notesLabel: "notes.md", platform: "darwin", minimumVersion: "13.0" });
+  assert.doesNotThrow(() => check("Notes\n<!-- minimum-os: darwin=13.0 win32=10.0 -->"));
+  assert.throws(() => check("Notes without a marker"), /found none/);
+  assert.throws(() => check("<!-- minimum-os: darwin=12.0 -->"), /found 12\.0/);
+});

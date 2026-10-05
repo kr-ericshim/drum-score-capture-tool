@@ -51,6 +51,7 @@ function getReleaseUpdates() {
     currentVersion: app.getVersion(),
     cachePath: path.join(app.getPath("userData"), "release-updates.json"),
     downloadDir,
+    systemVersion: process.getSystemVersion?.() || "",
     installSupported: app.isPackaged && ["darwin", "win32"].includes(process.platform),
     onState: state => sendToRenderer("release-update-state", state),
   });

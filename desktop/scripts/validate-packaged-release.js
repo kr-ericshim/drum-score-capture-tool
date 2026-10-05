@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const asar = require("@electron/asar");
 const { writeSizeReport } = require("./measure-packaged-size");
+const { parseMinimumOs } = require("../release-updates");
 
 const [, , action = "dist"] = process.argv;
 const projectRoot = path.resolve(__dirname, "..", "..");
@@ -229,6 +230,15 @@ function assertRuntimeContract({
   );
 }
 
+// Installed apps read this marker before offering an update, so it must match what the package can run on.
+function assertReleaseNotesMinimumOs({ notesText, notesLabel, platform, minimumVersion }) {
+  const declared = parseMinimumOs(notesText)[platform];
+  assert(
+    declared === minimumVersion,
+    `${notesLabel} must declare <!-- minimum-os: ${platform}=${minimumVersion} --> to match the packaged app (found ${declared || "none"})`,
+  );
+}
+
 function fileMtimeMs(filePath) {
   try {
     return Number(fs.statSync(filePath).mtimeMs || 0);
@@ -434,6 +444,14 @@ function validate(actionName = action) {
     const { verifyApp, verifyDmg } = require("./verify-macos-signature");
     const app = path.resolve(path.dirname(appAsarPath), "..", "..");
     verifyApp(app);
+    const notesPath = path.join(projectRoot, "docs", "release", `release-notes-v${desktopVersion}.md`);
+    // Only installer builds are published; a local pack must not depend on release notes.
+    if (validationMode.requiresInstallerArtifacts && fs.existsSync(notesPath)) {
+      const minimumVersion = require("child_process").execFileSync(
+        "plutil", ["-extract", "LSMinimumSystemVersion", "raw", path.join(app, "Contents", "Info.plist")], { encoding: "utf8" },
+      ).trim();
+      assertReleaseNotesMinimumOs({ notesText: readText(notesPath), notesLabel: relative(notesPath), platform: "darwin", minimumVersion });
+    }
     for (const dmg of installerArtifacts) verifyDmg(dmg, desktopVersion);
   }
 
@@ -475,6 +493,7 @@ function validate(actionName = action) {
 module.exports = {
   assertPackagedSourceTextCompatibility,
   assertInstallerArtifacts,
+  assertReleaseNotesMinimumOs,
   assertRendererContract,
   assertRuntimeFreshness,
   assertRuntimeContract,

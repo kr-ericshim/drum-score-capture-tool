@@ -2424,6 +2424,25 @@ test('capture range inputs reach the job payload without clearing existing revie
   app.destroy();
 });
 
+test("an update that needs a newer OS points to the download page instead of installing", async () => {
+  installBrowserStubs({
+    checkReleaseUpdate: async () => ({
+      status: "available", version: "0.2.0", canInstall: false, currentVersion: "0.1.37",
+      requiredOs: { platform: "darwin", version: "13.0" },
+    }),
+    onReleaseUpdateState: () => () => {},
+  });
+  const root = createRoot();
+  const app = createApp(root, { exposeTestApi: true });
+  await flush();
+  const statusBar = root.querySelector("#statusBar").innerHTML;
+  assert.match(statusBar, /macOS 13\.0/);
+  assert.match(statusBar, /data-action="open-release-page"/);
+  assert.match(statusBar, /data-action="dismiss-release-update"/);
+  assert.doesNotMatch(statusBar, /data-action="download-release-update"/);
+  app.destroy();
+});
+
 test("release update moves from available to download to restart, and waits for running work", async () => {
   let pushState = () => {};
   const calls = [];

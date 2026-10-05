@@ -18,6 +18,27 @@ function newerVersion(candidate, current) {
   return false;
 }
 
+function olderSystem(current, required) {
+  const parts = value => String(value).split('.').map(part => Number.parseInt(part, 10) || 0);
+  const a = parts(current); const b = parts(required);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) < (b[i] || 0);
+  }
+  return false;
+}
+
+// Release notes declare what the new runtime needs, e.g. <!-- minimum-os: darwin=13.0 win32=10.0 -->.
+// Old clients cannot know that a new Electron dropped their OS, so this is read before offering an install.
+function parseMinimumOs(body) {
+  const match = /<!--\s*minimum-os:([^>]*?)-->/.exec(String(body || ''));
+  const minimum = {};
+  for (const entry of match ? match[1].trim().split(/\s+/) : []) {
+    const [platform, version] = entry.split('=');
+    if (platform && /^\d+(\.\d+)*$/.test(version || '')) minimum[platform] = version;
+  }
+  return minimum;
+}
+
 // Only the installer built for this machine qualifies, and only with GitHub's own sha256 digest to verify it.
 function pickInstallerAsset(assets, platform, arch) {
   const matches = platform === 'darwin'
@@ -54,7 +75,7 @@ async function verifyInstallerFile({ filePath, asset }) {
 }
 
 function createReleaseUpdates({
-  currentVersion, cachePath, downloadDir, platform = process.platform, arch = process.arch,
+  currentVersion, cachePath, downloadDir, platform = process.platform, arch = process.arch, systemVersion = '',
   installSupported = true, fetchImpl = globalThis.fetch, onState = () => {}, createWriteStream = fs.createWriteStream,
 }) {
   let cache = {};
@@ -67,6 +88,8 @@ function createReleaseUpdates({
   let checkedOnce = false;
   let checkIsManual = false;
   let readyFile = '';
+  // The minimum travels with the asset into the install marker, so a restored installer is checked again.
+  const cannotRun = asset => Boolean(asset?.minimumOs && systemVersion && olderSystem(systemVersion, asset.minimumOs));
 
   function save() {
     try {
@@ -83,7 +106,8 @@ function createReleaseUpdates({
   function availableState(extra = {}) {
     return {
       status: 'available', version: release.version, url: `${RELEASES_URL}/tag/v${release.version}`,
-      canInstall: Boolean(installSupported && release.asset), ...extra,
+      canInstall: Boolean(installSupported && release.asset && !release.requiredOs),
+      ...(release.requiredOs ? { requiredOs: release.requiredOs } : {}), ...extra,
     };
   }
 
@@ -95,7 +119,11 @@ function createReleaseUpdates({
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     if (data.draft || data.prerelease || !/^v\d+\.\d+\.\d+$/.test(String(data.tag_name))) return null;
-    return { version: data.tag_name.slice(1), asset: pickInstallerAsset(data.assets, platform, arch) };
+    const required = parseMinimumOs(data.body)[platform];
+    const picked = pickInstallerAsset(data.assets, platform, arch);
+    const asset = picked && required ? { ...picked, minimumOs: required } : picked;
+    const requiredOs = required && systemVersion && olderSystem(systemVersion, required) ? { platform, version: required } : null;
+    return { version: data.tag_name.slice(1), asset, requiredOs };
   }
 
   function check({ manual = false } = {}) {
@@ -172,7 +200,7 @@ function createReleaseUpdates({
     if (pendingDownload) return pendingDownload;
     // Deleting the download folder now would pull the installer out from under a running install.
     if (['ready', 'installing', 'manual'].includes(state.status)) return Promise.resolve(state);
-    if (!release || !release.asset || !installSupported) return Promise.resolve(state);
+    if (!release || !release.asset || release.requiredOs || !installSupported) return Promise.resolve(state);
     const { version, asset } = release;
     pendingDownload = (async () => {
       const target = path.join(downloadDir, `update-${version}${asset.ext}`);
@@ -199,12 +227,12 @@ function createReleaseUpdates({
     getState: () => state,
     // Moves ready -> installing exactly once; a second caller gets null instead of a second installer.
     beginInstall() {
-      if (state.status !== 'ready' || !readyFile) return null;
+      if (state.status !== 'ready' || !readyFile || cannotRun(release?.asset)) return null;
       setState({ status: 'installing', version: state.version });
       return { version: state.version, filePath: readyFile, asset: release.asset };
     },
     // The verified DMG stays available for the manual fallback.
-    getInstallerFile: () => (['ready', 'manual'].includes(state.status) ? readyFile : ''),
+    getInstallerFile: () => (['ready', 'manual'].includes(state.status) && !cannotRun(release?.asset) ? readyFile : ''),
     getInstaller: () => ({ filePath: readyFile, asset: release?.asset }),
     invalidateInstaller() {
       readyFile = '';
@@ -217,7 +245,7 @@ function createReleaseUpdates({
     restoreInstall({ version, filePath, asset, status = 'ready', ...extra }) {
       const ext = platform === 'darwin' ? '.dmg' : platform === 'win32' ? '.exe' : '';
       if (!newerVersion(version, currentVersion) || !validInstallerAsset(asset) || asset.ext !== ext
-        || filePath !== path.join(downloadDir, `update-${version}${ext}`)) return state;
+        || filePath !== path.join(downloadDir, `update-${version}${ext}`) || cannotRun(asset)) return state;
       release = { version, asset };
       readyFile = filePath;
       return setState({ status, version, ...extra });
@@ -230,4 +258,4 @@ function createReleaseUpdates({
     },
   };
 }
-module.exports = { createReleaseUpdates, newerVersion, pickInstallerAsset, verifyInstallerFile, RELEASES_URL };
+module.exports = { createReleaseUpdates, newerVersion, olderSystem, parseMinimumOs, pickInstallerAsset, verifyInstallerFile, RELEASES_URL };
