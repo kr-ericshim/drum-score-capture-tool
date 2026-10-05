@@ -341,3 +341,23 @@ test("failed source preparation does not advertise continuing progress", () => {
   assert.doesNotMatch(markup, /role="progressbar"|In progress/);
   assert.match(markup, /Network unavailable/);
 });
+
+test("source screen names the selected video and makes the next step primary", () => {
+  const state = createInitialSessionState();
+  state.ui.locale = "en";
+  let markup = renderSourceScreen(state);
+  assert.doesNotMatch(markup, /source-current/);
+  assert.match(markup, /class="button button-primary" data-action="select-source-file">Open video/);
+
+  state.source.filePath = "/tmp/practice.mp4";
+  state.source.displayName = "practice.mp4";
+  state.source.metadata = { resolutionLabel: "1920 × 1080", durationLabel: "03:44" };
+  markup = renderSourceScreen(state);
+  assert.match(markup, /<strong title="practice\.mp4">practice\.mp4<\/strong>/);
+  assert.match(markup, /1920 × 1080 · 03:44/);
+  assert.match(markup, /class="button button-primary" data-action="open-step" data-step="roi">Next: Score region/);
+  assert.match(markup, /class="button button-secondary" data-action="select-source-file">Open another video/);
+
+  state.source.prepareStatus = "loading";
+  assert.doesNotMatch(renderSourceScreen(state), /source-current/);
+});

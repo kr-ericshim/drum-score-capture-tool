@@ -262,14 +262,11 @@ export function renderExportScreen(state) {
       <div class="export-workbench">
         <div class="export-config-stack" data-stitch-region="export-config">
           <section class="panel export-module">
-            <div class="panel-heading">
-              <h2>${t("export.fileSettings", { locale: model.locale })}</h2>
-              <p>${t("export.outputFormat", { locale: model.locale })}</p>
-            </div>
+            <div class="panel-heading"><h2>${t("export.outputFormat", { locale: model.locale })}</h2></div>
             <div class="segmented-row">
               <label class="segment ${checked(model.formats, "pdf") ? "is-active" : ""}">
-                <input data-action="toggle-format" data-format="pdf" type="checkbox" ${checked(model.formats, "pdf")} ${formatInputsDisabled ? "disabled" : ""} />
-                <span>${t("export.pdfDocument", { locale: model.locale })}</span>
+                <input data-action="toggle-format" data-format="pdf" type="checkbox" ${checked(model.formats, "pdf")} ${formatInputsDisabled ? "disabled" : ""} aria-labelledby="exportFormatPdfLabel" ${checked(model.formats, "pdf") ? 'aria-describedby="exportPdfHint"' : ""} />
+                <span><span id="exportFormatPdfLabel">${t("export.pdfDocument", { locale: model.locale })}</span>${checked(model.formats, "pdf") ? `<small id="exportPdfHint" class="export-format-hint">${t("export.pdfMetadataHint", { locale: model.locale })}</small>` : ""}</span>
               </label>
               <label class="segment ${checked(model.formats, "png") ? "is-active" : ""}">
                 <input data-action="toggle-format" data-format="png" type="checkbox" ${checked(model.formats, "png")} ${formatInputsDisabled ? "disabled" : ""} />
@@ -280,7 +277,6 @@ export function renderExportScreen(state) {
                 <span>${t("export.jpgImages", { locale: model.locale })}</span>
               </label>
             </div>
-            ${model.metadata.helperText ? `<p class="panel-note export-metadata-hint">${safeMetadataHelper}</p>` : ""}
           </section>
           <section class="panel export-module">
             <div class="panel-heading"><h2>${t("export.range.title", { locale: model.locale })}</h2></div>
@@ -293,8 +289,8 @@ export function renderExportScreen(state) {
             <p id="captureRangeHelp" class="panel-note">${t("export.range.help", { locale: model.locale })}</p>
             ${captureRange(state).error ? `<p id="captureRangeError" class="inline-error" role="alert">${t(`export.range.error.${captureRange(state).error}`, { locale: model.locale })}</p>` : ""}
           </section>
-          <section class="panel export-module">
-            <div class="panel-heading">
+          <section class="panel export-module export-module-quiet">
+            <div class="panel-heading panel-heading-inline">
               <h2>${t("export.processingProfile", { locale: model.locale })}</h2>
               <p>${t("export.processingProfileHelp", { locale: model.locale })}</p>
             </div>
@@ -307,8 +303,8 @@ export function renderExportScreen(state) {
               `).join("")}
             </div>
           </section>
-          <section class="panel export-module">
-            <div class="panel-heading">
+          <section class="panel export-module export-module-quiet">
+            <div class="panel-heading panel-heading-inline">
               <h2>${t("export.outputDirectory", { locale: model.locale })}</h2>
               <p>${safeDestinationLabel}</p>
             </div>
@@ -323,7 +319,7 @@ export function renderExportScreen(state) {
           <div class="panel-heading export-preview-heading">
 
             <h2>${t("export.previewTitle", { locale: model.locale })}</h2>
-            <p>${safePreviewCaption}</p>
+            ${model.previewCaption === t("export.previewCaptionReady", { locale: model.locale }) ? "" : `<p>${safePreviewCaption}</p>`}
           </div>
           ${model.showProgressDetails ? `
             <div class="export-progress-card">
