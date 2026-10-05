@@ -21,12 +21,16 @@ def _import_main_with_stubs():
 
     layout_profiles = types.ModuleType("app.pipeline.layout_profiles")
     layout_profiles.infer_layout_hint_from_roi = lambda *args, **kwargs: "full_scroll"
+    layout_profiles.resolve_layout_hint = lambda *args, **kwargs: "full_scroll"
 
     roi_health = types.ModuleType("app.pipeline.roi_health")
     roi_health.analyze_roi_health_for_source = lambda *args, **kwargs: {}
 
     rectify = types.ModuleType("app.pipeline.rectify")
     rectify.rectify_frames = lambda *args, **kwargs: []
+
+    overlay_composite = types.ModuleType("app.pipeline.overlay_composite")
+    overlay_composite.compose_overlay_free_captures = lambda *args, **kwargs: []
 
     stitch = types.ModuleType("app.pipeline.stitch")
     stitch.select_review_candidates = lambda *args, **kwargs: []
@@ -47,6 +51,7 @@ def _import_main_with_stubs():
         "app.pipeline.layout_profiles": layout_profiles,
         "app.pipeline.roi_health": roi_health,
         "app.pipeline.rectify": rectify,
+        "app.pipeline.overlay_composite": overlay_composite,
         "app.pipeline.stitch": stitch,
         "app.pipeline.upscale": upscale,
         "app.pipeline.export": export,

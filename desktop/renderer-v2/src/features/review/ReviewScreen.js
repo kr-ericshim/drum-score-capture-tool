@@ -67,6 +67,9 @@ function similarNoteText(page, locale) {
   if (similar.reason === "playhead_reset") {
     return t("review.similarNotePlayhead", { locale, replacements: { reference } });
   }
+  if (similar.reason === "recent_return") {
+    return t("review.similarNoteReturn", { locale, replacements: { reference } });
+  }
   if (similar.reason === "low_alignment_confidence") {
     return t("review.similarNoteAlign", { locale, replacements: { reference } });
   }

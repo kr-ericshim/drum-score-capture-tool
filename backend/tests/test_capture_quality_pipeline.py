@@ -94,14 +94,17 @@ class TestCaptureQualityPipeline(unittest.TestCase):
             cv2.imwrite(str(faded_path), faded)
             cv2.imwrite(str(clear_path), clear)
 
+            report = {}
             candidates = select_review_candidates(
                 frame_paths=[faded_path, clear_path],
                 options=StitchOptions(enable=True, layout_hint="full_scroll", dedupe_level="normal"),
                 source_type="file",
                 logger=lambda *_: None,
+                report=report,
             )
 
             self.assertEqual(candidates, [clear_path])
+            self.assertEqual(report["observation_groups"], {str(clear_path): [str(clear_path), str(faded_path)]})
 
 
 def _make_score_frame(*, ink: int, blur: bool) -> np.ndarray:

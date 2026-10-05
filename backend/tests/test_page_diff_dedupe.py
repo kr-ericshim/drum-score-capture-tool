@@ -330,6 +330,79 @@ class TestTemporalDedupeFlow(unittest.TestCase):
             self.assertEqual(kept, ["frame_0000.png", "frame_0004.png", "frame_0007.png"])
             self.assertEqual(pairs, [])
 
+    def test_bottom_bar_flicker_between_strips_is_dropped(self):
+        strip = groove_notes(strip_spec(), seed=5)
+        strip_b = groove_notes(strip_spec(), seed=6)
+        frames = (
+            [render(strip, [Overlay("line", x)]) for x in (0.05, 0.5, 0.95)]
+            + [render(strip_b, [Overlay("line", x)]) for x in (0.05, 0.3)]
+            # One transition frame of the previous strip, then strip_b again.
+            + [render(strip, [Overlay("line", 0.95)])]
+            + [render(strip_b, [Overlay("line", x)]) for x in (0.6, 0.9)]
+        )
+        with tempfile.TemporaryDirectory() as td:
+            paths = _write_frames(Path(td), frames)
+            kept, pairs, _logs = _select(paths, "bottom_bar")
+            self.assertEqual(kept, ["frame_0000.png", "frame_0003.png"])
+            self.assertEqual(pairs, [])
+
+    def test_bottom_bar_returning_strip_that_stays_is_kept_for_review(self):
+        # Verse groove, fill, chorus, then the verse groove again: the second
+        # verse is part of the score and must not vanish as a "flicker".
+        strip = groove_notes(strip_spec(), seed=5)
+        strip_b = add_note(strip, 0, 1, 3, 1.5)
+        strip_c = groove_notes(strip_spec(), seed=6)
+        strip_d = groove_notes(strip_spec(), seed=9)
+        frames = (
+            [render(strip, [Overlay("line", x)]) for x in (0.05, 0.3, 0.6, 0.9)]
+            + [render(strip_b, [Overlay("line", x)]) for x in (0.05, 0.5, 0.95)]
+            + [render(strip_c, [Overlay("line", x)]) for x in (0.1, 0.7)]
+            + [render(strip_b, [Overlay("line", x)]) for x in (0.05, 0.5, 0.95)]
+            + [render(strip_d, [Overlay("line", x)]) for x in (0.1, 0.7)]
+        )
+        with tempfile.TemporaryDirectory() as td:
+            paths = _write_frames(Path(td), frames)
+            kept, pairs, _logs = _select(paths, "bottom_bar")
+            self.assertEqual(
+                kept,
+                ["frame_0000.png", "frame_0004.png", "frame_0007.png", "frame_0009.png", "frame_0012.png"],
+            )
+            self.assertEqual(len(pairs), 1)
+            self.assertEqual(pairs[0]["reason"], "recent_return")
+            self.assertEqual(Path(pairs[0]["kept"]).name, "frame_0004.png")
+            self.assertEqual(Path(pairs[0]["candidate"]).name, "frame_0009.png")
+
+    def test_returning_page_followed_by_another_repeat_keeps_both(self):
+        # A, B, A again (seen late), then A restarting from the left: the second
+        # look at A must survive even though its next frame is a playhead reset.
+        for layout, spec in (("bottom_bar", strip_spec()), ("page_turn", PageSpec())):
+            with self.subTest(layout=layout):
+                page_a = groove_notes(spec, seed=5)
+                page_b = groove_notes(spec, seed=6)
+                frames = [
+                    render(page_a, [Overlay("line", 0.05)]),
+                    render(page_b, [Overlay("line", 0.05)]),
+                    render(page_a, [Overlay("line", 0.9)]),
+                    render(page_a, [Overlay("line", 0.05)]),
+                    render(page_a, [Overlay("line", 0.5)]),
+                ]
+                with tempfile.TemporaryDirectory() as td:
+                    paths = _write_frames(Path(td), frames)
+                    kept, pairs, _logs = _select(paths, layout)
+                    self.assertEqual(
+                        kept, ["frame_0000.png", "frame_0001.png", "frame_0002.png", "frame_0003.png"]
+                    )
+                    relations = [
+                        (pair["reason"], Path(pair["kept"]).name, Path(pair["candidate"]).name) for pair in pairs
+                    ]
+                    self.assertEqual(
+                        relations,
+                        [
+                            ("recent_return", "frame_0000.png", "frame_0002.png"),
+                            ("playhead_reset", "frame_0002.png", "frame_0003.png"),
+                        ],
+                    )
+
     def test_full_scroll_keeps_scrolled_frames_and_drops_static_repeats(self):
         tall = groove_notes(PageSpec(width=1200, height=1800, systems=8, gap=12), seed=8)
         image = render(tall)

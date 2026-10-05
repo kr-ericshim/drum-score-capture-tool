@@ -119,6 +119,18 @@ test("review screen explains a playhead reset without change boxes", () => {
   assert.match(markup, /기준: 페이지 2/);
 });
 
+test("review screen explains a page that returned later in the video", () => {
+  const result = similarResult();
+  result.similar_capture_pairs[0].reason = "recent_return";
+  result.similar_capture_pairs[0].metrics.change_boxes = [];
+
+  const ko = renderReviewScreen(reviewState(result));
+  assert.match(ko, /앞에서 나온 악보\(페이지 2\)가 다시 나와/);
+
+  const en = renderReviewScreen(reviewState(result, "en"));
+  assert.match(en, /The same score as Page 2 came back/);
+});
+
 test("attention filter includes near-identical pages", () => {
   const state = reviewState(similarResult());
   state.review.filter = "suspicious";

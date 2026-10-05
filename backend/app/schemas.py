@@ -62,6 +62,8 @@ class RectifyOptions(BaseModel):
 
 class StitchOptions(BaseModel):
     enable: bool = False
+    remove_overlays: bool = True
+    flatten_background: bool = True
     overlap_threshold: float = Field(default=0.2, ge=0.0, le=1.0)
     layout_hint: LayoutHint = "auto"
     dedupe_level: DedupeLevel = "normal"

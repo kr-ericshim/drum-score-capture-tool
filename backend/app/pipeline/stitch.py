@@ -24,10 +24,15 @@ def select_review_candidates(
     logger,
     report: Optional[Dict[str, Any]] = None,
 ) -> List[Path]:
-    """Drop repeated frames; `report` (if given) receives "similar_pairs": frames
-    that were kept although they look almost identical to the previous kept frame,
-    so the review screen can show the pair instead of the pipeline guessing."""
+    """Drop repeated frames and report similar pairs plus observation groups.
+
+    Groups contain only direct duplicates of each kept frame (kept path first),
+    so repeated observations can be composed without mixing in transition frames.
+    Similar pairs remain separate captures for the review screen to compare.
+    """
     if not frame_paths:
+        if report is not None:
+            report.update(similar_pairs=[], observation_groups={})
         return []
 
     layout_mode = resolve_layout_hint(options.layout_hint, source_type=source_type)
@@ -185,45 +190,83 @@ def _filter_redundant_frames(
     logger,
     report: Optional[Dict[str, Any]] = None,
 ) -> List[Path]:
+    observation_groups = {str(path): [str(path)] for path in frame_paths[:1]}
     if len(frame_paths) <= 1:
+        if report is not None:
+            report.update(similar_pairs=[], observation_groups=observation_groups)
         return frame_paths
 
     kept_paths: List[Path] = [frame_paths[0]]
     prev = cv2.imread(str(frame_paths[0]))
     if prev is None:
+        if report is not None:
+            report.update(similar_pairs=[], observation_groups={str(path): [str(path)] for path in frame_paths})
         return frame_paths
 
     similar_pairs: List[Dict[str, Any]] = []
-    recent_frames: Deque[Tuple[int, np.ndarray]] = deque(maxlen=8)
+    recent_frames: Deque[Tuple[int, np.ndarray, Path]] = deque(maxlen=8)
     first_hash = _frame_dhash(prev)
     if first_hash is not None:
-        recent_frames.append((first_hash, prev))
+        recent_frames.append((first_hash, prev, frame_paths[0]))
 
     removed = 0
     clarity_replacements = 0
     ambiguous_kept = 0
     scroll_direction = 0
     last_seen_playhead_x: Optional[float] = None
+    # A return to an older kept page waits for the next frame: a page that stays
+    # on screen is a real repeat (kept for review), a single frame is a flicker.
+    pending_return: Optional[Dict[str, Any]] = None
     for path in frame_paths[1:]:
         checkpoint()
         current = cv2.imread(str(path))
         if current is None:
             continue
+        if pending_return is not None:
+            # Only a clearly different next frame proves a flicker. A same or
+            # ambiguous one (e.g. playhead reset on yet another repeat) keeps the
+            # return; the current frame is then judged against it as usual.
+            persisted = not compare_frames(pending_return["image"], current, dedupe_level=dedupe_level).is_different
+            if persisted:
+                kept_paths.append(pending_return["path"])
+                observation_groups[str(pending_return["path"])] = [str(pending_return["path"])]
+                prev = pending_return["image"]
+                recent_frames.append((pending_return["hash"], prev, pending_return["path"]))
+                similar_pairs.append(pending_return["pair"])
+                ambiguous_kept += 1
+                logger(f"returning page kept for review (recent_return): {pending_return['path'].name}")
+            else:
+                # A dropped flicker frame must not count as the last seen playhead.
+                last_seen_playhead_x = pending_return["playhead_before"]
+                removed += 1
+            pending_return = None
         verdict = compare_frames(prev, current, dedupe_level=dedupe_level)
         if verdict.is_same and playhead_jumped_back(last_seen_playhead_x, verdict.playhead_cur_x):
             # Same-looking score but playback restarted at the left edge: a
             # repeat, or the next page happens to be identical. Keep for review.
             verdict.verdict = VERDICT_AMBIGUOUS
             verdict.reason = "playhead_reset"
+        playhead_before = last_seen_playhead_x
         last_seen_playhead_x = verdict.playhead_cur_x
         if _is_duplicate_verdict(verdict, layout_mode=layout_mode, dedupe_level=dedupe_level):
+            group = observation_groups[str(kept_paths[-1])]
             if _should_replace_with_clearer_duplicate(prev, current):
+                replaced = kept_paths[-1]
                 kept_paths[-1] = path
+                del observation_groups[str(replaced)]
+                observation_groups[str(path)] = [str(path), *group]
                 prev = current
+                # The replaced frame is gone: a stale cache entry would make the
+                # same page look like a return to an older one.
+                recent_frames = deque((entry for entry in recent_frames if entry[2] != replaced), maxlen=8)
                 current_hash = _frame_dhash(current)
                 if current_hash is not None:
-                    recent_frames.append((current_hash, current))
+                    recent_frames.append((current_hash, current, path))
+                if similar_pairs and similar_pairs[-1]["candidate"] == str(replaced):
+                    similar_pairs[-1]["candidate"] = str(path)
                 clarity_replacements += 1
+            else:
+                group.append(str(path))
             removed += 1
             continue
 
@@ -244,14 +287,32 @@ def _filter_redundant_frames(
         if layout_mode in {LAYOUT_BOTTOM_BAR, LAYOUT_PAGE_TURN} and not verdict.is_ambiguous:
             # Flicker back to a recently seen page: the hash only nominates a
             # candidate; the blob-level comparison has to confirm it.
-            if current_hash is not None and _matches_recent_frame(
-                current,
-                current_hash,
-                recent_frames=recent_frames,
-                layout_mode=layout_mode,
-                dedupe_level=dedupe_level,
-            ):
-                removed += 1
+            match = None
+            if current_hash is not None:
+                match = _match_recent_frame(
+                    current,
+                    current_hash,
+                    recent_frames=recent_frames,
+                    layout_mode=layout_mode,
+                    dedupe_level=dedupe_level,
+                )
+            if match is not None:
+                matched_path, match_verdict = match
+                if matched_path == kept_paths[-1]:
+                    removed += 1
+                else:
+                    pending_return = {
+                        "path": path,
+                        "image": current,
+                        "hash": current_hash,
+                        "playhead_before": playhead_before,
+                        "pair": {
+                            "kept": str(matched_path),
+                            "candidate": str(path),
+                            "reason": "recent_return",
+                            "metrics": match_verdict.to_dict(),
+                        },
+                    }
                 continue
 
         if layout_mode == LAYOUT_FULL_SCROLL:
@@ -268,9 +329,14 @@ def _filter_redundant_frames(
                 scroll_direction = direction
 
         kept_paths.append(path)
+        observation_groups[str(path)] = [str(path)]
         prev = current
         if current_hash is not None:
-            recent_frames.append((current_hash, current))
+            recent_frames.append((current_hash, current, path))
+
+    if pending_return is not None:
+        # The video ended on a single returning frame: treat it as a flicker.
+        removed += 1
 
     if removed > 0:
         logger(f"temporal dedupe removed {removed} near-duplicate frames")
@@ -280,6 +346,7 @@ def _filter_redundant_frames(
         logger(f"temporal dedupe kept {ambiguous_kept} near-identical frames for review")
     if report is not None:
         report["similar_pairs"] = similar_pairs
+        report["observation_groups"] = observation_groups
     return kept_paths
 
 
@@ -295,29 +362,30 @@ def _is_duplicate_verdict(verdict: FrameDiffVerdict, *, layout_mode: str, dedupe
     return max(abs(verdict.shift_x), abs(verdict.shift_y)) < max_jitter
 
 
-def _matches_recent_frame(
+def _match_recent_frame(
     current: np.ndarray,
     current_hash: int,
     *,
-    recent_frames: Deque[Tuple[int, np.ndarray]],
+    recent_frames: Deque[Tuple[int, np.ndarray, Path]],
     layout_mode: str,
     dedupe_level: str,
-) -> bool:
+) -> Optional[Tuple[Path, FrameDiffVerdict]]:
+    """The recently kept frame `current` duplicates, with the confirming verdict."""
     if not recent_frames:
-        return False
+        return None
     if not _looks_like_recent_hash_duplicate(
         current_hash,
-        recent_hashes=deque(hash_value for hash_value, _image in recent_frames),
+        recent_hashes=deque(hash_value for hash_value, _image, _path in recent_frames),
         layout_mode=layout_mode,
         dedupe_level=dedupe_level,
     ):
-        return False
+        return None
     ranked = sorted(recent_frames, key=lambda item: _hamming_u64(current_hash, item[0]))
-    for _hash_value, image in ranked[:3]:
+    for _hash_value, image, frame_path in ranked[:3]:
         verdict = compare_frames(image, current, dedupe_level=dedupe_level)
         if _is_duplicate_verdict(verdict, layout_mode=layout_mode, dedupe_level=dedupe_level):
-            return True
-    return False
+            return frame_path, verdict
+    return None
 
 
 def _should_replace_with_clearer_duplicate(prev_img, cur_img) -> bool:

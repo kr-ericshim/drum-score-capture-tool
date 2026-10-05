@@ -59,7 +59,7 @@ from app.pipeline.extract import (
     extract_preview_frame,
     prepare_preview_source,
 )
-from app.pipeline.layout_profiles import infer_layout_hint_from_roi
+from app.pipeline.layout_profiles import infer_layout_hint_from_roi, resolve_layout_hint
 from app.pipeline.auto_roi_detector import estimate_auto_roi_for_source
 from app.pipeline.roi_health import analyze_roi_health_for_source
 try:
@@ -69,6 +69,8 @@ except ImportError:
         return str(analysis.get("risk_level") or "info").strip().lower() == "critical"
 from app.pipeline.detect import detect_sheet_regions
 from app.pipeline.rectify import rectify_frames
+from app.pipeline.overlay_composite import compose_overlay_free_captures
+from app.pipeline.paper_tone import flatten_capture_backgrounds
 from app.pipeline.stitch import select_review_candidates, stitch_pages
 from app.pipeline.upscale import upscale_frames
 from app.pipeline.export import export_frames, export_selected_pages
@@ -1329,10 +1331,44 @@ def _execute_job(job_id: str, payload: JobCreate) -> None:
             logger=lambda msg: _append(job_id, msg),
             report=dedupe_report,
         )
+        original_candidate_paths = review_candidate_paths
+        overlay_composites: Dict[str, List[str]] = {}
+        if stitch_opts.remove_overlays:
+            review_candidate_paths = compose_overlay_free_captures(
+                kept_paths=review_candidate_paths,
+                groups=dedupe_report.get("observation_groups", {}),
+                layout_mode=resolve_layout_hint(stitch_opts.layout_hint, source_type=payload.source_type),
+                workspace=artifact_dir / "clean",
+                logger=lambda msg: _append(job_id, msg),
+                report=overlay_composites,
+            )
+        result["overlay_composites"] = overlay_composites
+        if stitch_opts.flatten_background:
+            review_candidate_paths = flatten_capture_backgrounds(
+                paths=review_candidate_paths,
+                workspace=artifact_dir / "clean",
+                logger=lambda msg: _append(job_id, msg),
+            )
+        composed_path_map = {
+            str(original): str(composed)
+            for original, composed in zip(original_candidate_paths, review_candidate_paths)
+        }
+        # Cleaned capture -> the rectified capture it replaced, so originals stay
+        # traceable (and restorable) whichever cleanup step produced the file.
+        result["clean_capture_sources"] = {
+            composed: original for original, composed in composed_path_map.items() if composed != original
+        }
         # Frames kept although they look almost identical to the previous kept
         # frame (few note heads changed, or the playhead jumped back): the review
         # screen can present these pairs instead of the pipeline guessing.
-        result["similar_capture_pairs"] = dedupe_report.get("similar_pairs", [])
+        result["similar_capture_pairs"] = [
+            {
+                **pair,
+                "kept": composed_path_map.get(pair["kept"], pair["kept"]),
+                "candidate": composed_path_map.get(pair["candidate"], pair["candidate"]),
+            }
+            for pair in dedupe_report.get("similar_pairs", [])
+        ]
 
         from app.pipeline.export import diagnose_capture_sequence
         result["capture_diagnostics"] = diagnose_capture_sequence(review_candidate_paths)
