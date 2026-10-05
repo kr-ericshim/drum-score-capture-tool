@@ -328,10 +328,31 @@ test("review keeps excluded notation visible and names the saved PDF before chan
   const markup = renderReviewScreen(state);
   assert.match(markup, /review-card is-excluded is-focused/);
   assert.match(markup, /review-inspector is-excluded/);
-  assert.match(markup, /data-action="review-toggle-focused"[^>]*>Include capture/);
+  assert.match(markup, /<input type="checkbox" data-action="review-toggle-focused"(?![^>]*checked)[^>]*>\s*Included in output/);
   assert.match(markup, /data-action="open-output-pdf"[^>]*>Open previous PDF/);
   assert.match(markup, /data-action="apply-review"[^>]*disabled/);
   assert.doesNotMatch(markup, /excluded-overlay|animate-pulse/);
   state.review.status = "applied";
   assert.match(renderReviewScreen(state), /class="button button-primary" data-action="open-output-pdf"/);
+});
+
+test("review list chooses one thumbnail layout from the captures' measured aspect ratio", async () => {
+  const { rememberThumbAspect, thumbShapeFor } = await import("../features/review/thumbShape.js");
+  assert.equal(thumbShapeFor(["/unknown.png"]), "strip");
+  rememberThumbAspect("/page-a.png", 1200, 1697);
+  rememberThumbAspect("/page-b.png", 1200, 1697);
+  rememberThumbAspect("/strip.png", 1200, 320);
+  assert.equal(thumbShapeFor(["/page-a.png", "/page-b.png", "/strip.png"]), "page");
+  assert.equal(thumbShapeFor(["/strip.png", "/unknown.png"]), "strip");
+});
+
+test("review card marks inclusion only with its checkbox and names the capture once", () => {
+  const state = createReviewState();
+  state.ui.locale = "en";
+  const markup = renderReviewScreen(state);
+  assert.match(markup, /data-thumb-shape="strip"/);
+  assert.doesNotMatch(markup, /review-card-index|review-inclusion-status|review-excluded-label/);
+  assert.match(markup, /data-action="save-output-pdf-as"[^>]*aria-label="[^"]+"/);
+  assert.match(markup, /data-action="open-output-dir"[^>]*aria-label="Open folder"/);
+  assert.match(markup, /data-action="review-undo"[^>]*title="Undo \(Ctrl\/⌘ Z\)"/);
 });

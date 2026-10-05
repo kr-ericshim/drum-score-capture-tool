@@ -67,11 +67,11 @@ The user judged the Light Side-Rail result as generic ("AI-made"): a page title 
 - No top header. A narrow floating dock at the far left holds the four steps (number, or a check when complete), archive, language, and a single engine-status dot.
 - Beside the dock, one floating panel per step holds the step title, the file name, and that step's controls. It replaces the page headline band.
 - Everything else is a neutral dotted canvas. The artifact (video frame, output preview, captured score) sits on it as paper with real elevation.
-- One next action per step floats at the top right of the canvas (apply region, create files, rebuild/save). Secondary output actions sit in a compact menu.
+- One next action per step floats at the top right of the canvas (apply region, create files, rebuild/save). Secondary output actions stay compact (see Review refinement, 2026-10-05).
 - Canvas tools (zoom, fit, crop, undo) float as one toolbar at the bottom centre of the canvas.
 - Status is quiet by default. A floating notice appears only for an inline message or a backend problem that needs recovery.
 - A single blue accent for primary action, selection, focus and the editable region. Text uses a darker blue that keeps 4.5:1 contrast. Warnings stay orange-red. System fonts with tabular/monospace numerals for times and counts.
-- Review list shows the captured strip at full panel width with number, time and inclusion; cards no longer use square thumbnails.
+- Review list thumbnails follow the captures' shape (see Review refinement, 2026-10-05); cards no longer use square thumbnails.
 - Not yet implemented and tracked as follow-up product work: composed PDF-page preview on the export/review canvas and a change-point scrubber on the ROI screen. Until then the canvas shows the existing crop preview and capture image.
 
 ## Superseded visual direction: Light Side-Rail Workspace (2026-09-24)
@@ -127,3 +127,14 @@ Preserve Floating Dock Canvas and existing work in progress. The authored moment
 - Notices use an interruptible opacity/translation transition instead of replaying a keyframe. Hidden notices cannot receive focus or pointer input.
 - Keep pointer press feedback at 0.98; exclude keyboard focus and reduced motion. Cancel running motion when the preference changes or the app is destroyed.
 - Remove doubled heading spacing in export modules, strengthen the keyboard focus outline, and keep panel scroll gutters stable. Preserve Korean/English content and all capture/ROI/export semantics.
+
+## Review refinement (2026-10-05)
+
+Same Floating Dock Canvas system. The review screen looked unfinished because several equal-weight toolbars competed with the score, one state was marked several ways, and thumbnails ignored the captures' shape. Each floating group now has one job and a fixed place.
+
+- Top right: save status, then the rebuild and open-PDF buttons (whichever is the next step is primary), then Save As and Open folder as icon buttons with tooltips and accessible names. While rebuilding, the status reads a short "Rebuilding…"; the long explanation stays in the panel footer.
+- Current-capture bar: centred on the paper's axis below the save actions. Previous/next chevrons around the capture name and position, then one "Included in output" checkbox (replacing an inclusion label plus a toggle button), then any flags and the compare action. Warning and similarity notes wrap inside the bar; the paper's top padding grows when they are present.
+- Bottom canvas tools: zoom out/in (icons), Fit and 100% (pressed state shown) | undo/redo (icons, shortcut in tooltip) | crop and reset crop. The shortcut line appears only while the keyboard is in use on this screen. Keyboard focus stays on the canvas after a shortcut re-renders the screen.
+- Capture list: the row background and left bar mean "currently viewed"; the checkbox alone means "included". The thumbnail has no accent frame, the capture is named once (beside its checkbox), and excluded thumbnails stay at 50% opacity so they can be re-checked.
+- One thumbnail layout per list, chosen from the median measured aspect ratio of loaded thumbnails: wide strips span the row with name and flags on one line below; portrait pages (aspect < 1.15) show as a 76px page beside name and flags. Thumbnails are never cropped. Timecodes appear only when capture times exist (not yet provided by the job result).
+

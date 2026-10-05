@@ -498,8 +498,6 @@
 .review-viewer-toolbar .button { padding: 6px 10px; min-height: 32px; font-size: 12px; }
 .review-position { min-width: 52px; text-align: center; font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 .review-inspector { flex-shrink: 0; padding: 12px 20px; border-bottom: 1px solid var(--line-strong); background: var(--bg-panel); }
-.review-inspector-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 13px; }
-.review-inclusion-status { color: var(--text-2); font-size: 12px; }
 .review-inspector .review-risk-note { margin: 8px 0 0; max-width: 75ch; font-size: 13px; color: var(--warning-text); word-break: keep-all; overflow-wrap: anywhere; }
 .review-keyboard-help { flex-shrink: 0; margin: 0; padding: 8px 20px; color: var(--text-2); font-size: 12px; background: var(--bg-toolbar); border-top: 1px solid var(--line-strong); }
 .review-crop-stage { flex: 1; min-height: 0; position: relative; overflow: hidden; margin: 16px; }
