@@ -24,6 +24,7 @@ import {
 import { canRunExport, createRuntimeGuards, hasDirtyRoiDraft, invalidatePreviewFlow } from "./session/runtimeSafety.js";
 import { canOpenStep } from "./routes.js";
 import { mountShell } from "../ui/shell/AppShell.js";
+import { createWorkspaceMotion } from "../ui/shell/workspaceMotion.js";
 import { renderTopBar } from "../ui/shell/TopBar.js";
 import { renderProcessRail } from "../ui/shell/ProcessRail.js";
 import { renderContextLane } from "../ui/shell/ContextLane.js";
@@ -462,6 +463,7 @@ export function createApp(root, dependencies = {}) {
   const storage = dependencies.storage || (!dependencies.exposeTestApi && typeof window !== "undefined" ? window.localStorage : null);
   const store = createStore(restoreSession(storage, createInitialSessionState()));
   const shell = mountShellImpl(root);
+  const workspaceMotion = createWorkspaceMotion(root, shell);
   const sourceController = createSourceController({
     store,
     readMetadata,
@@ -719,6 +721,12 @@ export function createApp(root, dependencies = {}) {
     const archiveMarkupValue = bugReportMarkup || renderArchiveModal(state);
     const archiveMarkupChanged = archiveMarkupValue !== lastArchiveMarkup;
     const isArchiveOpen = Boolean(state.archive?.isOpen) && !bugReport.isOpen;
+    if (!isMetadataModalOpen && lastMetadataModalOpen) {
+      workspaceMotion.leave(shell.stagePane.querySelector?.('.export-metadata-overlay'));
+    }
+    if (!isArchiveOpen && !bugReport.isOpen && (lastArchiveOpen || lastBugReportOpen)) {
+      workspaceMotion.leave(shell.modalLayer.querySelector?.('.archive-overlay'));
+    }
     const engineStatus = escapeHtml(state.ui.backend?.ready ? t("status.engineReady", { locale }) : t("status.engineWaiting", { locale }));
     const sourceStatus = escapeHtml(sourceStatusLabel
       ? t("status.sourceLabel", { locale, replacements: { label: sourceStatusLabel } })
@@ -746,6 +754,7 @@ export function createApp(root, dependencies = {}) {
         <span>${sourceStatus}</span>
       </div>
       <div class="status-bar-group status-bar-group-notice">
+        ${hasFailure ? `<strong class="status-bar-title">${escapeHtml(t("support.failureTitle", { locale }))}</strong>` : ""}
         <span>${inlineNotice}</span>
       </div>
       <div class="status-bar-group">
@@ -753,8 +762,8 @@ export function createApp(root, dependencies = {}) {
       </div>
       ${recoveryActions}
       ${hasFailure ? `<div class="status-bar-group status-bar-recovery">
-        <button class="button button-secondary" data-action="copy-diagnostics">${t("support.copy", { locale })}</button>
-        <button class="button button-secondary" data-action="open-bug-report">${t("support.issue", { locale })}</button>
+        <button class="button button-ghost" data-action="copy-diagnostics">${t("support.copy", { locale })}</button>
+        <button class="button button-primary" data-action="open-bug-report">${t("support.issue", { locale })}</button>
       </div>` : ""}
       ${releaseUpdateMarkup}
     `;
@@ -804,6 +813,10 @@ export function createApp(root, dependencies = {}) {
     }
     const statusNeedsAttention = !state.ui.backend?.ready || hasFailure || Boolean(releaseUpdateMarkup) || Boolean(String(state.ui.inlineNotice || "").trim());
     shell.statusBar?.setAttribute?.("data-attention", statusNeedsAttention ? "true" : "false");
+    const statusIsInert = !statusNeedsAttention || isArchiveOpen || bugReport.isOpen;
+    shell.statusBar?.setAttribute?.("aria-hidden", statusIsInert ? "true" : "false");
+    if (shell.statusBar) shell.statusBar.inert = statusIsInert;
+    shell.statusBar?.setAttribute?.("data-tone", hasFailure ? "danger" : !state.ui.backend?.ready || ["downloading", "installing"].includes(releaseUpdate?.status) ? "progress" : "info");
     if (statusMarkup !== lastStatusMarkup) {
       // When the focused update control goes away, keep focus on the next update action or the dock button.
       replaceKeepingFocus(shell.statusBar, statusMarkup, () => shell.statusBar.querySelector?.("button:not([disabled])")
@@ -812,6 +825,12 @@ export function createApp(root, dependencies = {}) {
     }
     attachRoiEditor(state);
     reviewController.syncEditor();
+    if (isMetadataModalOpen && !lastMetadataModalOpen) {
+      workspaceMotion.enter(shell.stagePane.querySelector?.('.export-metadata-overlay'));
+    }
+    if ((isArchiveOpen && !lastArchiveOpen) || (bugReport.isOpen && !lastBugReportOpen)) {
+      workspaceMotion.enter(shell.modalLayer.querySelector?.('.archive-overlay'));
+    }
     const reviewFocusKey = state.ui.activeStep === "review" ? `${state.review.filter}:${state.review.focusedPageId}` : "";
     if (reviewFocusKey && reviewFocusKey !== lastReviewFocusKey) {
       shell.stagePane.querySelector?.('.review-card.is-focused')?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
@@ -850,6 +869,7 @@ export function createApp(root, dependencies = {}) {
     }
     lastMetadataModalOpen = isMetadataModalOpen;
     if (state.ui.activeStep !== lastRenderedStep) {
+      if (lastRenderedStep) workspaceMotion.step();
       lastRenderedStep = state.ui.activeStep;
       const heading = shell.stagePane.querySelector?.("[data-screen-heading]");
       if (typeof heading?.focus === "function") {
@@ -2618,6 +2638,7 @@ export function createApp(root, dependencies = {}) {
       : undefined,
     destroy() {
       destroyed = true;
+      workspaceMotion.destroy();
       reviewController.destroy();
       stopPersistence();
       stopPolling();

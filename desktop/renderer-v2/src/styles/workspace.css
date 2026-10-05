@@ -265,32 +265,88 @@
 .app-shell[data-step] .stage-pane:focus-visible { outline: none; box-shadow: none; }
 .app-shell[data-step] .context-lane { display: none; }
 
-/* Status: quiet unless there is something to say or fix. */
+/* Status: quiet unless there is something to say or fix. A toned icon tile leads; text, then actions. */
 .app-shell[data-step] .status-bar {
+  --status-tone: var(--accent);
+  --status-tone-soft: var(--accent-soft);
+  --status-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='8.5'/><path d='M12 11v5M12 7.8h.01'/></svg>");
   position: absolute;
   z-index: 8;
   left: calc(var(--dock-w) + var(--gap) * 3 + var(--panel-w));
+  right: 24px;
   bottom: 76px;
-  max-width: 520px;
+  width: fit-content;
+  max-width: 560px;
   height: auto;
-  min-height: 0;
-  display: none;
-  gap: 10px;
+  min-height: 56px;
+  display: flex;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition: opacity var(--dur-enter) var(--ease-out), transform var(--dur-enter) var(--ease-out), visibility 0s var(--dur-enter);
+  flex-wrap: wrap;
+  gap: 10px 16px;
   align-items: center;
-  padding: 8px 10px 8px 14px;
+  align-content: center;
+  padding: 12px 12px 12px 56px;
   border: 1px solid var(--line-soft);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: var(--bg-panel);
-  box-shadow: var(--float-shadow);
+  box-shadow: var(--float-shadow-lift);
   color: var(--text-1);
 }
-.app-shell[data-step] .status-bar[data-attention="true"] { display: flex; animation: float-enter var(--dur-enter) var(--ease-out); }
-@keyframes float-enter { from { opacity: 0; transform: translateY(4px); } }
-.app-shell[data-step] .status-bar .status-bar-group { display: none; font-size: 12px; color: var(--text-1); }
-.app-shell[data-step] .status-bar .status-bar-group-notice,
-.app-shell[data-step] .status-bar .status-bar-recovery { display: flex; gap: 6px; }
-.app-shell[data-step] .status-bar .status-bar-group-notice { justify-content: flex-start; }
+.app-shell[data-step] .status-bar[data-tone="danger"] {
+  --status-tone: var(--danger);
+  --status-tone-soft: var(--danger-soft);
+  --status-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M10.3 4.2 3.2 16.6A2 2 0 0 0 4.9 19.6h14.2a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0z'/><path d='M12 9.5v3.8M12 16.2h.01'/></svg>");
+}
+.app-shell[data-step] .status-bar[data-attention="true"] {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
+  transition-delay: 0s;
+}
+.app-shell[data-step] .status-bar::before,
+.app-shell[data-step] .status-bar::after {
+  content: "";
+  position: absolute;
+  top: 13px;
+  left: 14px;
+  width: 30px;
+  height: 30px;
+}
+.app-shell[data-step] .status-bar::before { border-radius: 9px; background: var(--status-tone-soft); }
+.app-shell[data-step] .status-bar::after {
+  background: var(--status-tone);
+  -webkit-mask: var(--status-icon) center / 17px 17px no-repeat;
+  mask: var(--status-icon) center / 17px 17px no-repeat;
+}
+.app-shell[data-step] .status-bar[data-tone="progress"]::after {
+  inset: 21px auto auto 22px;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--status-tone);
+  border-right-color: transparent;
+  border-radius: 50%;
+  background: none;
+  -webkit-mask: none;
+  mask: none;
+  animation: dock-spin 0.9s linear infinite;
+}
+
+.app-shell[data-step] .status-bar .status-bar-group { display: none; font-size: 12.5px; line-height: 1.5; color: var(--text-2); }
+.app-shell[data-step] .status-bar .status-bar-group-notice { display: flex; flex: 1 1 200px; flex-direction: column; gap: 1px; min-width: 0; }
+.app-shell[data-step] .status-bar .status-bar-group-notice:not(:has(.status-bar-title)):has(> span:empty) { display: none; }
 .app-shell[data-step] .status-bar .status-bar-group-notice span { white-space: normal; }
+.app-shell[data-step] .status-bar .status-bar-title { font-size: 13px; font-weight: 600; line-height: 1.4; color: var(--text-1); }
+.app-shell[data-step] .status-bar .status-bar-recovery { display: flex; flex: 0 1 auto; flex-wrap: wrap; gap: 6px; align-items: center; margin-left: auto; }
+.app-shell[data-step] .status-bar .status-bar-recovery > span { flex: 1 1 200px; margin-right: 10px; }
+.app-shell[data-step] .status-bar .button { min-height: 30px; padding: 0 12px; border-radius: 7px; font-size: 12.5px; white-space: nowrap; }
+.app-shell[data-step] .status-bar .button-ghost { border-color: transparent; background: transparent; color: var(--text-2); }
+.app-shell[data-step] .status-bar .button-ghost:hover:not(:disabled) { border-color: transparent; background: var(--surface-control-hover); color: var(--text-1); }
+.app-shell[data-step] .status-bar .button-primary:hover:not(:disabled) { border-color: transparent; background: var(--accent-2); color: var(--text-inverse); }
 
 /* ---------- Shared text ---------- */
 /* Korean breaks between words, not inside them; an over-long word still wraps instead of overflowing. */
@@ -308,7 +364,9 @@
   box-shadow: none;
   transition: background-color var(--dur-press) var(--ease-out), border-color var(--dur-press) var(--ease-out), color var(--dur-press) var(--ease-out), transform var(--dur-press) var(--ease-out);
 }
-.app-shell[data-step] .button:active:not(:disabled) { transform: scale(0.98); }
+@media (prefers-reduced-motion: no-preference) and (hover: hover) and (pointer: fine) {
+  .app-shell[data-step] .button:active:not(:disabled):not(:focus-visible) { transform: scale(0.98); }
+}
 .app-shell[data-step] .button-primary {
   background: var(--accent);
   border-color: var(--accent);
@@ -335,12 +393,13 @@
   box-shadow: var(--focus);
 }
 .app-shell input[type="checkbox"] { accent-color: var(--accent); }
-.app-shell :is(button, input, select, textarea, summary, [tabindex]):focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 2px; box-shadow: none; }
+.app-shell :is(button, input, select, textarea, summary, [tabindex]):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; box-shadow: none; }
 .app-shell [data-screen-heading]:focus,
 .app-shell [data-screen-heading]:focus-visible { outline: none; box-shadow: none; }
 .app-shell input::placeholder, .app-shell textarea::placeholder { color: var(--text-3); opacity: 1; }
 .app-shell ::selection { color: var(--text-inverse); background: var(--accent); }
 .app-shell * { scrollbar-color: var(--line-iron) transparent; }
+.app-shell :is(input, textarea) { caret-color: var(--accent); }
 .app-shell[data-step] .panel { background: transparent; border: 0; border-radius: 0; box-shadow: none; }
 .app-shell[data-step] .panel-heading h2 { font-size: 13px; font-weight: 650; line-height: 1.35; color: var(--text-1); letter-spacing: -0.005em; text-transform: none; }
 .app-shell[data-step] .panel-heading p { font-size: 12px; line-height: 1.5; color: var(--text-2); }
@@ -397,6 +456,7 @@
   grid-row: 2;
   min-height: 0;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   border: 1px solid var(--line-soft);
   border-top: 0;
   border-radius: 0 0 var(--radius-lg) var(--radius-lg);
@@ -682,7 +742,7 @@
 .screen-export .export-module:last-child { border-bottom: 0; }
 .app-shell[data-step] .screen-export .export-config-stack { gap: 0; }
 .app-shell[data-step] .screen-export .export-module:not(:last-child) { border-bottom: 1px solid var(--line-soft); }
-.screen-export .panel-heading { margin-bottom: 10px; }
+.screen-export .panel-heading { margin-bottom: 0; }
 .screen-export .segmented-row { display: flex; flex-direction: column; gap: 2px; }
 .screen-export .segment {
   display: flex;
@@ -765,9 +825,12 @@
 
 /* Metadata dialog stays a true modal above the canvas. */
 .app-shell[data-step] .export-metadata-overlay { position: fixed; z-index: 20; }
-.app-shell .export-metadata-modal { animation: modal-enter var(--dur-enter) var(--ease-out); }
-.app-shell .archive-modal { animation: modal-enter var(--dur-enter) var(--ease-out); }
-@keyframes modal-enter { from { opacity: 0; transform: translateY(6px) scale(0.985); } }
+/* App controls entry once per opening, so edits/polling cannot replay it. */
+.app-shell .export-metadata-overlay { animation: none; }
+.app-shell .archive-backdrop { transition: none; }
+.app-shell .motion-departure { position: fixed; inset: 0; z-index: 30; pointer-events: none; }
+.app-shell .motion-departure * { pointer-events: none !important; }
+.app-shell .motion-departure .export-metadata-overlay { position: absolute; }
 .app-shell .export-metadata-field > span { font-size: 12px; font-weight: 500; color: var(--text-2); }
 .app-shell .export-metadata-actions .button-secondary { border-color: var(--control-border); color: var(--text-1); }
 .app-shell .export-metadata-actions .button-secondary:hover:not(:disabled) { border-color: var(--control-border-hover); color: var(--text-1); background: var(--surface-control-hover); }
@@ -776,7 +839,11 @@
   .app-shell,
   .app-shell[data-step="review"] { --panel-w: 272px; }
 }
-@media (prefers-reduced-motion: reduce) { .app-shell *, .app-shell *::before, .app-shell *::after { animation: none !important; transition: none !important; } }
+@media (prefers-reduced-motion: reduce) {
+  .app-shell *, .app-shell *::before, .app-shell *::after { animation: none !important; transition: none !important; }
+  .app-shell[data-step] .button:active:not(:disabled),
+  .app-shell[data-step] .status-bar { transform: none; }
+}
 
 /* Panel section labels: small label over plain value. */
 .screen-export .panel-heading h2 { margin: 0; }
@@ -834,8 +901,6 @@
 .capture-range-field > span { font-size: 12px; font-weight: 500; color: var(--text-2); }
 .capture-range-field input { width: 100%; min-width: 0; min-height: 34px; padding: 6px 10px; color: var(--text-1); font: inherit; font-size: 13px; font-variant-numeric: tabular-nums; }
 .capture-range-field input:disabled { background: var(--surface-recessed); color: var(--text-2); }
-.app-shell[data-step] .status-bar { flex-wrap: wrap; right: 24px; }
-.app-shell[data-step] .status-bar-recovery { flex-wrap: wrap; align-items: center; }
 
 /* ---------- Problem report dialog (reuses the archive dialog frame) ---------- */
 .app-shell[data-step] .topbar-report::before {

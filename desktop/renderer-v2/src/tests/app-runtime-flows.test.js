@@ -2137,7 +2137,8 @@ test("archive modal mounts at the shell root, makes the shell inert, and closes 
   assert.equal(root.querySelector("#shellModalLayer").innerHTML, "");
   assert.equal(root.querySelector("#topBar").inert, false);
   assert.equal(root.querySelector("#workspaceShell").inert, false);
-  assert.equal(root.querySelector("#statusBar").inert, false);
+  // A dismissed, empty notice stays out of the tab order after the dialog closes.
+  assert.equal(root.querySelector("#statusBar").inert, true);
   assert.equal(root.querySelector("#topBar").getAttribute("aria-hidden"), null);
   assert.equal(globalThis.document.activeElement, opener);
 });

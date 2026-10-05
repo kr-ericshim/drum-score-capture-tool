@@ -118,3 +118,12 @@ Same Floating Dock Canvas system; this pass removes the unfinished feel without 
 - Review status uses drawn dots: amber for "needs review", red for "exclude candidate", amber for unapplied selection. Warnings no longer paint most of the list red.
 - ROI representative frames are a three-row list (label left, time right); the draft/applied note is a dot plus text instead of another bordered box.
 - Dialogs dim the whole window including the dock, place the primary action last (right), and enter with a 180ms fade/scale that reduced-motion disables.
+
+## Motion and detail refinement (2026-09-28)
+
+Preserve Floating Dock Canvas and existing work in progress. The authored moment is the transition between workflow steps: only the inspector contents settle in, while the dock, paper, and editing coordinates stay still. Trigger this on step changes, never on progress updates, typing, or capture selection. Use the existing ease-out and duration tokens; no new animation dependency.
+
+- Dialog entry runs once per opening, with a coordinated backdrop. Pointer dismissal leaves a short inert visual fade; state and focus restore immediately. Keyboard navigation and reduced motion remain immediate.
+- Notices use an interruptible opacity/translation transition instead of replaying a keyframe. Hidden notices cannot receive focus or pointer input.
+- Keep pointer press feedback at 0.98; exclude keyboard focus and reduced motion. Cancel running motion when the preference changes or the app is destroyed.
+- Remove doubled heading spacing in export modules, strengthen the keyboard focus outline, and keep panel scroll gutters stable. Preserve Korean/English content and all capture/ROI/export semantics.

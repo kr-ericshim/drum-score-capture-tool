@@ -5,6 +5,7 @@ const translations = {
   ko: {
     "support.engineStarting": "처리기를 준비하고 있습니다. 잠시 기다려 주세요.",
     "support.engineFailed": "처리기를 시작하지 못했습니다. 다시 연결하거나 진단 로그를 확인하세요.",
+    "support.failureTitle": "작업 중 문제가 생겼습니다",
     "support.failureHelp": "문제가 계속되면 진단 로그와 함께 알려 주세요.",
     "support.copy": "진단 로그 복사",
     "support.issue": "문제 보고",
@@ -448,6 +449,7 @@ const translations = {
   en: {
     "support.engineStarting": "Preparing the processing engine. Please wait.",
     "support.engineFailed": "The processing engine could not start. Reconnect or copy diagnostics.",
+    "support.failureTitle": "Something went wrong",
     "support.failureHelp": "If the problem persists, report it with diagnostics.",
     "support.copy": "Copy diagnostics",
     "support.issue": "Report a problem",
