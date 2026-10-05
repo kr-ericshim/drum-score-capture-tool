@@ -26,6 +26,7 @@ let releaseUpdates = null;
 // What the open report dialog showed the user; sending uses exactly this.
 let preparedBugReport = null;
 let pendingReleaseInstall = null;
+let lastVideoDir;
 function releaseDownloadDir() {
   return path.join(app.getPath("userData"), "updates");
 }
@@ -861,17 +862,19 @@ function registerIpc() {
   });
   ipcMain.handle("open-bug-report-issue", async (_, input) => {
     const copied = Boolean(input?.includeDiagnostics && preparedBugReport?.diagnostics);
-    if (copied) clipboard.writeText(preparedBugReport.diagnostics);
+    if (copied) await clipboard.writeText(preparedBugReport.diagnostics);
     await shell.openExternal(buildIssueUrl(input, { version: app.getVersion() }));
     return { opened: true, copied };
   });
-  ipcMain.handle("copy-diagnostics", (_, detail) => {
-    clipboard.writeText(diagnosticLog.report({ version: app.getVersion(), backend: getBackendStatePayload(), detail: typeof detail === "string" ? detail : "" }));
+  ipcMain.handle("copy-diagnostics", async (_, detail) => {
+    await clipboard.writeText(diagnosticLog.report({ version: app.getVersion(), backend: getBackendStatePayload(), detail: typeof detail === "string" ? detail : "" }));
     return true;
   });
 ipcMain.handle("select-video-file", async () => {
+    // Electron 43+ opens dialogs in Downloads unless told otherwise, so keep the last folder ourselves.
     const result = await dialog.showOpenDialog({
       title: "악보 영상 선택",
+      defaultPath: lastVideoDir,
       properties: ["openFile"],
       filters: [
         {
@@ -883,6 +886,7 @@ ipcMain.handle("select-video-file", async () => {
     if (result.canceled || result.filePaths.length === 0) {
       return "";
     }
+    lastVideoDir = path.dirname(result.filePaths[0]);
     return result.filePaths[0];
   });
 
@@ -904,7 +908,7 @@ ipcMain.handle("select-video-file", async () => {
     if (!value.trim()) {
       return false;
     }
-    clipboard.writeText(value);
+    await clipboard.writeText(value);
     return true;
   });
 

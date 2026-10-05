@@ -41,7 +41,7 @@
   },
   "devDependencies": {
     "@electron/asar": "^3.4.1",
-    "electron": "^39.8.10",
+    "electron": "^44.5.1",
     "electron-builder": "^26.15.3"
   }
 }
