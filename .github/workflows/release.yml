@@ -11,6 +11,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # The event is part of the group so a manual dispatch on a tag cannot displace a queued
+  # tag-push run, which is the only one that publishes.
+  group: release-${{ github.event_name }}-${{ github.ref }}
+  # Never cancel a tag build: publish must see both platforms. Preflight branches may be superseded.
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
   build:
     strategy:
@@ -33,11 +40,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Setup Python
         uses: actions/setup-python@v7
         with:
           python-version-file: ".python-version"
+          # No pip cache here: the lock has no hashes, so a restored cache could not be verified
+          # before it reaches the published installers. (npm ci checks every tarball's integrity.)
 
       - name: Setup Node
         uses: actions/setup-node@v7
@@ -49,11 +60,24 @@ jobs:
       - name: Check release versions
         run: node desktop/scripts/check-release-version.js
 
-      - name: Install backend build dependencies
+      # Runs before the test suite so a stale recipe or a missing bundle fails within seconds.
+      # media_bundle.py is part of the pinned recipe, so transient download retries live here.
+      - name: Restore and verify pinned media tools
         shell: bash
         run: |
-          python -m pip install --upgrade pip setuptools wheel
-          python -m pip install -r backend/requirements-build.lock
+          for attempt in 1 2 3; do
+            if python scripts/media_bundle.py restore; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::Media bundle restore failed (attempt $attempt of 3); retrying in $((attempt * 15))s"
+              sleep $((attempt * 15))
+            fi
+          done
+          exit 1
+
+      - name: Install backend build dependencies
+        run: python -m pip install -r backend/requirements-build.lock
 
       - name: Run backend test suite
         shell: bash
@@ -65,11 +89,6 @@ jobs:
         working-directory: desktop
         run: npm ci
 
-      - name: Smoke test desktop startup contract
-        working-directory: desktop
-        shell: bash
-        run: npm run test:desktop-smoke
-
       - name: Verify renderer-v2
         working-directory: desktop
         shell: bash
@@ -79,9 +98,6 @@ jobs:
         working-directory: desktop
         shell: bash
         run: npm run test:desktop-node
-
-      - name: Restore and verify pinned media tools
-        run: python scripts/media_bundle.py restore
 
       - name: Build release artifacts and verify macOS app and DMG signatures
         working-directory: desktop
@@ -141,11 +157,14 @@ jobs:
     needs: build
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Download both verified platform installers
         uses: actions/download-artifact@v8
@@ -168,7 +187,8 @@ jobs:
           test -s "docs/release/release-notes-${GITHUB_REF_NAME}.md"
 
       - name: Publish both installers together
-        uses: softprops/action-gh-release@v3
+        # Third-party action with contents: write, pinned to the v3.0.3 commit.
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           body_path: docs/release/release-notes-${{ github.ref_name }}.md
           fail_on_unmatched_files: true

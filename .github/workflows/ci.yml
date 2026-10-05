@@ -2,7 +2,19 @@ name: CI
 
 on:
   push:
+    # Branches only: a version tag points at a commit CI already tested on its
+    # branch, and the Release workflow runs the full suite again before packaging.
+    branches:
+      - "**"
   pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  # Keep every main run for history; superseded branch and PR runs are cancelled.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   validate:
@@ -14,15 +26,20 @@ jobs:
           - windows-latest
 
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Setup Python
         uses: actions/setup-python@v7
         with:
           python-version-file: ".python-version"
+          cache: "pip"
+          cache-dependency-path: backend/requirements-build.lock
 
       - name: Setup Node
         uses: actions/setup-node@v7
@@ -31,15 +48,36 @@ jobs:
           cache: "npm"
           cache-dependency-path: desktop/package-lock.json
 
+      - name: Check release versions
+        run: node desktop/scripts/check-release-version.js
+
+      - name: Check media recipe matches its lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          recipe="$(python scripts/media_bundle.py recipe)"
+          locked="$(python -c "import json; print(json.load(open('backend/media-tools.lock.json'))['recipe'])")"
+          if [ "$recipe" != "$locked" ]; then
+            echo "::error file=backend/media-tools.lock.json::Media recipe $recipe does not match the lock ($locked). Release restore would fail. Revert the recipe change (this includes any edit to .github/workflows/media-tools.yml), or rebuild with the Media tools workflow and commit its lock. See docs/release/media-toolchain.md."
+            exit 1
+          fi
+
+      - name: Verify release docs exist
+        shell: bash
+        run: |
+          test -f LICENSE
+          test -f README.md
+          test -f README.en.md
+          test -f README.ko.md
+          test -f docs/release/github-release-runbook.md
+          test -f docs/release/final-production-checklist.md
+
       - name: Install backend dependencies
         run: python -m pip install -r backend/requirements-build.lock
 
       - name: Install desktop dependencies
         working-directory: desktop
         run: npm ci
-
-      - name: Check release versions
-        run: node desktop/scripts/check-release-version.js
 
       - name: Run backend tests
         shell: bash
@@ -55,13 +93,3 @@ jobs:
 
       - name: Test media bundle validation
         run: python -m unittest discover -s scripts/tests -p 'test_*.py'
-
-      - name: Verify release docs exist
-        shell: bash
-        run: |
-          test -f LICENSE
-          test -f README.md
-          test -f README.en.md
-          test -f README.ko.md
-          test -f docs/release/github-release-runbook.md
-          test -f docs/release/final-production-checklist.md

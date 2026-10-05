@@ -83,14 +83,17 @@ git push origin v0.1.0
 
 The authoritative CI definition is `.github/workflows/ci.yml`. Do not keep a copied YAML block in this runbook; it drifts too easily. Before tagging a release, confirm the workflow still runs the backend suite, `verify:renderer-v2`, and desktop node tests on both `macos-15` and `windows-latest`.
 
+CI runs on branch pushes and pull requests, not on tag pushes: the tagged commit was already tested on its branch, and the Release workflow tests it again before packaging. Wait for CI on the release commit to pass before pushing the tag. CI also fails when the media recipe no longer matches `backend/media-tools.lock.json`, which would otherwise surface only as a failed release restore.
+
 ## Release Workflow
 
 The authoritative release workflow is `.github/workflows/release.yml`. Do not keep a copied YAML block in this runbook; it drifts too easily. Before tagging a release, confirm the workflow still:
 
 - runs on `windows-latest` and `macos-15`
+- restores the pinned media bundle before the test suite (retried for transient download failures)
 - installs backend build dependencies and runs the backend unittest suite
 - builds the frozen backend runtime
-- runs desktop smoke, renderer-v2, and desktop node checks
+- runs renderer-v2 and desktop node checks (the desktop node suite includes the startup smoke test)
 - runs `npm run dist:release`
 - runs packaged Electron and packaged runtime smoke tests
 - verifies non-empty, versioned installers and stores them as Actions artifacts
