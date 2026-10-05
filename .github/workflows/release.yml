@@ -32,15 +32,15 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version-file: ".python-version"
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: "npm"
@@ -96,7 +96,7 @@ jobs:
         run: npm run smoke:packaged-runtime
 
       - name: Save package size report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: package-size-${{ matrix.os }}
           path: dist/package-size-*.json
@@ -129,7 +129,7 @@ jobs:
           done
 
       - name: Save verified installers
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: installers-${{ matrix.os }}
           path: |
@@ -145,10 +145,10 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Download both verified platform installers
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: installers-*
           path: dist
@@ -168,7 +168,7 @@ jobs:
           test -s "docs/release/release-notes-${GITHUB_REF_NAME}.md"
 
       - name: Publish both installers together
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           body_path: docs/release/release-notes-${{ github.ref_name }}.md
           fail_on_unmatched_files: true

@@ -26,11 +26,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version-file: .python-version
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
       - name: Test bundle validation
@@ -63,7 +63,7 @@ jobs:
         run: bash scripts/build-media-tools.sh
       - name: Validate and package media tools with licenses and source
         run: python scripts/media_bundle.py pack
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: media-${{ matrix.os }}
           path: .tmp/media-bundle/*
@@ -75,11 +75,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version-file: .python-version
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: media-*
           path: .tmp/media-bundle
@@ -102,7 +102,7 @@ jobs:
             --target "$GITHUB_SHA" --prerelease --latest=false \
             --title "Media tools ${tag#media-tools-}" \
             --notes "Build dependency for Drum Sheet Capture, not an app installer. Bundles include native FFmpeg/FFprobe, licenses and corresponding source. Pin media-tools.lock.json in the app repository."
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: media-tools-lock
           path: .tmp/media-bundle/media-tools.lock.json
