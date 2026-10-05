@@ -540,6 +540,13 @@
 }
 .screen-source .source-ingest > :is(.ingest-icon, .source-ingest-heading) { display: none; }
 .screen-source .source-actions { padding: 16px 16px 6px; }
+/* Once a video is ready, the panel names it and offers the next step; opening another file steps back. */
+.screen-source .source-current { display: flex; flex-direction: column; gap: 3px; padding: 16px 16px 0; }
+.screen-source .source-current-kicker { font-size: 12px; color: var(--text-2); }
+.screen-source .source-current strong { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; font-size: 13px; font-weight: 600; line-height: 1.4; color: var(--text-1); overflow-wrap: anywhere; }
+.screen-source .source-current-detail { font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.screen-source .source-current .button { width: 100%; min-height: 38px; margin-top: 10px; }
+.screen-source .source-current + .source-actions { padding-top: 8px; }
 .screen-source .source-actions .button { width: 100%; min-height: 38px; }
 .screen-source .source-drop-hint { margin: 0; padding: 0 16px 16px; font-size: 12px; color: var(--text-2); text-align: center; }
 .screen-source .source-youtube {
@@ -567,10 +574,10 @@
 /* The drop target borrows the ROI handles' capture-frame corners instead of a dashed box. */
 .screen-source {
   --drop-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23737373' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><rect x='2.5' y='5' width='19' height='14' rx='2.5'/><path d='M10 9.3v5.4l4.6-2.7z'/></svg>");
-  --drop-tl: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238f8f8f' stroke-width='2' stroke-linecap='round'><path d='M1 23V5a4 4 0 0 1 4-4h18'/></svg>");
-  --drop-tr: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238f8f8f' stroke-width='2' stroke-linecap='round'><path d='M1 1h18a4 4 0 0 1 4 4v18'/></svg>");
-  --drop-br: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238f8f8f' stroke-width='2' stroke-linecap='round'><path d='M23 1v18a4 4 0 0 1-4 4H1'/></svg>");
-  --drop-bl: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238f8f8f' stroke-width='2' stroke-linecap='round'><path d='M23 23H5a4 4 0 0 1-4-4V1'/></svg>");
+  --drop-tl: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b3b3b3' stroke-width='1.5' stroke-linecap='round'><path d='M1 23V5a4 4 0 0 1 4-4h18'/></svg>");
+  --drop-tr: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b3b3b3' stroke-width='1.5' stroke-linecap='round'><path d='M1 1h18a4 4 0 0 1 4 4v18'/></svg>");
+  --drop-br: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b3b3b3' stroke-width='1.5' stroke-linecap='round'><path d='M23 1v18a4 4 0 0 1-4 4H1'/></svg>");
+  --drop-bl: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b3b3b3' stroke-width='1.5' stroke-linecap='round'><path d='M23 23H5a4 4 0 0 1-4-4V1'/></svg>");
 }
 .app-shell.is-source-drop-active .screen-source,
 .screen-source.is-drop-active {
@@ -593,7 +600,7 @@
   background-color: rgba(255, 255, 255, 0.6);
   background-image: var(--drop-icon), var(--drop-tl), var(--drop-tr), var(--drop-br), var(--drop-bl);
   background-position: center calc(50% - 14px), left top, right top, right bottom, left bottom;
-  background-size: 32px 32px, 28px 28px, 28px 28px, 28px 28px, 28px 28px;
+  background-size: 32px 32px, 24px 24px, 24px 24px, 24px 24px, 24px 24px;
   background-repeat: no-repeat;
   color: var(--text-2);
   font-size: 14px;
@@ -714,6 +721,12 @@
 .screen-roi .roi-stage-helper-loading::before { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-3); }
 .screen-roi .roi-stage-actions { position: absolute; z-index: 4; top: calc(var(--gap) * 2); right: calc(var(--gap) * 2); padding: 6px; border: 1px solid var(--line-soft); border-radius: var(--radius-lg); background: var(--bg-panel); box-shadow: var(--float-shadow); }
 .screen-roi .roi-stage-actions:empty { display: none; }
+.screen-roi .roi-stage-actions { display: flex; align-items: center; gap: 6px; }
+/* Applied state sits beside the action it depends on; text plus dot, never colour alone. */
+.screen-roi .roi-apply-state { display: inline-flex; align-items: center; gap: 6px; padding: 0 8px 0 6px; font-size: 12px; font-weight: 500; color: var(--text-1); white-space: nowrap; }
+.screen-roi .roi-apply-state::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-bright); }
+.screen-roi .roi-apply-state.is-ready { color: var(--success); }
+.screen-roi .roi-apply-state.is-ready::before { background: var(--success); }
 .screen-roi .roi-stage-actions .button { width: auto; }
 .screen-roi .roi-stage-frame {
   display: flex;
@@ -849,6 +862,16 @@
 .screen-export .panel-heading h2 { margin: 0; }
 .screen-export .panel-heading p { margin: 2px 0 0; font-size: 13px; font-weight: 400; color: var(--text-1); }
 .screen-export .export-profile-list { margin: 0; }
+/* Settings the user changes come first at full weight; automatic values and the output path read as a quiet summary. */
+.screen-export .panel-heading-inline { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 12px; }
+.screen-export .panel-heading-inline p { margin: 0; font-size: 12px; color: var(--text-2); white-space: nowrap; }
+.screen-export .export-module-quiet .export-profile-list { margin-top: 6px; }
+.screen-export .export-module-quiet .export-profile-row { padding: 2px 0; font-size: 12px; }
+.screen-export .export-module-quiet .export-profile-row + .export-profile-row { border-top: 0; }
+.screen-export .export-module-quiet .path-row { margin-top: 6px; }
+.screen-export .segment:has(.export-format-hint) { align-items: flex-start; }
+.screen-export .segment:has(.export-format-hint) input { margin-top: 1px; }
+.screen-export .export-format-hint { display: block; margin-top: 2px; font-size: 12px; font-weight: 400; line-height: 1.45; color: var(--text-2); }
 .screen-export .panel-note { margin: 8px 0 0; font-size: 12px; color: var(--text-2); }
 .screen-roi .roi-capture-options { width: 100%; }
 .screen-roi .roi-auto-fit-option { justify-content: flex-start; }

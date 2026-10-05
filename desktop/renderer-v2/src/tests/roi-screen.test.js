@@ -188,3 +188,14 @@ test("white-panel auto fit is opt-in and requires applying changed capture setti
   state.roi.appliedAutoFit = true;
   assert.equal(buildRoiScreenModel(state).applyDisabled, true);
 });
+
+test("roi apply action names whether the region is applied beside the button", () => {
+  const state = createInitialSessionState();
+  state.ui.locale = "en";
+  state.source.filePath = "/tmp/video.mp4";
+  state.roi.previewImage = "/tmp/frame.png";
+  state.roi.draftRect = [[10, 10], [110, 10], [110, 90], [10, 90]];
+  assert.match(renderRoiScreen(state), /<span class="roi-apply-state is-draft">Not applied<\/span>\s*<button class="button button-primary" data-action="apply-roi"/);
+  state.roi.appliedRect = state.roi.draftRect;
+  assert.match(renderRoiScreen(state), /<span class="roi-apply-state is-ready">Applied<\/span>/);
+});

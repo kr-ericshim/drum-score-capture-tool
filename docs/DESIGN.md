@@ -138,3 +138,12 @@ Same Floating Dock Canvas system. The review screen looked unfinished because se
 - Capture list: the row background and left bar mean "currently viewed"; the checkbox alone means "included". The thumbnail has no accent frame, the capture is named once (beside its checkbox), and excluded thumbnails stay at 50% opacity so they can be re-checked.
 - One thumbnail layout per list, chosen from the median measured aspect ratio of loaded thumbnails: wide strips span the row with name and flags on one line below; portrait pages (aspect < 1.15) show as a 76px page beside name and flags. Thumbnails are never cropped. Timecodes appear only when capture times exist (not yet provided by the job result).
 
+
+## Shared and per-step refinement (2026-10-05)
+
+Same system, applied to the other three steps after the review pass.
+
+- Canvas dots drop from `#d2d2d2` to `#dcdcdc` so empty canvas recedes behind paper and panels.
+- Source: the drop target's capture-frame corners are thinner and lighter at rest (drag-over keeps the accent). Once a video is ready, the panel names it with resolution and length, makes "Next: Score region" the primary action, and demotes opening a file to "Open another video". Empty and loading states keep "Open video" primary.
+- Score region: the editor shades everything outside the region instead of tinting the score inside it, so notation keeps its real colour. A short "Not applied" / "Applied" label (dot plus text) sits beside Apply region; the full explanation stays in the panel.
+- Create files: one heading per module ("Output format", no "File settings" above it). The PDF option carries its own note that title and performer come next, shown only while PDF is selected. Automatic profile values and the output path read as a quiet summary with the qualifier beside the heading. The preview drops a caption that only repeated its title.

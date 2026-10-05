@@ -140,6 +140,12 @@ export function buildSourceScreenModel(state) {
     },
     secondaryAction: null,
     fileMeta,
+    currentSource: state.source.filePath && !["loading", "error", "failed"].includes(state.source.prepareStatus)
+      ? {
+        name: state.source.displayName || fileName(state.source.filePath),
+        detail: [metadata.resolutionLabel, metadata.durationLabel].filter(Boolean).join(" · "),
+      }
+      : null,
     fileDirectory: fileDirectory(state.source.filePath),
     currentFilePath: String(state.source.filePath || ""),
     registryItems: buildRegistryItems(state),
@@ -242,8 +248,15 @@ export function renderSourceScreen(state) {
             <h2>${escapeHtml(t("source.ingestTitle", { locale: model.locale }))}</h2>
             <p>${escapeHtml(t("source.ingestBody", { locale: model.locale }))}</p>
           </div>
+          ${model.currentSource ? `
+            <div class="source-current" aria-labelledby="sourceCurrentTitle">
+              <span id="sourceCurrentTitle" class="source-current-kicker">${escapeHtml(t("source.currentTitle", { locale: model.locale }))}</span>
+              <strong title="${escapeHtml(model.currentSource.name)}">${escapeHtml(model.currentSource.name)}</strong>
+              ${model.currentSource.detail ? `<span class="source-current-detail">${escapeHtml(model.currentSource.detail)}</span>` : ""}
+              <button class="button button-primary" data-action="open-step" data-step="roi">${escapeHtml(t("source.nextRoi", { locale: model.locale }))}</button>
+            </div>` : ""}
           <div class="source-actions">
-            <button class="button button-primary" data-action="select-source-file">${escapeHtml(model.primaryAction.displayLabel)}</button>
+            <button class="button ${model.currentSource ? "button-secondary" : "button-primary"}" data-action="select-source-file">${escapeHtml(model.currentSource ? t("source.openAnother", { locale: model.locale }) : model.primaryAction.displayLabel)}</button>
           </div>
           <p class="source-drop-hint" aria-live="polite">
             <span class="source-drop-idle">${escapeHtml(t("source.dropHint", { locale: model.locale }))}</span>

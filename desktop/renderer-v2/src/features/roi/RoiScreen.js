@@ -139,6 +139,7 @@ export function renderRoiScreen(state) {
             <p class="roi-stage-helper roi-stage-helper-${escapeHtml(model.statusTone)}" aria-live="polite">${state.roi.autoFit ? escapeHtml(t("roi.autoFitHelp", { locale: model.locale })) : escapeHtml(model.statusText)}</p>
           </div>
           <div class="roi-stage-actions">
+            ${model.showApplyAction && ["draft", "ready"].includes(model.statusTone) ? `<span class="roi-apply-state is-${model.statusTone}">${escapeHtml(t(`roi.applyState.${model.statusTone}`, { locale: model.locale }))}</span>` : ""}
             ${model.showApplyAction ? `<button class="button button-primary" data-action="apply-roi" ${model.applyDisabled ? "disabled" : ""}>${escapeHtml(t("roi.apply", { locale: model.locale }))}</button>` : ""}
           </div>
         </div>

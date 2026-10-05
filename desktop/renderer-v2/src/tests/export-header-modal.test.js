@@ -34,7 +34,7 @@ function createRoot() {
   const stageNodes = {
     "#roiImage": { complete: true, naturalWidth: 1920, naturalHeight: 1080 },
     "#roiCanvas": {
-      getContext: () => ({ clearRect() {}, strokeRect() {}, fillRect() {} }),
+      getContext: () => ({ clearRect() {}, strokeRect() {}, fillRect() {}, beginPath() {}, rect() {}, fill() {} }),
       addEventListener() {},
       releasePointerCapture() {},
       setPointerCapture() {},

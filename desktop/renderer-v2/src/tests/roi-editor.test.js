@@ -40,6 +40,9 @@ function createCanvas({ width = 1000, height = 1000, displayWidth = width, displ
     clearRect() {},
     strokeRect() {},
     fillRect() {},
+    beginPath() {},
+    rect() {},
+    fill() {},
   });
   canvas.getBoundingClientRect = () => ({
     left: 0,

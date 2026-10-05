@@ -186,11 +186,19 @@ export function mountRoiEditor({ image, canvas, input, initialPoints = null, onD
     const normalized = normalize(rect, canvas.width, canvas.height);
     const handleSize = getHandleSize();
     rect = normalized;
+    const width = normalized.x2 - normalized.x1;
+    const height = normalized.y2 - normalized.y1;
+    // Dim what will be left out, so the score inside the region keeps its real colour.
+    ctx.fillStyle = readToken("--roi-shade", "transparent");
+    ctx.beginPath();
+    ctx.rect(0, 0, canvas.width, canvas.height);
+    ctx.rect(normalized.x1, normalized.y1, width, height);
+    ctx.fill("evenodd");
+    ctx.fillStyle = readToken("--roi-fill", "transparent");
+    ctx.fillRect(normalized.x1, normalized.y1, width, height);
     ctx.strokeStyle = readToken("--roi-stroke", "teal");
     ctx.lineWidth = 3;
-    ctx.fillStyle = readToken("--roi-fill", "transparent");
-    ctx.strokeRect(normalized.x1 + 0.5, normalized.y1 + 0.5, normalized.x2 - normalized.x1, normalized.y2 - normalized.y1);
-    ctx.fillRect(normalized.x1, normalized.y1, normalized.x2 - normalized.x1, normalized.y2 - normalized.y1);
+    ctx.strokeRect(normalized.x1 + 0.5, normalized.y1 + 0.5, width, height);
     ctx.fillStyle = readToken("--roi-handle", "teal");
     for (const [handle, point] of Object.entries(handlesFor(normalized))) {
       ctx.fillRect(point.x - handleSize / 2, point.y - handleSize / 2, handleSize, handleSize);
