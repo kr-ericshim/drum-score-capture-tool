@@ -20,11 +20,11 @@ certifi==2026.7.22
     #   yt-dlp
 cffi==2.1.1 ; implementation_name != 'cpython'
     # via brotlicffi
-charset-normalizer==3.5.1
+charset-normalizer==3.5.2
     # via requests
 click==8.5.0
     # via uvicorn
-fastapi==0.141.1
+fastapi==0.142.2
     # via -r backend/requirements.txt
 h11==0.16.0
     # via uvicorn
@@ -50,6 +50,8 @@ numpy==2.5.3 ; python_full_version >= '3.12'
     #   opencv-python-headless
 opencv-python-headless==4.13.0.92
     # via -r backend/requirements.txt
+opentelemetry-api==1.45.0
+    # via fastapi
 packaging==26.3
     # via
     #   pyinstaller
@@ -60,7 +62,7 @@ pillow==12.3.0
     # via -r backend/requirements.txt
 pycparser==3.0 ; implementation_name != 'PyPy' and implementation_name != 'cpython'
     # via cffi
-pycryptodomex==3.23.0
+pycryptodomex==3.24.0
     # via yt-dlp
 pydantic==2.13.5
     # via
@@ -70,7 +72,7 @@ pydantic-core==2.46.5
     # via pydantic
 pyinstaller==6.22.3
     # via -r backend/requirements-build.txt
-pyinstaller-hooks-contrib==2026.7
+pyinstaller-hooks-contrib==2026.8
     # via pyinstaller
 pywin32-ctypes==0.2.3 ; sys_platform == 'win32'
     # via pyinstaller
@@ -86,6 +88,7 @@ typing-extensions==4.16.0
     # via
     #   anyio
     #   fastapi
+    #   opentelemetry-api
     #   pydantic
     #   pydantic-core
     #   starlette
@@ -100,7 +103,7 @@ urllib3==2.8.0
     #   yt-dlp
 uvicorn==0.54.0
     # via -r backend/requirements.txt
-websockets==17.1
+websockets==17.2
     # via yt-dlp
 yt-dlp==2026.8.19
     # via -r backend/requirements.txt
