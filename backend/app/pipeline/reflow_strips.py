@@ -66,8 +66,12 @@ Coordinates: crop pixels of the observation manifest; boxes are half-open.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from pathlib import Path
 import inspect
+import os
+from threading import Lock
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import cv2
@@ -2114,7 +2118,8 @@ def build_strip(system: Dict[str, Any], manifest: Dict[str, Any], load_image: Im
                 next_systems: Sequence[Dict[str, Any]] = (),
                 chrome: Any = None, chrome_appearance: Optional[np.ndarray] = None,
                 evidence_dir: Optional[Path] = None, ledger: bool = False,
-                frame_foreground: Optional[Dict[str, np.ndarray]] = None) -> Tuple[np.ndarray, Dict[str, Any]]:
+                frame_foreground: Optional[Dict[str, np.ndarray]] = None,
+                evidence_lock: Any = None) -> Tuple[np.ndarray, Dict[str, Any]]:
     """Cleaned strip image (BGR, dark on light) and its provenance record.
 
     ``chrome``: the job's screen-fixed chrome mask in crop coordinates (``job_screen_chrome``);
@@ -2204,8 +2209,11 @@ def build_strip(system: Dict[str, Any], manifest: Dict[str, Any], load_image: Im
     chrome_box = display_chrome(crops, chrome[box[1]:box[3], box[0]:box[2]]) if chrome is not None else None
     comp, cinfo = compose_members(crops, g, keys=[k_ for k_, _c in pairs], memo=ov_memo, chrome=chrome_box, ledger_members=True)
     if ledger:
-        fragment = _strip_ledger(system, manifest, obs_by, load_image, box, crops, pairs, cinfo, g, chrome_box, ov_memo,
-            sampled_ids=[m["obs_id"] for m in picked], evidence_dir=evidence_dir)
+        # Content-addressed ledger files can have the same path for several systems.
+        # Serialize their check/write/hash sequence; all other cleaning stays parallel.
+        with evidence_lock if evidence_lock is not None else nullcontext():
+            fragment = _strip_ledger(system, manifest, obs_by, load_image, box, crops, pairs, cinfo, g, chrome_box, ov_memo,
+                sampled_ids=[m["obs_id"] for m in picked], evidence_dir=evidence_dir)
         ledger_shifts = cinfo.pop("_ledger_shifts")
     else:
         fragment = None
@@ -2536,6 +2544,51 @@ def persist_raw_evidence(record: Dict[str, Any], out_dir: Path, system_id: str) 
                 visit(child)
     visit(record)
 
+
+class _SystemWindowCache(dict):
+    """Publish complete arrays atomically and retain only the active system window."""
+
+    def __init__(self):
+        super().__init__()
+        self._lock = Lock()
+
+    def get(self, key, default=None):
+        with self._lock:
+            return super().get(key, default)
+
+    def __setitem__(self, key, value):
+        with self._lock:
+            super().__setitem__(key, value)
+
+    def retain(self, keys):
+        with self._lock:
+            for key in list(self):
+                if key not in keys:
+                    super().__delitem__(key)
+
+
+def _strip_threads() -> int:
+    value = os.environ.get("REFLOW_STRIP_THREADS")
+    if value is None:
+        # 01Mr strips: 1 thread 76 s / 2.1 GiB, 2: 41 s / 2.7, 4: 29 s / 3.8, 10: 22 s / 4.8.
+        # Four is the knee; each thread adds ~0.5 GiB, so small-memory machines get fewer.
+        count = min(4, max(1, (os.cpu_count() or 2) - 1))
+        try:
+            ram_gib = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 2 ** 30
+        except (AttributeError, ValueError, OSError):  # Windows has no sysconf
+            ram_gib = None
+        if ram_gib:
+            count = min(count, max(1, int(ram_gib // 4)))
+        return count
+    try:
+        count = int(value)
+    except ValueError:
+        raise ValueError("REFLOW_STRIP_THREADS must be an integer >= 1") from None
+    if count < 1:
+        raise ValueError("REFLOW_STRIP_THREADS must be an integer >= 1")
+    return count
+
+
 def build_strips(occurrences: Dict[str, Any], manifest: Dict[str, Any], load_image: ImageLoader, out_dir: Path, *,
                  logger: Callable[[str], None] = lambda _m: None, checkpoint: Callable[[], None] = lambda: None,
                  progress: Optional[Callable[[float], None]] = None, ledger: bool = False) -> List[Dict[str, Any]]:
@@ -2551,44 +2604,79 @@ def build_strips(occurrences: Dict[str, Any], manifest: Dict[str, Any], load_ima
     if chrome is not None:
         logger(f"strips: screen-fixed chrome {chrome_info.get('chrome_px')} px in {chrome_info.get('box')} "
                f"({chrome_info.get('displays')} distinct displays sampled)")
-    held: Dict[str, np.ndarray] = {}
-    foreground: Dict[str, np.ndarray] = {}  # full-frame foreground per observation (inventory_before_crop)
-    for i, s in enumerate(systems):
-        checkpoint()
-        # Each member frame is decoded once per system (strip cleaning walks the members several
-        # times) and frames shared with the previous system (several rows on one screen) are
-        # kept for it; frames this system does not use are let go. The same decoded pixels.
-        uses = {m["obs_id"] for key in ("observations", "ledger_observations") for m in (s.get(key) or [])}
-        held = {k: v for k, v in held.items() if k in uses}
-        foreground = {k: v for k, v in foreground.items() if k in uses}
+    workers = _strip_threads()
+    foreground = _SystemWindowCache()
+    # Keep members shared with adjacent systems even if the loader LRU evicts
+    # them. Both caches cover only the bounded active window, not the whole job.
+    held = _SystemWindowCache()
+    evidence_lock = Lock()
 
-        def load_held(obs: Dict[str, Any], uses=uses, held=held) -> np.ndarray:
+    def uses(system):
+        return {m["obs_id"] for key in ("observations", "ledger_observations") for m in (system.get(key) or [])}
+
+    def clean_system(i):
+        s = systems[i]
+        own_ids = uses(s)
+        def load_held(obs):
             img = held.get(obs["id"])
             if img is None:
                 img = load_image(obs)
-                if obs["id"] in uses:
+                if obs["id"] in own_ids:
                     held[obs["id"]] = img
             return img
-        strip, rec = build_strip(s, manifest, load_held, obs_by=obs_by, next_systems=systems[i + 1:], frame_foreground=foreground,
-                                 chrome=chrome if chrome is not None else False,
-                                 chrome_appearance=chrome_info.get("_appearance"), ledger=ledger, evidence_dir=out_dir.parent / "ledger_evidence" if ledger else None)
-        uncut = rec.pop("_uncut_image", None)
-        alt_images_of[s["id"]] = rec.pop("_alternate_images", [])
-        persist_raw_evidence(rec, out_dir, s["id"])
-        path = out_dir / f"strip_{s['id']}.png"
-        if not cv2.imwrite(str(path), strip):
-            raise RuntimeError(f"failed to write strip {path}")
-        rec["path"] = str(path)
-        if uncut is not None:
-            (out_dir / "uncut").mkdir(exist_ok=True)
-            upath = out_dir / "uncut" / f"strip_{s['id']}.png"
-            if not cv2.imwrite(str(upath), uncut):
-                raise RuntimeError(f"failed to write strip {upath}")
-            rec["uncut"]["path"] = str(upath)
-            images[s["id"]] = uncut
-        records.append(rec)
-        if progress is not None:
-            progress((i + 1) / float(max(1, len(systems))))
+
+        return build_strip(s, manifest, load_held, obs_by=obs_by, next_systems=systems[i + 1:], frame_foreground=foreground,
+                           chrome=chrome if chrome is not None else False,
+                           chrome_appearance=chrome_info.get("_appearance"), ledger=ledger,
+                           evidence_dir=out_dir.parent / "ledger_evidence" if ledger else None,
+                           evidence_lock=evidence_lock)
+
+    executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="strips") if workers > 1 and systems else None
+    pending = {}
+    try:
+        if executor is not None:
+            for i in range(min(workers, len(systems))):
+                checkpoint()
+                pending[i] = executor.submit(clean_system, i)
+        for i, s in enumerate(systems):
+            checkpoint()
+            if executor is None:
+                own_ids = uses(s)
+                held.retain(own_ids)
+                foreground.retain(own_ids)
+                strip, rec = clean_system(i)
+            else:
+                # Read futures strictly in display order, including failures.
+                strip, rec = pending.pop(i).result()
+            uncut = rec.pop("_uncut_image", None)
+            alt_images_of[s["id"]] = rec.pop("_alternate_images", [])
+            persist_raw_evidence(rec, out_dir, s["id"])
+            path = out_dir / f"strip_{s['id']}.png"
+            if not cv2.imwrite(str(path), strip):
+                raise RuntimeError(f"failed to write strip {path}")
+            rec["path"] = str(path)
+            if uncut is not None:
+                (out_dir / "uncut").mkdir(exist_ok=True)
+                upath = out_dir / "uncut" / f"strip_{s['id']}.png"
+                if not cv2.imwrite(str(upath), uncut):
+                    raise RuntimeError(f"failed to write strip {upath}")
+                rec["uncut"]["path"] = str(upath)
+                images[s["id"]] = uncut
+            records.append(rec)
+            if progress is not None:
+                progress((i + 1) / float(max(1, len(systems))))
+            if executor is not None and i + workers < len(systems):
+                checkpoint()
+                pending[i + workers] = executor.submit(clean_system, i + workers)
+            if executor is not None:
+                active_ids = set()
+                for j in pending:
+                    active_ids.update(uses(systems[j]))
+                held.retain(active_ids)
+                foreground.retain(active_ids)
+    finally:
+        if executor is not None:
+            executor.shutdown(wait=True, cancel_futures=True)
     for rec in check_destination_strips(records):
         cv2.imwrite(rec["path"], images[rec["system_id"]])
     by_id = {r["system_id"]: r for r in records}

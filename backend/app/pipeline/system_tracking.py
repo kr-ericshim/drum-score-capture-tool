@@ -942,26 +942,46 @@ def manifest_image_loader(manifest_dir: Path, manifest: Dict[str, Any],
 
     Strip cleaning walks all members of a system several times in order; a budget
     that holds a whole system decodes each stored frame once instead of every pass.
+    Callers must not mutate returned arrays, including their sliced views.
     """
     from collections import OrderedDict
+    from threading import Event, Lock
 
     from app.pipeline.observations import load_observation_image
 
     cache: "OrderedDict[str, np.ndarray]" = OrderedDict()
     held = [0]
+    lock = Lock()
+    decoding = {}
 
     def load(obs: Dict[str, Any]) -> np.ndarray:
         oid = obs["id"]
-        img = cache.get(oid)
-        if img is not None:
-            cache.move_to_end(oid)
+        while True:
+            with lock:
+                img = cache.get(oid)
+                if img is not None:
+                    cache.move_to_end(oid)
+                    return img
+                event = decoding.get(oid)
+                if event is None:
+                    event = decoding[oid] = Event()
+                    break
+            event.wait()
+        try:
+            # Independent observations decode concurrently; cache bookkeeping
+            # and publication are atomic. Callers treat returned frames as read-only.
+            img = load_observation_image(manifest_dir, obs, manifest)
+            with lock:
+                if img.nbytes <= max_bytes:
+                    cache[oid] = img
+                    held[0] += int(img.nbytes)
+                    while held[0] > max_bytes:
+                        _old, dropped = cache.popitem(last=False)
+                        held[0] -= int(dropped.nbytes)
             return img
-        img = load_observation_image(manifest_dir, obs, manifest)
-        cache[oid] = img
-        held[0] += int(img.nbytes)
-        while held[0] > max_bytes and len(cache) > 1:
-            _old, dropped = cache.popitem(last=False)
-            held[0] -= int(dropped.nbytes)
-        return img
+        finally:
+            with lock:
+                decoding.pop(oid)
+                event.set()
 
     return load
