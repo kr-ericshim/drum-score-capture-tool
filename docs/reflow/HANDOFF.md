@@ -2,6 +2,15 @@
 
 State of the clean-reflow work for a new session. Read this first, then [DECISIONS.md](DECISIONS.md).
 
+## Start here (2026-10-10: frozen as checkpoint5-rc1, holdouts next)
+
+- Read [FREEZE_RC1.md](FREEZE_RC1.md) (build, rules in force, rubric, holdout protocol, baseline grades) and STRATEGY.md "Step 2D checkpoint #5".
+- Pro #5 found three real defects; all fixed: Fzc 77–80 silently lost (late tracker boundary + boundary-only split join), bF69 bar 42 printed twice (1-px speck kept a preview tail), _7gP lines at 0.82/0.92 mm (forced breaks at stroke-only barlines).
+- Conservative defaults: replay = candidates only, dark-background cleanup off, frame-edge waiver needs verified geometry, threads by RAM.
+- Baseline (Pro rubric): clean 4, usable with flaws 7, unsupported 1 (usable 11/12).
+- Next: packaged macOS build check (export, replay untick, cancel, memory), then the one holdout run per FREEZE_RC1.md.
+- Disk: the Mac filled up once during this round (ENOSPC); keep ≥ 20 GB free before dashboards (each job workspace is 1–3 GB).
+
 ## Start here (2026-10-09 night: speed done, replay collapse in)
 
 **Done this session (uncommitted until the user says so):**

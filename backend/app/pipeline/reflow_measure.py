@@ -57,7 +57,7 @@ from app.pipeline import reflow_units as ru
 from app.pipeline import system_detect as sd
 from app.pipeline.process_control import report_progress
 
-MEASURE_VERSION = "reflow_measure-1"
+MEASURE_VERSION = "reflow_measure-2"  # 2: staff-size floor, forced breaks at stroke-only barlines
 LABEL_PAD_GAPS = 0.3  # padding inside a drawn outline box
 LABEL_SEP_GAPS = 0.4  # space between the label box and the line content below it
 OUTLINE_PX = 3  # ~0.25 mm at 300 dpi

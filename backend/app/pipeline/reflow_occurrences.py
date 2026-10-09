@@ -65,7 +65,7 @@ from app.pipeline import page_diff, system_detect, reflow_ledger as rl
 from app.pipeline.system_tracking import (WINDOW_ABOVE_GAPS, clean_content, compare_content, comparable_windows, region_window,
                                           window_extent)
 
-OCCURRENCES_VERSION = "reflow_occurrences-1"
+OCCURRENCES_VERSION = "reflow_occurrences-2"  # 2: whole-span identity for split joins
 MIN_OCCURRENCE_SEC = 1.5
 VIEW_CLUSTER_SEC = 1.5
 RESET_JOIN_SEC = 1.0

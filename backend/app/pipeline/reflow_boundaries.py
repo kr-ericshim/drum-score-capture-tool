@@ -36,7 +36,7 @@ import numpy as np
 
 from app.pipeline import system_detect as sd
 
-BOUNDARIES_VERSION = "reflow_boundaries-4"
+BOUNDARIES_VERSION = "reflow_boundaries-5"  # 5: frame-edge exemption needs verified geometry
 MASKS_VERSION = "reflow_masks-1"
 
 SAFE = "SAFE"
