@@ -6,11 +6,22 @@ holdout run tests, how it is graded, and what may change afterwards. Fill the op
 ## Build
 
 - Git commit: the commit that adds this file (branch `feature/clean-reflow`); working tree clean.
-- Packaged build: macOS arm64 `dist` — artifact SHA-256: _to fill_; RAM of the test machine: 18 GiB, M-series, AC power.
+- Packaged build: macOS arm64, `npm --prefix desktop run pack` (unpacked app, signature verified, 457.7 MiB) from commit 8a1125f.
+  Backend executable `drumsheet-backend` SHA-256 38fa792c66ff1e9eaf718a530be0b233be6404685161fbafd4eb2b343c6a2457;
+  bundled ffmpeg 8.1.2. Test machine: 18 GiB, M-series, AC power (4 strip threads).
 - Windows and 8 GB machines: not qualified for this pilot.
 - Runtime (source backend): Python 3.13.4, numpy 2.5.3, OpenCV 4.13.0, system ffmpeg 7.1.1 (the packaged app bundles its own
   ffmpeg; record its version from the build), Electron 44.5.1, app 0.2.1.
   `backend/requirements.txt` sha256 prefix 7c9a959d294fab31, `desktop/package-lock.json` 7f1dfc9e13a7f5b4.
+
+## Packaged checks (2026-10-10, packaged backend over HTTP, the app's own entry point)
+
+- 01Mr: done in 161 s (source backend 169 s), peak RSS 3.4 GB; music pixels identical to the source run (title
+  antialiasing differs). aOED: done in 88 s, 3 pages, 8 `REPLAY_CANDIDATE` systems, the candidate reason is the first
+  shown; recompose without them → 2 pages + PDF. Cancel during 01Mr: cancelled in 2.0 s, no PDF.
+- Not checked: the GUI itself on this build (the renderer suite is unchanged this round), Windows, 8 GB machines.
+  `smoke:packaged-runtime` fails on its 2-s synthetic clip (`NO_SCORE_SYSTEMS`: too short for the current
+  pipeline); the real-video runs above replace it for this freeze.
 
 ## Rules and defaults in force
 
