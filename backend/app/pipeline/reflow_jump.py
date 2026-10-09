@@ -2185,6 +2185,8 @@ def build_jump_systems(jump: Dict[str, Any], tracking: Dict[str, Any], manifest:
                                          "bbox": e["box_strip"], "disposition": "review_bundle"}
                                         for e in minority["events"] if "seen" in e],
                 })
+                from app.pipeline import reflow_boundaries as rb
+                rec["frame_edges"] = rb.strip_frame_edges(rec, manifest)
                 fragments, refs, chains = [], [], []
                 # Equal-view seams can leave a middle display owning no columns at all.
                 if ledger and first_k:

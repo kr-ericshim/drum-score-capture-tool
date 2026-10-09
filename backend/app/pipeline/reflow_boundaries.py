@@ -36,7 +36,7 @@ import numpy as np
 
 from app.pipeline import system_detect as sd
 
-BOUNDARIES_VERSION = "reflow_boundaries-3"
+BOUNDARIES_VERSION = "reflow_boundaries-4"
 MASKS_VERSION = "reflow_masks-1"
 
 SAFE = "SAFE"
@@ -121,6 +121,56 @@ class StripAnalysis:
     def mask_hashes(self) -> Dict[str, str]:
         return {"version": MASKS_VERSION, "protected": mask_sha256(self.protected), "scaffold": mask_sha256(self.scaffold),
                 "nonstaff": mask_sha256(self.nonstaff)}
+
+
+def source_frame_edges(box: Sequence[float], manifest: Dict[str, Any]) -> Dict[str, bool]:
+    """Map the strip's first/last pixel rows back to the source frame (0.5 px).
+
+    Boxes are half-open; the bottom pixel row is y1 - 1, not y1. Both endpoints
+    must coincide, so a rotated/skewed edge cannot exempt an entire strip row.
+    Missing or invalid geometry never grants an exemption.
+    """
+    edges = {"top": False, "bottom": False}
+    try:
+        _fw, fh = (manifest.get("source") or {})["frame_size"]
+        inverse = np.linalg.inv(np.asarray(manifest["source_to_crop"], np.float64).reshape(3, 3))
+        x0, y0, x1, y1 = map(float, box)
+        if fh <= 0 or x1 <= x0 or y1 <= y0:
+            return edges
+        for side, row, target in (("top", y0, 0.0), ("bottom", y1 - 1.0, fh - 1.0)):
+            points = inverse @ np.array([[x0, x1 - 1.0], [row, row], [1.0, 1.0]])
+            if np.any(points[2] == 0):
+                continue
+            ys = points[1] / points[2]
+            edges[side] = bool(np.isfinite(ys).all() and np.all(np.abs(ys - target) <= 0.5))
+    except (KeyError, TypeError, ValueError, np.linalg.LinAlgError):
+        pass
+    return edges
+
+
+def strip_frame_edges(record: Dict[str, Any], manifest: Dict[str, Any]) -> Dict[str, bool]:
+    """Frame coincidence for page boxes or every jump panorama owner.
+
+    Jump offsets map display ROI coordinates into the written strip. A global
+    exemption requires every owner to share that source edge; mixed-height
+    panoramas conservatively retain the veto.
+    """
+    jump = record.get("jump") or {}
+    if not jump:
+        return source_frame_edges(record.get("box_crop") or [], manifest)
+    owners = jump.get("owners") or []
+    size = record.get("size") or []
+    if not owners or len(size) != 2:
+        return {"top": False, "bottom": False}
+    mapped = []
+    for owner in owners:
+        try:
+            a, z = owner["strip_cols"]
+            ox, oy = owner["offset_x"], owner["offset_y"]
+            mapped.append(source_frame_edges([a - ox, -oy, z - ox, size[1] - oy], manifest))
+        except (KeyError, TypeError, ValueError):
+            return {"top": False, "bottom": False}
+    return {side: all(e[side] for e in mapped) for side in ("top", "bottom")}
 
 
 def protected_ink(gray: np.ndarray, config: Dict[str, Any] = CONFIG) -> np.ndarray:
@@ -684,7 +734,7 @@ def classify_seam(an: StripAnalysis, seam_x: int, *, boundary_id: Optional[str] 
     if corridor_hits:
         unknown.append("UNRESOLVED_MINORITY_CONTENT")
         ev["unresolved_foreground"] = corridor_hits
-    if _clipped_near(an, seam, config):
+    if _clipped_near(an, seam, config, evidence=ev):
         unknown.append("CONTENT_AT_STRIP_EDGE")
     return _result(locked, unknown, ev)
 
@@ -714,7 +764,8 @@ def _attached_ink(an: StripAnalysis, bar: Dict[str, Any], config: Dict[str, Any]
     return out
 
 
-def _clipped_near(an: StripAnalysis, seam: int, config: Dict[str, Any]) -> bool:
+def _clipped_near(an: StripAnalysis, seam: int, config: Dict[str, Any], *,
+                  evidence: Optional[Dict[str, Any]] = None) -> bool:
     """Ink cut off by the strip's top or bottom edge whose hidden part could reach the seam.
 
     A glyph-sized clipped component (at most ``edge_glyph_max_gaps`` wide: a lyric syllable or
@@ -726,20 +777,37 @@ def _clipped_near(an: StripAnalysis, seam: int, config: Dict[str, Any]) -> bool:
     h, w = an.protected.shape
     nb = config["neighbourhood_gaps"] * g
     a, z = max(0, int(seam - nb)), min(w, int(seam + nb))
-    for row in (0, h - 1):
+    edges = an.record.get("frame_edges")
+    if edges is None:
+        # Page producers already positively diagnose source clipping. Jump
+        # diagnostics aggregate owners and cannot prove the whole edge coincides.
+        sides = (an.record.get("source_clipped") or {}).get("sides") or []
+        edges = {side: side in sides and not an.record.get("jump") for side in ("top", "bottom")}
+    veto = False
+    skipped = []
+    for side, row in (("top", 0), ("bottom", h - 1)):
         cols = np.nonzero(an.protected[row, a:z])[0] + a
         if not len(cols):
             continue
+        row_veto = False
         for k in {int(v) for v in an.comps[row, cols]} if an.comps is not None else {0}:
             if k == 0:
-                return True
+                row_veto = True
+                break
             x, _y, ww, _hh, _area = (int(v) for v in an.comp_stats[k])
-            if ww > config["edge_glyph_max_gaps"] * g:
-                return True
             dist = max(x - seam, seam - (x + ww), 0)
-            if dist < config["edge_glyph_reach_gaps"] * g:
-                return True
-    return False
+            if ww > config["edge_glyph_max_gaps"] * g or dist < config["edge_glyph_reach_gaps"] * g:
+                row_veto = True
+                break
+        if row_veto:
+            if edges.get(side) is True:
+                skipped.append(side)
+            else:
+                veto = True
+    if skipped and evidence is not None:
+        evidence["edge_veto_skipped"] = "source_frame_edge"
+        evidence["edge_veto_skipped_sides"] = skipped
+    return veto
 
 
 def _result(locked: List[str], unknown: List[str], ev: Dict[str, Any]) -> Dict[str, Any]:

@@ -526,6 +526,9 @@ def build_atoms(decided: Sequence[Dict[str, Any]], *, target_gap_px: float, cont
         if img is None:
             raise MeasurePlanUnavailable("STRIP_UNREADABLE", {"system_id": s["id"], "path": str(d["strip_path"])})
         rec = _analysis_record(s, d["variant"])
+        manifest = (context or {}).get("manifest")
+        if manifest:
+            rec["frame_edges"] = rb.strip_frame_edges(rec, manifest)
         obs = rb.member_regions(rec, occ_by.get(s["id"]), obs_by) if context else None
         images[s["id"]] = img
         recs[s["id"]] = rec
