@@ -2,7 +2,18 @@
 
 State of the clean-reflow work for a new session. Read this first, then [DECISIONS.md](DECISIONS.md).
 
-## Start here (2026-10-09 evening, after Pro checkpoint #4)
+## Start here (2026-10-09 night: speed done, replay collapse in)
+
+**Done this session (uncommitted until the user says so):**
+- **Strip cleaning in threads.** `build_strips` runs `build_strip` for up to N systems at once and consumes results in system order (`reflow_strips._strip_threads`: min(4, cpu−1, RAM_GiB // 4); env `REFLOW_STRIP_THREADS`, 1 = old sequential path). Loader `manifest_image_loader` is thread-safe (lock + per-id decode event). Strips harness (01Mr): 1 thread 76 s / 2.1 GiB, 2: 41 s / 2.7, 4: 29 s / 3.8, 6: 25 s, 10: 22 s / 4.8 → 4 is the knee. Records and every strip PNG byte-identical (S1, 01Mr; 1 vs 4 vs 10 threads).
+- **Job times over HTTP (battery):** 01Mr 213 → 173 s (target ≤ 180 ✓), S1 95 → 76 s, w7mK 319 → 167 s, aOED 152 → 88 s, Q8 839 → 498 s (old Q8/aOED/w7mK numbers are from the morning dashboard, before the earlier strip fixes too). Peak RSS +~1–1.5 GB (01Mr 3.8 GB, Q8 4.5 GB). 01Mr/S1 pages pixel-identical to the pre-thread baseline.
+- **Replay collapse (Pro #4 option iii).** `reflow_occurrences.collapse_replay_blocks`, called in `reflow_pipeline` after the coverage gate and label acquisition: ≥3 consecutive systems whose whole cleaned strips match (strict: piece ≥ max(4 px, 0.04·gap²)) a unique earlier consecutive block, each line distinctive (matches exactly one earlier line), different page views, B starts after A ended, no acquired label on B. Collapsed systems: `included=False`, `REPLAY_COLLAPSED`, `replay_of`, `exclusions.replay_blocks`; alternates still listed; user can tick them back. aOED: sys-016..023 → 004..011 collapsed (3 → 2 pages). Q8: first version wrongly collapsed simile lines 069/073/077; with the distinctiveness rule nothing collapses (each matched 2–3 earlier lines). Others: no revisits. DECISIONS.md updated.
+- Codex adversarial review: threading clean; replay findings (simultaneous rows, labels, alternates, small dots, lazy loading) fixed in the second round; the 1,000-strip memory case judged moot (strips are decoded lazily now).
+- Merged tree: full suite 1287 OK (12 skipped). Final HTTP check after merge: aOED 2 pages (8 collapsed), Q8 4 pages (none collapsed), unchanged otherwise.
+
+**Next:** overlay remnants + packing (_7gP squeezed unit, Z4eb short lines, bF69 smudges), then re-run the 12-video dashboard on one manifest and recount (clean / usable).
+
+## Start here (2026-10-09 evening, after Pro checkpoint #4) — superseded
 
 **Plan in force:** STRATEGY.md "Step 2D checkpoint #4: Pro reply weighed". User principle (memory notes-over-cosmetics): keep notation near the staff (notes, accents, lyrics) at ~99.99%; tolerate leftover noise; cosmetic remnants never mark a chart incomplete. Noise that overlaps or imitates notation, and duplicated measures, still count as defects.
 

@@ -21,7 +21,7 @@ Measured from the PDF (A4 595x842 pt, 2 pages):
 
 ## Defaults in force (from the design; change only on user request)
 
-- Order = the order the video shows the systems (decided by Claude on 2026-10-06 after the user found the choice too complex; user may revisit). When the video goes back to an earlier system (repeat/D.S.), it is placed again; nothing is dropped. Likely repeats are offered as a one-click "remove duplicate" suggestion, never a blocking question. Export is not blocked by identity questions.
+- Order = the order the video shows the systems (decided by Claude on 2026-10-06 after the user found the choice too complex; user may revisit). When the video goes back to an earlier system (repeat/D.S.), it is placed again; nothing is dropped. **Exception (2026-10-09, Pro checkpoint #4 option iii):** an established replay block — at least 3 consecutive systems whose whole cleaned strips (notes, measure numbers, text) match one unique earlier consecutive block in the same order — is left unchecked by default (`REPLAY_COLLAPSED`, `exclusions.replay_blocks`; `reflow_occurrences.collapse_replay_blocks`). Its strips stay in review and can be ticked back in. Single, two-line, ambiguous or out-of-order matches stay placed. The D.S./coda signs themselves are not detected; they stay in the kept earlier systems. Other likely repeats are offered as a one-click "remove duplicate" suggestion, never a blocking question. Export is not blocked by identity questions.
 - Two pages is a soft target; never shrink below the chosen staff size or drop systems to reach it.
 - Lines justified only within safe slack; otherwise a recorded ragged line. No glyph stretching.
 - All score text is preserved (section labels, tempo, lyrics).
