@@ -2,7 +2,22 @@
 
 State of the clean-reflow work for a new session. Read this first, then [DECISIONS.md](DECISIONS.md).
 
-## Start here (2026-10-09, Step 2D-1 wrapped up; verification frozen)
+## Start here (2026-10-09 evening, after Pro checkpoint #4)
+
+**Plan in force:** STRATEGY.md "Step 2D checkpoint #4: Pro reply weighed". User principle (memory notes-over-cosmetics): keep notation near the staff (notes, accents, lyrics) at ~99.99%; tolerate leftover noise; cosmetic remnants never mark a chart incomplete. Noise that overlaps or imitates notation, and duplicated measures, still count as defects.
+
+**Done today (all committed on feature/clean-reflow, not pushed; last 0e48c67):**
+- Review panel shows only `APP_REVIEW_CODES` (empty) → no review flood; endpoint takes `codes=`.
+- Jump-view false incompleteness fixed: a faded panel label glyph (架子鼓) was flagged as lost notation. Pixel-level recurrence mask exemption `panel_label_recurring` (jump_preservation-6). SHvfn 18→0 and _7gP 68→0 unresolved; music was always delivered. SHvfn now 3 pages at 1.4 mm (was 1.2 mm). _7gP still has squeezed lines (p1 lines 1–2, p3 line 1): one 4,300 px layout unit forced into one line — layout/packing issue, not coverage.
+- Strip cleaning: 01Mr ~140 s → 73 s, job ~283 s → 222 s; S1 job 124 → 99 s. Pages, strips, records, review findings identical. Full suite 1245 OK.
+- Visual count now: clean 7/12 (+SHvfn), usable with flaws 4 (aOED, bF69, Z4eb, _7gP), unsupported 1 (GTOc). Not yet re-run as one dashboard.
+
+**Next:**
+1. Speed, last step: the speed worker measured 4 threads over strip registration, frame decoding and eligible overlay masks (scratch copy only) at 01Mr 52 s vs 74 s with identical records/PNGs; threading the per-member normalize/clean/inventory too should approach 40 s. Approved direction (lead): bounded threads (min(4, cpu−1)), deterministic order, same equivalence check. Then 01Mr total should be ≈ 180 s.
+2. Repeats (aOED D.S. replay), then overlay remnants + packing (_7gP squeezed unit, Z4eb short lines).
+3. Re-run the 12-video dashboard on one manifest and recount.
+
+## Start here (2026-10-09, Step 2D-1 wrapped up; verification frozen) — superseded
 
 **Read in this order:** DECISIONS.md "Staged delivered verification (2026-10-09)" incl. "Where verification runs"; LEDGER_2D_INTERFACE.md §10 and §12; this block.
 
