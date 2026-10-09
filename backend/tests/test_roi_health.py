@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 
 from app.pipeline.roi_health import (
+    add_envelope_clipping,
     analyze_roi_health_for_source,
     analyze_roi_health_frames,
     pad_roi_rect,
@@ -67,6 +68,52 @@ class TestRoiHealthAnalysis(unittest.TestCase):
         self.assertEqual(result["risk_level"], "critical")
         codes = {item["code"] for item in result["diagnostics"]}
         self.assertIn("top_edge_busy", codes)
+
+    def test_roi_on_frame_edge_with_paper_is_not_critical(self):
+        # envelope-style ROI reaching the frame bottom; the bottom rows are paper
+        roi = [[0, 450], [800, 450], [800, 800], [0, 800]]
+        frames = [_frame_with_score(top=520, bottom=700) for _ in range(3)]
+
+        result = analyze_roi_health_frames(frames, roi)
+
+        codes = {item["code"]: item["level"] for item in result["diagnostics"]}
+        self.assertNotEqual(result["risk_level"], "critical")
+        self.assertNotIn("roi_margin_tight", codes)
+        self.assertEqual(codes.get("roi_at_frame_edge"), "info")
+        self.assertNotIn("bottom_edge_busy", codes)
+        self.assertFalse(should_block_roi_capture(result))
+
+    def test_notation_cut_by_frame_edge_is_a_warning_not_critical(self):
+        roi = [[0, 450], [800, 450], [800, 800], [0, 800]]
+        frames = []
+        for _ in range(3):
+            frame = _frame_with_score(top=560, bottom=760)
+            for x in (200, 330, 460, 590):  # note heads cut by the bottom of the video frame
+                cv2.circle(frame, (x, 798), 8, (0, 0, 0), -1)
+            frames.append(frame)
+
+        result = analyze_roi_health_frames(frames, roi)
+
+        codes = {item["code"]: item["level"] for item in result["diagnostics"]}
+        self.assertEqual(codes.get("frame_edge_content"), "warning")
+        self.assertNotEqual(result["risk_level"], "critical")
+
+    def test_whole_video_check_without_clipping_downgrades_edge_density(self):
+        # video footage near the top edge of an envelope ROI raises the density heuristic
+        analysis = {"risk_level": "critical", "diagnostics": [
+            {"level": "critical", "code": "top_edge_busy", "title": "t", "detail": "d"},
+            {"level": "warning", "code": "roi_width_high", "title": "t", "detail": "d"}]}
+        envelope = {"status": "found", "_rows": [], "gap": 16.0, "size": [1920, 1080], "suggested_bbox": [0, 700, 1920, 1080]}
+        out = add_envelope_clipping(analysis, envelope, [[0, 700], [1920, 700], [1920, 1080], [0, 1080]])
+        levels = {item["code"]: item["level"] for item in out["diagnostics"]}
+        self.assertEqual(levels["top_edge_busy"], "info")
+        self.assertEqual(out["risk_level"], "warning")
+        self.assertFalse(should_block_roi_capture(out))
+
+    def test_failed_whole_video_check_keeps_edge_density_level(self):
+        analysis = {"risk_level": "critical", "diagnostics": [{"level": "critical", "code": "top_edge_busy", "title": "t", "detail": "d"}]}
+        out = add_envelope_clipping(analysis, {"status": "error"}, [[0, 700], [1920, 700], [1920, 1080], [0, 1080]])
+        self.assertEqual(out["risk_level"], "critical")
 
     def test_sparse_roi_reports_warning(self):
         frames = [_blank_frame(), _blank_frame(), _blank_frame()]

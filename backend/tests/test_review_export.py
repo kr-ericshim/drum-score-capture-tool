@@ -6,7 +6,8 @@ from unittest.mock import patch
 from fastapi import HTTPException
 
 from app.job_store import Job, JobStatus, JobStore
-from app.main import review_export
+# Pre-reflow review export: not reachable over HTTP; called directly for its regression tests.
+from app.main import legacy_review_export as review_export
 from app.schemas import JobReviewExportRequest
 
 

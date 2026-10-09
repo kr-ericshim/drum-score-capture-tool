@@ -47,7 +47,7 @@ class TestScoreScreeningPipeline(unittest.TestCase):
             patch.object(main, "select_review_candidates", return_value=paths),
             patch.object(main, "stitch_pages", wraps=main.stitch_pages) as stitch,
         ):
-            main._run_job("job", payload)
+            main._run_job("job", payload, legacy_pipeline=True)
         job = store.get("job")
         self.assertEqual(job.status, JobStatus.DONE, job.message)
         return job.result, paths, stitch.call_args.kwargs["prepared_frames"]

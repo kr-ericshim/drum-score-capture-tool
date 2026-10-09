@@ -10,7 +10,8 @@ from pydantic import ValidationError
 
 from app import main
 from app.job_store import Job, JobStatus, JobStore
-from app.main import _run_job, crop_capture, review_export
+# The raw-stitch path is not reachable over HTTP; its regression tests call it directly.
+from app.main import _run_job, crop_capture, legacy_review_export as review_export
 from app.pipeline.acceleration import RuntimeAcceleration
 from app.schemas import CaptureCropRequest, JobCreate, JobReviewExportRequest
 from drum_score_fixture import Overlay, groove_notes, render, strip_spec
@@ -68,7 +69,7 @@ class TestJobApiContract(unittest.TestCase):
                     patch.object(main, "export_frames", wraps=main.export_frames) as export,
                     patch.object(main, "export_selected_pages", wraps=main.export_selected_pages) as review_export_pages,
                 ):
-                    _run_job("job-1", payload)
+                    _run_job("job-1", payload, legacy_pipeline=True)
                     job = store.get("job-1")
                     self.assertEqual(job.status, JobStatus.DONE, job.message)
                     expected = [
@@ -223,7 +224,7 @@ class TestJobApiContract(unittest.TestCase):
             ):
                 response = main.create_job(payload)
                 self.assertEqual(len(executor.submitted), 1)
-                main._run_job(response.job_id, payload)
+                main._run_job(response.job_id, payload, legacy_pipeline=True)
 
                 job = store.get(response.job_id)
                 self.assertIsNotNone(job)
@@ -339,7 +340,7 @@ class TestJobApiContract(unittest.TestCase):
                     },
                 ) as export_frames,
             ):
-                _run_job("job-1", payload)
+                _run_job("job-1", payload, legacy_pipeline=True)
 
             export_options = export_frames.call_args.kwargs["options"]
             self.assertEqual(export_options.formats, ["pdf"])
@@ -426,7 +427,7 @@ class TestJobApiContract(unittest.TestCase):
                     },
                 ),
             ):
-                _run_job("job-1", payload)
+                _run_job("job-1", payload, legacy_pipeline=True)
 
             job = store.get("job-1")
             self.assertIsNotNone(job)

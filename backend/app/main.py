@@ -12,7 +12,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event, RLock
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 from urllib.parse import parse_qs, unquote, urlsplit
 
 import cv2
@@ -35,6 +35,7 @@ from app.schemas import (
     JobFileResponse,
     JobReviewExportRequest,
     JobReviewExportResponse,
+    JobReviewHypothesesResponse,
     JobStatusResponse,
     LocalMediaRegistryItem,
     LocalMediaRegistryResponse,
@@ -42,6 +43,8 @@ from app.schemas import (
     PreviewAutoRoiResponse,
     PreviewFrameRequest,
     PreviewFrameResponse,
+    PreviewLabelRegionRequest,
+    PreviewLabelRegionResponse,
     PreviewRoiHealthRequest,
     PreviewRoiHealthResponse,
     PreviewSourceRequest,
@@ -49,8 +52,10 @@ from app.schemas import (
     PreviewSourceJobCreateRequest,
     PreviewSourceJobCreateResponse,
     PreviewSourceJobStatusResponse,
+    ReviewExportTaskResponse,
     RuntimeStatusResponse,
 )
+from app import export_tasks as xt
 from app.pipeline.acceleration import get_runtime_acceleration, runtime_public_info
 from app.pipeline.ffmpeg_runtime import resolve_ffmpeg_bin, resolve_ffprobe_bin
 from app.pipeline.extract import (
@@ -74,10 +79,13 @@ from app.pipeline.paper_tone import flatten_capture_backgrounds
 from app.pipeline.stitch import select_review_candidates, stitch_pages
 from app.pipeline.upscale import upscale_frames
 from app.pipeline.export import export_frames, export_selected_pages
-from app.pipeline.process_control import OperationCancelled, checkpoint, operation_scope
+from app.pipeline.process_control import OperationCancelled, checkpoint, operation_scope, progress_scope, report_progress
 from yt_dlp.version import __version__ as YTDLP_VERSION
 
 
+# The app's only final output (docs/reflow/DECISIONS.md). Reflow modules are imported
+# lazily inside the functions that use them.
+REFLOW_OUTPUT_MODEL = "clean_reflow_v1"
 PREVIEW_SOURCE_CACHE_NAMESPACE = YOUTUBE_DOWNLOAD_STRATEGY_VERSION
 PREVIEW_FRAME_WORKSPACE_KEEP = 2
 PREVIEW_FRAME_WORKSPACE_TTL_SECONDS = 30 * 60
@@ -110,7 +118,10 @@ executor = ThreadPoolExecutor(max_workers=1)
 source_prepare_store = SourcePrepareStore(jobs_root / "_preview_source_jobs")
 source_prepare_executor = ThreadPoolExecutor(max_workers=1)
 maintenance_lock = RLock()
-# Synchronous work such as review rebuilds and page crops runs inside the request itself.
+# Review exports (PDF rebuilds) run as background tasks, one per job at a time (export_tasks.py).
+export_task_store = xt.ExportTaskStore()
+export_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="review-export")
+# Synchronous work such as page crops runs inside the request itself.
 inflight_lock = RLock()
 inflight_requests = 0
 update_install_locked = False
@@ -338,7 +349,7 @@ def clear_cache() -> CacheClearResponse:
     with maintenance_lock:
         active_jobs = job_store.active_job_ids()
         active_prepare_jobs = source_prepare_store.active_job_ids()
-        if active_jobs or active_prepare_jobs:
+        if active_jobs or active_prepare_jobs or export_task_store.active_count():
             raise HTTPException(status_code=409, detail="cache clear is blocked while jobs are running")
 
         reclaimed_bytes = 0
@@ -372,6 +383,7 @@ def app_activity() -> AppActivityResponse:
         active_jobs=len(job_store.active_job_ids()),
         active_source_jobs=len(source_prepare_store.active_job_ids()),
         inflight_requests=max(0, requests),
+        active_exports=export_task_store.active_count(),
     )
 
 
@@ -381,7 +393,8 @@ def acquire_update_lock() -> Dict[str, bool]:
     # Request admission and the idle check use the same lock. A POST either
     # counts as active work or sees this gate closed; it cannot slip between them.
     with inflight_lock:
-        if inflight_requests or job_store.active_job_ids() or source_prepare_store.active_job_ids():
+        if (inflight_requests or job_store.active_job_ids() or source_prepare_store.active_job_ids()
+                or export_task_store.active_count()):
             raise HTTPException(status_code=409, detail="work is still running")
         update_install_locked = True
     return {"locked": True}
@@ -746,6 +759,7 @@ def preview_roi_health(payload: PreviewRoiHealthRequest) -> PreviewRoiHealthResp
             sampled_frames=int(analysis.get("sampled_frames") or 0),
             checked_seconds=[float(value) for value in analysis.get("checked_seconds", [])],
             metrics=dict(analysis.get("metrics") or {}),
+            envelope=dict(analysis.get("envelope") or {}),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -756,6 +770,24 @@ def preview_roi_health(payload: PreviewRoiHealthRequest) -> PreviewRoiHealthResp
     finally:
         if preview_workspace is not None:
             shutil.rmtree(preview_workspace, ignore_errors=True)
+
+
+@app.post("/preview/label-region", response_model=PreviewLabelRegionResponse)
+def preview_label_region(payload: PreviewLabelRegionRequest) -> PreviewLabelRegionResponse:
+    """Section labels drawn outside the score region: an editable draft region, never applied."""
+    from app.pipeline import reflow_labels
+
+    try:
+        path = _normalize_existing_file_path(payload.file_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    try:
+        found = reflow_labels.suggest_for_video(Path(path), payload.roi, start_sec=payload.start_sec or 0.0, end_sec=payload.end_sec)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"label region check failed: {exc}")
+    return PreviewLabelRegionResponse(status="suggested" if found.get("status") == "suggested" else "not_found",
+                                      label_roi=found.get("label_roi"), evidence=dict(found.get("evidence") or {}),
+                                      reason=str(found.get("reason") or ""))
 
 
 @app.post("/preview/source", response_model=PreviewSourceResponse)
@@ -856,6 +888,7 @@ def create_job(payload: JobCreate) -> JobCreateResponse:
         )
         job_store.create(job)
         capture_controls[job_id] = Event()
+        cancel_pending_suggestions()
         executor.submit(_run_job, job_id, payload)
     return JobCreateResponse(job_id=job_id)
 
@@ -882,6 +915,40 @@ def get_job_files(job_id: str) -> JobFileResponse:
     )
 
 
+@app.get("/jobs/{job_id}/review-hypotheses", response_model=JobReviewHypothesesResponse)
+def get_review_hypotheses(job_id: str, offset: int = 0, limit: int = 100) -> JobReviewHypothesesResponse:
+    with maintenance_lock:
+        lock = review_locks.setdefault(job_id, RLock())
+    with lock:
+        job = job_store.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="job not found")
+        result = job.result if isinstance(job.result, dict) else {}
+        output = result.get("output_dir")
+        if not output and result.get("pdf"):
+            output = str(Path(result["pdf"]).parent)
+        export = Path(output or Path(job.artifact_dir)/"export").resolve()
+        path = export/"review_hypotheses.json"
+        limit = min(500, max(1, limit))
+        if not path.is_file() or not (export/"ledger_report.json").is_file():
+            return JobReviewHypothesesResponse(job_id=job_id, offset=0, limit=limit)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        hypotheses = payload.get("hypotheses", [])
+        offset = min(len(hypotheses), max(0, offset))
+        entries = []
+        for entry in hypotheses[offset:offset+limit]:
+            entry = dict(entry)
+            for key in ("raw_crop", "primary_crop"):
+                if entry.get(key):
+                    # Also accept earlier staged absolute paths: crop files always
+                    # belong to this promoted export's review_hypotheses directory.
+                    entry[key] = str(export/"review_hypotheses"/Path(entry[key]).name)
+            entries.append(entry)
+        return JobReviewHypothesesResponse(job_id=job_id, status=payload.get("status", "unassessed"),
+            export_revision=payload.get("export_revision"), counts=payload.get("counts", {}),
+            total=len(hypotheses), offset=offset, limit=limit, hypotheses=entries, truncated=bool(payload.get("truncated")))
+
+
 def _resolve_job_export_options(job: Job, fallback: Optional[ExportOptions] = None) -> ExportOptions:
     if isinstance(job.options, dict):
         export_opts = job.options.get("export")
@@ -906,8 +973,9 @@ def _normalize_requested_export_formats(formats: List[str]) -> List[str]:
     return normalized
 
 
-@app.post("/jobs/{job_id}/review-export", response_model=JobReviewExportResponse)
 def review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExportResponse:
+    """The review export run to completion in the caller's thread (tests and tools).
+    Over HTTP the same export runs as a background task: ``start_review_export``."""
     with maintenance_lock:
         lock = review_locks.setdefault(job_id, RLock())
     with lock:
@@ -915,14 +983,172 @@ def review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExpo
 
 
 def _review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExportResponse:
+    job = _require_reflow_export_job(job_id)
+    return _review_export_reflow(job, job_id, payload)
+
+
+def _require_reflow_export_job(job_id: str) -> Job:
     job = job_store.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="job not found")
-    if job.status != JobStatus.DONE:
+    if job.status != JobStatus.DONE and not (_layout_conflict_pending(job) or _ledger_failure_pending(job)):
         if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
             raise HTTPException(status_code=409, detail="job is still running")
         raise HTTPException(status_code=409, detail="job must be completed successfully before review export")
+    if (job.result or {}).get("output_model") != REFLOW_OUTPUT_MODEL:
+        # The clean reflow chart is the only final output (docs/reflow/DECISIONS.md). A job
+        # made before it keeps its saved files, but is never rebuilt with the raw-stitch path.
+        raise HTTPException(status_code=409, detail=LEGACY_JOB_DETAIL)
+    return job
 
+
+EXPORT_IN_PROGRESS_DETAIL = (
+    "EXPORT_IN_PROGRESS: 이 악보의 PDF를 이미 다시 만들고 있습니다. 끝나거나 취소한 뒤 다시 시도하세요. "
+    "/ This score's PDF is already being rebuilt. Try again after it finishes or is cancelled."
+)
+
+
+def _task_response(task: "xt.ExportTask") -> ReviewExportTaskResponse:
+    return ReviewExportTaskResponse(**task.public())
+
+
+@app.post("/jobs/{job_id}/review-export", response_model=ReviewExportTaskResponse, status_code=202)
+def start_review_export(job_id: str, payload: JobReviewExportRequest) -> ReviewExportTaskResponse:
+    """Start a background compose for the job's next revision and answer at once (202).
+
+    The request is checked first (unknown job, a job still running, LEGACY_JOB, the selection and
+    formats answer as before). Only one export per job runs at a time: another request meanwhile
+    is refused with 409 EXPORT_IN_PROGRESS (the running task is not superseded; poll it or cancel
+    it). Poll GET /jobs/{id}/review-export/{task_id}; cancel with POST .../{task_id}/cancel."""
+    job = _require_reflow_export_job(job_id)
+    _reflow_export_inputs(job, payload)  # selection and format errors answer now, not as a failed task
+    revision = int(((job.result or {}).get("reflow") or {}).get("revision", 1)) + 1
+    try:
+        task = export_task_store.begin(job_id, job.artifact_dir, revision)
+    except xt.ExportBusy as busy:
+        raise HTTPException(status_code=409, detail=f"{EXPORT_IN_PROGRESS_DETAIL} [task {busy.task.id}]")
+    try:
+        _append(job_id, f"review export queued (task {task.id}, revision {revision})")
+    except Exception:
+        pass
+    export_executor.submit(_run_review_export_task, job_id, task.id, payload)
+    return _task_response(task)
+
+
+@app.get("/jobs/{job_id}/review-export", response_model=ReviewExportTaskResponse)
+def get_latest_review_export(job_id: str) -> ReviewExportTaskResponse:
+    """The job's latest review export task (running or finished); 404 when it never had one."""
+    job = job_store.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    task = export_task_store.latest(job_id, job.artifact_dir)
+    if task is None:
+        raise HTTPException(status_code=404, detail="EXPORT_TASK_NOT_FOUND: no review export for this job")
+    return _task_response(task)
+
+
+@app.get("/jobs/{job_id}/review-export/{task_id}", response_model=ReviewExportTaskResponse)
+def get_review_export(job_id: str, task_id: str) -> ReviewExportTaskResponse:
+    job = job_store.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    task = export_task_store.latest(job_id, job.artifact_dir)
+    if task is None or task.id != task_id:
+        raise HTTPException(status_code=404, detail="EXPORT_TASK_NOT_FOUND: no such review export (only the latest is kept)")
+    return _task_response(task)
+
+
+@app.post("/jobs/{job_id}/review-export/{task_id}/cancel", response_model=ReviewExportTaskResponse)
+def cancel_review_export(job_id: str, task_id: str) -> ReviewExportTaskResponse:
+    """Stop a queued or running export. The previous export and result stay as they were. An export
+    already installing its files finishes (``cancel_requested`` stays true); a finished one is returned as it is."""
+    job = job_store.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    task = export_task_store.request_cancel(job_id, task_id)
+    if task is None:
+        task = export_task_store.latest(job_id, job.artifact_dir)
+        if task is None or task.id != task_id:
+            raise HTTPException(status_code=404, detail="EXPORT_TASK_NOT_FOUND: no such review export")
+    elif task.state == xt.CANCELLED:
+        try:
+            _append(job_id, f"review export cancelled before it started (task {task_id})")
+        except Exception:
+            pass
+    return _task_response(task)
+
+
+def _run_review_export_task(job_id: str, task_id: str, payload: JobReviewExportRequest) -> None:
+    """The background part of start_review_export: the same transactional export as the
+    synchronous path, under the job's review lock, with progress and cancellation."""
+    cancel = export_task_store.cancel_event(task_id)
+    if cancel.is_set():
+        export_task_store.update(job_id, task_id, state=xt.CANCELLED, stage="cancelled", message="cancelled",
+                                 error_code=xt.EXPORT_CANCELLED)
+        return
+    on_progress = lambda stage, fraction: export_task_store.progress(job_id, task_id, stage, fraction)  # noqa: E731
+    try:
+        with maintenance_lock:
+            lock = review_locks.setdefault(job_id, RLock())
+        with lock, operation_scope(cancel), progress_scope(on_progress):
+            export_task_store.update(job_id, task_id, state=xt.RUNNING, stage="planning", message="planning",
+                                     progress=xt.stage_progress("planning", 0.0))
+            job = _require_reflow_export_job(job_id)  # read again: suggestions or a crop may have changed it
+            response = _review_export_reflow(job, job_id, payload)
+    except OperationCancelled:
+        export_task_store.update(job_id, task_id, state=xt.CANCELLED, stage="cancelled", message="cancelled",
+                                 error_code=xt.EXPORT_CANCELLED)
+        try:
+            _append(job_id, f"review export cancelled (task {task_id}); the previous export is kept")
+        except Exception:
+            pass
+        return
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, str) else json.dumps(exc.detail, ensure_ascii=False)
+        export_task_store.update(job_id, task_id, state=xt.FAILED, message="failed", error=detail,
+                                 error_status=int(exc.status_code), error_code=xt.error_code_for(exc.status_code, detail))
+        return
+    except Exception as exc:  # pragma: no cover - _review_export_reflow turns failures into HTTPException
+        detail = f"review export failed: {exc}"
+        export_task_store.update(job_id, task_id, state=xt.FAILED, message="failed", error=detail, error_status=500,
+                                 error_code=xt.EXPORT_FAILED)
+        return
+    done = dict(state=xt.DONE, stage="done", progress=1.0, message="done", result=response.model_dump())
+    if response.revision:
+        done["revision"] = int(response.revision)
+    export_task_store.update(job_id, task_id, **done)
+
+
+UNCUT_STRIP_UNAVAILABLE_DETAIL = (
+    "UNCUT_STRIP_UNAVAILABLE: 다음 줄이 바로 뒤에 오지 않아 오른쪽 끝을 되살려야 하는데, 원본 줄 이미지를 찾거나 다시 만들 수 없습니다. "
+    "이전 내보내기는 그대로 둡니다. / The right end of a line has to be restored because the next line no longer follows it, "
+    "but its full image is missing and could not be rebuilt. The previous export is kept."
+)
+
+
+LEGACY_JOB_DETAIL = (
+    "LEGACY_JOB: this capture was made before clean charts. Its saved files are kept as they are; "
+    "capture the video again to make a clean chart."
+)
+
+
+def legacy_review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExportResponse:
+    """The pre-reflow capture/stitch review export. Not reachable over HTTP; kept
+    callable for its regression tests."""
+    with maintenance_lock:
+        lock = review_locks.setdefault(job_id, RLock())
+    with lock:
+        job = job_store.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="job not found")
+        if job.status != JobStatus.DONE:
+            if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
+                raise HTTPException(status_code=409, detail="job is still running")
+            raise HTTPException(status_code=409, detail="job must be completed successfully before review export")
+        return _review_export_legacy(job, job_id, payload)
+
+
+def _review_export_legacy(job: Job, job_id: str, payload: JobReviewExportRequest) -> JobReviewExportResponse:
     has_capture_selection = bool(payload.keep_captures)
     has_page_selection = bool(payload.keep_images)
     if has_capture_selection and has_page_selection:
@@ -1004,47 +1230,52 @@ def _review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExp
             workspace=staged_export_workspace,
             logger=lambda msg: _append(job_id, msg),
         )
-        _commit_staged_export_workspace(
-            staged_workspace=staged_export_workspace,
-            target_workspace=export_workspace,
-        )
-        export_result = _rewrite_export_result_paths(
-            export_result=export_result,
+        commit = _install_staged_export_workspace(
             staged_workspace=staged_export_workspace,
             target_workspace=export_workspace,
         )
     except Exception as exc:
         shutil.rmtree(staged_export_workspace, ignore_errors=True)
-        raise HTTPException(status_code=500, detail=f"review export failed: {exc}")
+        raise HTTPException(status_code=500, detail=_export_failure_detail(exc))
+    previous_result = dict(job.result or {})
+    try:
+        export_result = _rewrite_export_result_paths(
+            export_result=export_result,
+            staged_workspace=staged_export_workspace,
+            target_workspace=export_workspace,
+        )
 
-    result = dict(job.result or {})
-    result["images"] = export_result.get("images", [])
-    result["pdf"] = export_result.get("pdf")
-    result["raw_frames"] = export_result.get("raw_frames", [])
-    result["page_diagnostics"] = export_result.get("page_diagnostics", [])
-    result["dropped_pages"] = export_result.get("dropped_pages", [])
-    result["output_dir"] = str(export_workspace)
-    result["preview_images"] = [str(path) for path in export_result.get("preview_images", [])]
-    if selection_mode == "captures":
-        # Keep every candidate, including excluded ones, with canonical paths.
-        result["review_candidates"] = [str(path) for path in selectable_paths]
-    result["review_export"] = {
-        "revision": int(result.get("review_export", {}).get("revision", 0)) + 1,
-        "kept_count": len(resolved_paths),
-        "requested_count": len(keep_raw),
-        "selection_mode": selection_mode,
-        "selected_captures": [str(path) for path in resolved_paths] if selection_mode == "captures" else [],
-        "selected_pages": [str(path) for path in resolved_paths] if selection_mode == "pages" else [],
-    }
-    job_store.set_state(
-        job_id,
-        JobStatus.DONE,
-        1.0,
-        "done",
-        "review export finished",
-        result=result,
-        error_code=None,
-    )
+        result = dict(job.result or {})
+        result["images"] = export_result.get("images", [])
+        result["pdf"] = export_result.get("pdf")
+        result["raw_frames"] = export_result.get("raw_frames", [])
+        result["page_diagnostics"] = export_result.get("page_diagnostics", [])
+        result["dropped_pages"] = export_result.get("dropped_pages", [])
+        result["output_dir"] = str(export_workspace)
+        result["preview_images"] = [str(path) for path in export_result.get("preview_images", [])]
+        if selection_mode == "captures":
+            # Keep every candidate, including excluded ones, with canonical paths.
+            result["review_candidates"] = [str(path) for path in selectable_paths]
+        result["review_export"] = {
+            "revision": int(result.get("review_export", {}).get("revision", 0)) + 1,
+            "kept_count": len(resolved_paths),
+            "requested_count": len(keep_raw),
+            "selection_mode": selection_mode,
+            "selected_captures": [str(path) for path in resolved_paths] if selection_mode == "captures" else [],
+            "selected_pages": [str(path) for path in resolved_paths] if selection_mode == "pages" else [],
+        }
+        job_store.set_state(
+            job_id,
+            JobStatus.DONE,
+            1.0,
+            "done",
+            "review export finished",
+            result=result,
+            error_code=None,
+        )
+    except Exception as exc:
+        _revert_after_metadata_failure(job_id, commit, previous_result, exc)
+    commit.finalize()
 
     return JobReviewExportResponse(
         images=[str(path) for path in export_result.get("images", [])],
@@ -1056,6 +1287,9 @@ def _review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExp
 
 @app.post("/jobs/{job_id}/capture-crop", response_model=CaptureCropResponse)
 def crop_capture(job_id: str, payload: CaptureCropRequest) -> CaptureCropResponse:
+    if export_task_store.is_active(job_id):
+        # the export holds this job's review lock; answer now instead of waiting behind it
+        raise HTTPException(status_code=409, detail=EXPORT_IN_PROGRESS_DETAIL)
     with maintenance_lock:
         lock = review_locks.setdefault(job_id, RLock())
     with lock:
@@ -1184,23 +1418,125 @@ def cancel_job(job_id: str) -> JobStatusResponse:
                 raise HTTPException(status_code=409, detail="worker is no longer available; reload the job")
             control.set()
             job_store.set_state(job_id, job.status, current_step="cancelling", message="cancelling capture")
+        elif job.status == JobStatus.DONE or _layout_conflict_pending(job):
+            # the chart is done (or waits for review); this only stops pending similar-system suggestions
+            cancel_pending_suggestions(job_id)
         return JobStatusResponse(**job.to_public_dict())
 
 
-def _run_job(job_id: str, payload: JobCreate) -> None:
+def _run_job(job_id: str, payload: JobCreate, *, legacy_pipeline: bool = False) -> None:
+    """Run a capture job. ``legacy_pipeline`` (the pre-reflow raw-stitch path) is not
+    reachable over HTTP; it stays callable for its regression tests only."""
     with maintenance_lock:
         control = capture_controls.setdefault(job_id, Event())
     try:
         with operation_scope(control):
-            _execute_job(job_id, payload)
+            _execute_job(job_id, payload, legacy_pipeline=legacy_pipeline)
     except OperationCancelled:
         job_store.set_state(job_id, JobStatus.CANCELLED, current_step="cancelled", message="capture cancelled", error_code=None)
     finally:
         with maintenance_lock:
             capture_controls.pop(job_id, None)
+        try:
+            _cleanup_ended_job_workspace(job_id)
+        except Exception as exc:  # pragma: no cover - cleanup never changes the job's outcome
+            try:
+                _append(job_id, f"workspace cleanup skipped: {exc}")
+            except Exception:
+                pass
 
 
-def _execute_job(job_id: str, payload: JobCreate) -> None:
+# Heavy intermediates (decoded frames, image/array caches) that a failed, refused or cancelled job
+# no longer needs: they can be decoded again from the source. JSON records and logs stay.
+HEAVY_WORKSPACE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".npy", ".npz",
+                            ".mp4", ".mkv", ".webm", ".mov", ".avi", ".raw", ".bin", ".tmp"}
+# the strips and label patches the result lists (review of a pending layout conflict shows them;
+# a fail-closed job keeps them as they were). Small next to the decoded frames, kept in every case.
+REVIEW_WORKSPACE_DIRS = (("reflow", "strips"), ("reflow", "labels"))
+# small diagnostics shown with a failed job (ROI health samples), kept in every case
+KEPT_DIAGNOSTIC_DIRS = (("roi-health",),)
+
+
+def _dir_size(path: Path) -> int:
+    total = 0
+    for f in path.rglob("*"):
+        try:
+            if f.is_file() and not f.is_symlink():
+                total += f.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def prune_job_workspace(artifact_dir: Path, *, keep_review: bool, keep_ledger: bool = False) -> Dict[str, Any]:
+    """Delete heavy intermediates from an ended (error, refused or cancelled) job's folder.
+
+    Removed: staged export folders left by an interrupted export (``export_staged_*``) and every
+    file with a HEAVY_WORKSPACE_SUFFIXES suffix outside ``export/`` and the kept diagnostics, e.g.
+    ``reflow/manifest/frames``. The strips and label patches (REVIEW_WORKSPACE_DIRS) stay, so a
+    LAYOUT_CONFLICT job (``keep_review``, recorded) remains reviewable and a fail-closed job keeps its
+    strips unchanged. JSON, logs and the job record stay. Returns the sizes."""
+    artifact_dir = Path(artifact_dir).resolve()
+    before = _dir_size(artifact_dir) if artifact_dir.is_dir() else 0
+    removed = 0
+    if artifact_dir.is_dir():
+        for child in artifact_dir.iterdir():
+            if child.is_dir() and child.name.startswith("export_staged_"):
+                shutil.rmtree(child, ignore_errors=True)
+                removed += 1
+        keep_dirs = ([artifact_dir.joinpath(*parts) for parts in KEPT_DIAGNOSTIC_DIRS + REVIEW_WORKSPACE_DIRS]
+                     + [artifact_dir / "export"])
+        if keep_ledger:
+            keep_dirs.extend(artifact_dir.rglob("ledger_evidence"))
+            for ledger_path in artifact_dir.rglob("ledger_base.json"):
+                try:
+                    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+                    keep_dirs.extend(Path(o["frame_path"]).resolve() for o in ledger.get("observations",[]) if o.get("frame_path"))
+                except (OSError,ValueError,TypeError,KeyError):
+                    # An unreadable inventory cannot identify which frames are disposable.
+                    keep_dirs.append(ledger_path.parent/"manifest")
+
+        for f in sorted(artifact_dir.rglob("*")):
+            if not f.is_file() or f.is_symlink() or f.suffix.lower() not in HEAVY_WORKSPACE_SUFFIXES:
+                continue
+            if any(k == f or k in f.parents for k in keep_dirs):
+                continue
+            try:
+                f.unlink()
+                removed += 1
+            except OSError:
+                continue
+        # folders emptied above (e.g. reflow/manifest/frames)
+        for d in sorted((x for x in artifact_dir.rglob("*") if x.is_dir()), key=lambda x: len(x.parts), reverse=True):
+            if any(k == d or k in d.parents for k in keep_dirs):
+                continue
+            try:
+                d.rmdir()
+            except OSError:
+                pass
+    after = _dir_size(artifact_dir) if artifact_dir.is_dir() else 0
+    return {"bytes_before": before, "bytes_after": after, "removed": removed, "kept_for_review": bool(keep_review)}
+
+
+def _cleanup_ended_job_workspace(job_id: str) -> Optional[Dict[str, Any]]:
+    """After a job ends in error, refusal or cancel, drop its heavy intermediates (prune_job_workspace).
+    A done job is left alone (its frames are pruned after the suggestions step)."""
+    job = job_store.get(job_id)
+    if not job or job.status not in {JobStatus.ERROR, JobStatus.CANCELLED}:
+        return None
+    reflow = (job.result or {}).get("reflow") or {}
+    keep_ledger = job.error_code == "LEDGER_VERIFICATION_FAILED" or reflow.get("state") == "ledger_failed" or reflow.get("ledger_summary",{}).get("status") == "fail"
+    report = prune_job_workspace(Path(job.artifact_dir), keep_review=_layout_conflict_pending(job), keep_ledger=keep_ledger)
+    if report["removed"]:
+        _append(job_id, f"workspace pruned after {job.status.value}: {report['bytes_before'] / 1e6:.1f} MB -> "
+                        f"{report['bytes_after'] / 1e6:.1f} MB ({report['removed']} items)")
+    result = dict(job.result or {})
+    result["workspace_cleanup"] = report
+    job_store.set_state(job_id, job.status, result=result)
+    return report
+
+
+def _execute_job(job_id: str, payload: JobCreate, *, legacy_pipeline: bool = False) -> None:
     job = job_store.get(job_id)
     if not job:
         return
@@ -1264,6 +1600,17 @@ def _execute_job(job_id: str, payload: JobCreate) -> None:
                 _append(job_id, f"roi health [{level}] {title}: {detail}")
             else:
                 _append(job_id, f"roi health [{level}] {title}")
+
+        if not legacy_pipeline:
+            _execute_reflow_job(
+                job_id=job_id,
+                job=job,
+                payload=payload,
+                result=result,
+                video_path=resolved_file_path,
+                export_opts=export_opts,
+            )
+            return
 
         accel = get_runtime_acceleration(
             logger=lambda msg: _append(job_id, msg),
@@ -1468,6 +1815,786 @@ def _execute_job(job_id: str, payload: JobCreate) -> None:
             result=result,
             error_code="PIPELINE_ERROR",
         )
+
+
+REFLOW_PROGRESS = {
+    "sampling": (0.05, 0.45),
+    "tracking": (0.46, 0.55),
+    "assembling": (0.56, 0.6),
+    "cleaning": (0.6, 0.85),
+}
+
+
+def _printable_title(text: str) -> str:
+    """Drop emoji and pictographs (no glyph in the score fonts) from a video title."""
+    import unicodedata
+
+    kept = []
+    for ch in str(text or ""):
+        cp = ord(ch)
+        if unicodedata.category(ch) in ("So", "Cs", "Co", "Cn") or 0xFE00 <= cp <= 0xFE0F or cp == 0x200D or cp >= 0x1F000:
+            continue
+        kept.append(ch)
+    return " ".join("".join(kept).split())
+
+
+def _default_reflow_header(job: Job, payload: JobCreate, export_opts: ExportOptions) -> Dict[str, Any]:
+    """Editable header: the user's document header, else the video title as the title."""
+    if export_opts.document_header is not None:
+        return export_opts.document_header.model_dump()
+    identity = job.source_identity if isinstance(job.source_identity, dict) else {}
+    title = _printable_title(identity.get("display_name") or "")
+    if not title and payload.file_path:
+        title = _printable_title(Path(str(payload.file_path)).stem)
+    return {"title": title} if title else {}
+
+
+REFLOW_ISSUE_REASONS = (
+    ("LEDGER_UNASSESSED", "원본 표시와 PDF의 보존 검증 자료가 없어 확인이 필요해요 / Source-to-PDF evidence is missing. Please review"),
+    ("LEDGER_REVIEW_REQUIRED", "원본 표시가 PDF에 보존되었는지 확인이 필요해요 / Source-to-PDF preservation needs review"),
+    ("LEDGER_VERIFICATION_FAILED", "PDF 보존 검증에 실패했어요. 선택을 확인하고 다시 만들어 주세요 / PDF preservation verification failed. Check the selection and rebuild"),
+    ("DELIVERED_PDF_UNASSESSED", "PDF가 없어 최종 PDF 보존 검증을 하지 못했어요 / No PDF was produced; delivered PDF preservation is unassessed"),
+    ("SOURCE_CLIPPED", "원본 영상에서 가장자리가 잘려, 보이는 부분만 담았어요 / Cut off at the edge of the source video; only the visible part is kept"),
+    ("UNCERTAIN_MARK_KEPT", "잠깐만 보인 흐린 표시를 지우지 않고 남겼어요. 확인이 필요해요 / A faint mark seen only briefly was kept. Please check"),
+    ("TRANSLUCENT_PLATE_GRAY", "반투명 배경 위 회색 표시는 배경과 구분이 어려워요. 확인이 필요해요 / Gray marks on a see-through background are hard to tell from it. Please check"),
+    ("LAYOUT_CONFLICT", "페이지보다 커서 지금 크기로는 배치할 수 없습니다 / Does not fit the page at this staff size"),
+    ("PREVIEW_TAIL_UNVERIFIED", "오른쪽 끝에 다음 줄의 시작이 함께 보일 수 있습니다 / The right end may also show the start of the next line"),
+    ("SHORT_DISPLAY", "짧게 스친 화면입니다 / Shown only briefly"),
+    ("LABELS_OUTSIDE_ROI", "악보 영역 밖의 구간 표시가 빠졌을 수 있습니다 / A section label outside the score region may be missing"),
+    ("OVERLAY_UNRECOVERED", "화면 표시에 가려진 악보를 복구하지 못했어요. 원본을 확인해 주세요 / Notation obscured by a screen overlay could not be recovered. Please review the source"),
+    ("OVERLAY_COVERS_NOTATION", "화면 표시가 음표에 닿아 그대로 두었어요. 확인이 필요해요 / Screen overlay touches notation; kept as is. Please check"),
+    ("LOW_CONTRAST_CONTENT_KEPT", "흐린 표시를 배경과 구분하지 못해 그대로 두었어요. 확인이 필요해요 / Faint marks could not be told apart from the background; kept as is. Please check"),
+    ("CONTENT_LOST_IN_FINISHING", "정리 과정에서 표시 일부가 사라졌어요. 확인이 필요해요 / Some marks were lost during cleanup. Please check"),
+    ("JUMP_OVERLAP_CONTENT_CONFLICT", "겹치는 화면끼리 내용이 달라 다른 버전을 함께 보관했어요 / Overlapping views disagree; the other version is kept as an alternate"),
+    ("SECTION_LABEL_NOT_PLACED", "이 구간 표시가 실린 줄이 모두 빠져 표시가 출력되지 않았습니다 / Every line of this section is excluded, so its label is not printed"),
+    ("PREVIEW_TAIL_RESTORED", "다음 줄이 바로 뒤에 오지 않아 오른쪽 끝의 미리보기를 남겼습니다 / The next line no longer follows, so the preview at the right end is kept"),
+    ("MINORITY_CONTENT_DROPPED", "잠깐만 보인 표시가 이 줄에서 빠졌습니다. 바로 뒤 '다른 순간'에 있습니다 / Marks shown only for a moment are left out here; see the other moment that follows"),
+    ("MINORITY_ALTERNATE", "같은 줄의 다른 순간입니다. 앞 줄에서 빠진 표시가 보입니다 / Another moment of the line above, with the marks it leaves out"),
+    ("CONTENT_STEP_STATE", "같은 줄의 다른 상태입니다. 표시가 조금 다릅니다 / Another state of the line above; a few marks differ"),
+    ("JUMP_SEAM_UNVERIFIED", "화면이 넘어간 지점을 확인하지 못해 양쪽을 모두 남겼습니다. 마디가 겹치거나 이어지지 않을 수 있습니다 / The view jump here could not be verified, so both sides are kept; a measure may repeat or a join may be missing"),
+)
+
+
+def _reflow_capture_fields(reflow: Dict[str, Any]) -> Dict[str, Any]:
+    """Result fields the review screen reads (strip paths stand in for captures)."""
+    systems = reflow.get("systems", [])
+    path_of = {s["id"]: s["strip_path"] for s in systems}
+    conflict_ids = {c.get("system_id") for c in (reflow.get("layout_conflict") or {}).get("conflicts", [])}
+    deps = reflow.get("dependencies") or {}
+    unplaced_label_ids = {sid for u in deps.get("labels_unplaced", []) for sid in u.get("systems", [])}
+    restored_ids = {r.get("system_id") for r in deps.get("preview_tails_restored", []) if not r.get("error")}
+    diagnostics: Dict[str, Dict[str, Any]] = {}
+    for s in systems:
+        codes = list(s.get("issues", []))
+        if s["id"] in conflict_ids and "LAYOUT_CONFLICT" not in codes:
+            codes.insert(0, "LAYOUT_CONFLICT")
+        if s["id"] in unplaced_label_ids:
+            codes.append("SECTION_LABEL_NOT_PLACED")
+        if s["id"] in restored_ids:
+            codes.append("PREVIEW_TAIL_RESTORED")
+        reasons = [text for code, text in REFLOW_ISSUE_REASONS if code in codes
+                   # a content-step state is listed like an "other moment" but is described as another state
+                   and not (code == "MINORITY_ALTERNATE" and "CONTENT_STEP_STATE" in codes)]
+        minority = (s.get("strip") or {}).get("minority_content") or {}
+        extra: Dict[str, Any] = {}
+        if s.get("alternate_of"):
+            extra["alternate_of"] = s["alternate_of"]
+            extra["alternate_of_path"] = path_of.get(s["alternate_of"])
+        if minority.get("events"):
+            # what the main strip leaves out: boxes (strip pixels), times and the alternate that shows it
+            # alternates are numbered per placed system (an alternate's own alternates included)
+            parent = s.get("alternate_of") or s["id"]
+            extra["minority_content"] = [{"box_strip": e.get("box_strip"), "times": e.get("times"),
+                                          "alternate": f"{parent}-{e['alternate']}" if e.get("alternate") else None}
+                                         for e in minority["events"]]
+            extra["alternate_paths"] = [path_of[f"{a.get('parent_id', parent)}-{a['suffix']}"] for a in minority.get("alternates", [])
+                                        if f"{a.get('parent_id', parent)}-{a['suffix']}" in path_of]
+        diagnostics[s["strip_path"]] = {
+            **extra,
+            **({"source_clipped": s["source_clipped"]} if s.get("source_clipped") else {}),
+            "suspicious": bool(codes),
+            "diagnostic_codes": codes,
+            "warning_reasons": reasons,
+            "recommended_action": "exclude" if not s.get("included", True) else "keep",
+            "score_classification": "score",
+            "system_id": s["id"],
+            "t_start": s.get("t_start"),
+            "t_end": s.get("t_end"),
+        }
+    pairs = []
+    for d in reflow.get("duplicate_suggestions", []):
+        if d.get("system_id") in path_of and d.get("of_system_id") in path_of:
+            # Appearance only: "looks similar", never an established duplicate.
+            pairs.append({"kept": path_of[d["of_system_id"]], "candidate": path_of[d["system_id"]], "reason": "looks_similar",
+                          "metrics": {"reason": "looks_similar", "basis": d.get("basis")}})
+    return {
+        "review_candidates": [s["strip_path"] for s in systems],
+        "auto_excluded_captures": [s["strip_path"] for s in systems if not s.get("included", True)],
+        "capture_diagnostics": diagnostics,
+        "similar_capture_pairs": pairs,
+        "review_required": bool(reflow.get("review_required")),
+        # The renderer accepts {code, text}; include bilingual fallback copy for
+        # new ledger reasons without requiring a renderer release in lockstep.
+        "review_reasons": [{"code": reason, "text": dict(REFLOW_ISSUE_REASONS)[reason]}
+                           if reason in ("LEDGER_UNASSESSED", "LEDGER_REVIEW_REQUIRED", "LEDGER_VERIFICATION_FAILED",
+                                         "DELIVERED_PDF_UNASSESSED", "OVERLAY_UNRECOVERED", "OVERLAY_COVERS_NOTATION")
+                           else reason for reason in (reflow.get("review_reasons") or [])],
+    }
+
+
+def _log_dependencies(job_id: str, deps: Dict[str, Any]) -> None:
+    for r in deps.get("preview_tails_restored", []):
+        _append(job_id, f"preview tail of {r['system_id']} kept on its strip ({r['reason']}; next {r.get('next_system_id')})"
+                        + (f" - uncut strip regenerated ({r['regenerated']})" if r.get("regenerated") else ""))
+    for m in deps.get("labels_moved", []):
+        _append(job_id, f"section label of {m['section']} placed above {m['placed_on']} ({m['reason']})")
+    for u in deps.get("labels_unplaced", []):
+        _append(job_id, f"section label of {u['section']} not placed: no placed system of its section ({', '.join(u['systems'])})")
+
+
+def _job_measure_reflow(job: Job) -> bool:
+    """The job's own measure-reflow option. A job saved before the option existed has no
+    field and keeps whole systems (its old behaviour); new jobs store it explicitly."""
+    options = job.options if isinstance(job.options, dict) else {}
+    return bool(options.get("measure_reflow", False))
+
+
+def _measure_reflow_summary(requested: bool, plan: Dict[str, Any]) -> Dict[str, Any]:
+    """Which layout produced the files: ``status`` is ``measure_lines`` (rearranged by
+    measure), ``fallback_whole_systems`` (asked for, but the planner failed: ``reason`` is
+    its short code) or ``off`` (whole systems by choice)."""
+    record = plan.get("measure_reflow") if isinstance(plan, dict) else None
+    record = record if isinstance(record, dict) else {}
+    size = plan.get("staff_size") if isinstance(plan, dict) and isinstance(plan.get("staff_size"), dict) else None
+    # the staff size actually used (smaller than the chosen one for a dense chart, or for whole
+    # systems that do not fit the page at the chosen size: reason WHOLE_SYSTEMS_DO_NOT_FIT)
+    sized = {"staff_size": {k: size.get(k) for k in ("staff_gap_mm", "staff_gap_mm_requested", "auto_reduced", "reason")}} if size else {}
+    status = str(record.get("status") or "")
+    if requested and status == "measure_lines":
+        return {"requested": True, "applied": True, "status": "measure_lines", "reason": None, **sized}
+    # whole systems: the size is listed when it was reduced (the details stay in the page plan)
+    sized = sized if size and size.get("auto_reduced") else {}
+    if not requested:
+        return {"requested": False, "applied": False, "status": "off", "reason": None, **sized}
+    return {"requested": True, "applied": False, "status": "fallback_whole_systems",
+            "reason": str(record.get("reason") or "MEASURE_PLAN_UNAVAILABLE"), **sized}
+
+
+def _log_measure_reflow(job_id: str, summary: Dict[str, Any]) -> None:
+    if summary.get("status") == "fallback_whole_systems":
+        _append(job_id, f"measure reflow fell back to whole systems: {summary.get('reason')}")
+    size = summary.get("staff_size") or {}
+    if size.get("auto_reduced"):
+        _append(job_id, f"staff size reduced to {size.get('staff_gap_mm')} mm from {size.get('staff_gap_mm_requested')} mm "
+                        f"({size.get('reason')})")
+
+
+LAYOUT_CONFLICT_CODE = "LAYOUT_CONFLICT"
+
+
+def _layout_conflict_pending(job: Job) -> bool:
+    """A reflow job stopped at a layout conflict: no chart files (status ERROR, error code
+    LAYOUT_CONFLICT), but its systems are kept for review, where the user excludes a system or
+    chooses a staff size and exports again."""
+    result = job.result if isinstance(job.result, dict) else {}
+    return (job.status == JobStatus.ERROR and job.error_code == LAYOUT_CONFLICT_CODE
+            and result.get("reflow_state") == "layout_conflict" and isinstance(result.get("reflow"), dict))
+
+
+def _ledger_failure_pending(job: Job) -> bool:
+    result = job.result if isinstance(job.result, dict) else {}
+    return (job.status == JobStatus.ERROR and job.error_code == "LEDGER_VERIFICATION_FAILED"
+            and isinstance(result.get("reflow"), dict))
+
+
+def _verify_reflow_ledger(reflow: Dict[str, Any], export_result: Dict[str, Any], staged: Path, sink: Optional[dict] = None) -> dict:
+    from app.pipeline import reflow_pipeline
+    from app.pipeline.export import ExportVerificationError
+
+    report = reflow_pipeline.verify_light_deliverable(reflow, export_result, staged, sink=sink or {})
+    if report["status"] == "fail":
+        raise ExportVerificationError("LEDGER_VERIFICATION_FAILED",
+                                      "check_pdf_contract: " + dict(REFLOW_ISSUE_REASONS)["LEDGER_VERIFICATION_FAILED"],
+                                      {"check": "check_pdf_contract", "ledger_verification": reflow["ledger_verification"]})
+    return report["artifact_digests"]
+
+
+def _install_verified_reflow_export(staged: Path, target: Path, binding: dict) -> "_ExportCommit":
+    from app.pipeline import reflow_pipeline
+    reflow_pipeline.check_export_binding(staged, binding, check="STAGED_ARTIFACT_DIGEST")
+    commit = _install_staged_export_workspace(staged_workspace=staged, target_workspace=target)
+    try:
+        reflow_pipeline.check_export_binding(target, binding, check="INSTALLED_ARTIFACT_DIGEST")
+    except Exception:
+        commit.revert()
+        raise
+    return commit
+
+
+def _layout_conflict_record(plan: Dict[str, Any]) -> Dict[str, Any]:
+    conflicts = plan.get("conflicts", [])
+    sizes = [c.get("largest_fitting_staff_gap_mm") for c in conflicts]
+    offered = min(sizes) if sizes and all(v is not None for v in sizes) else None
+    return {
+        "requested_staff_gap_mm": plan.get("staff_gap_mm_requested"),
+        "conflicts": conflicts,
+        # the largest staff size at which every conflicting system fits (None: only excluding helps)
+        "largest_fitting_staff_gap_mm": offered,
+        "errors": (plan.get("validation") or {}).get("errors", []),
+    }
+
+
+def _layout_conflict_detail(record: Dict[str, Any]) -> str:
+    ids = ", ".join(c["system_id"] for c in record["conflicts"]) or "-"
+    offer = record.get("largest_fitting_staff_gap_mm")
+    tail = f"; largest staff size that fits: {offer:.2f} mm" if offer else "; exclude the system to continue"
+    return f"LAYOUT_CONFLICT: {ids} do not fit the page at {record['requested_staff_gap_mm']} mm{tail}"
+
+
+def _revert_after_metadata_failure(job_id: str, commit: "_ExportCommit", previous_result: Dict[str, Any], exc: Exception,
+                                   previous_status: JobStatus = JobStatus.DONE) -> None:
+    """The new export is installed but its result could not be recorded: put the
+    previous export back (or keep its backup and say where) and raise HTTP 500."""
+    try:
+        commit.revert()
+        detail = f"review export failed while recording the result ({exc}); the previous export was restored"
+    except ExportCommitError as revert_exc:
+        detail = f"review export failed while recording the result ({exc}); {revert_exc}"
+    try:
+        # the in-memory record is updated before it is persisted; point it back at the previous result
+        job_store.set_state(job_id, previous_status, result=previous_result)
+    except Exception:
+        pass
+    try:
+        _append(job_id, detail)
+    except Exception:
+        pass
+    raise HTTPException(status_code=500, detail=detail)
+
+
+def _finished_reflow_state(result: Dict[str, Any]) -> str:
+    """State of a reflow export that produced its files: "incomplete" when a jump-view interval
+    stayed unresolved, otherwise "review_required" for flagged source/content uncertainty or
+    "done". JobStatus.DONE describes a finished export, not a claim of clean-complete content."""
+    coverage = result.get("coverage") or (result.get("reflow") or {}).get("coverage") or {}
+    if coverage.get("status") == "incomplete":
+        return "incomplete"
+    return "review_required" if result.get("review_required") or (result.get("reflow") or {}).get("review_required") else "done"
+
+
+def _log_coverage(job_id: str, coverage: Dict[str, Any]) -> None:
+    for iv in coverage.get("intervals", []):
+        _append(job_id, f"coverage {iv['start']:.1f}-{iv['end']:.1f}s ({iv.get('kind')}): {iv['status']}")
+    if coverage.get("status") == "incomplete":
+        spans = ", ".join(f"{a:.1f}-{b:.1f}s" for a, b in coverage.get("unresolved", []))
+        _append(job_id, f"result incomplete: unresolved intervals {spans}")
+
+
+MISSING_MARKER_TOLERANCE_SEC = 0.25
+
+
+def _compose_header(header: Dict[str, Any], coverage: Optional[Dict[str, Any]],
+                    composed: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """The header given to compose: ``header`` as it is for a complete chart; for an incomplete one
+    (coverage status ``incomplete``) a copy with ``incomplete`` = the unresolved [start, end]
+    intervals and, per interval, the composed systems placed before it (``before_ids``) when the
+    output order splits cleanly there: every system before ends by the interval's start and every
+    system after starts from its end (MISSING_MARKER_TOLERANCE_SEC). Otherwise ``before_ids`` is
+    None and the interval is named on page 1 only (reflow_render.layout_markers). The stored
+    document header is never changed. Source-clipped systems are passed separately as
+    ``source_clipped`` so their local marks/summary never manufacture missing intervals."""
+    out = dict(header or {})
+    clipped = [{"system_id": s["id"], **(s.get("source_clipped") or {})} for s in composed
+               if "SOURCE_CLIPPED" in (s.get("issues") or []) or s.get("source_clipped")]
+    if clipped:
+        out["source_clipped"] = clipped
+    if not isinstance(coverage, dict) or coverage.get("status") != "incomplete" or not coverage.get("unresolved"):
+        return out if clipped else header
+    tol = MISSING_MARKER_TOLERANCE_SEC
+    markers = []
+    for start, end in coverage["unresolved"]:
+        start, end = float(start), float(end)
+        before_ids: Optional[List[str]] = None
+        try:
+            side = ["before" if float(s["t_end"]) <= start + tol else "after" if float(s["t_start"]) >= end - tol else "both"
+                    for s in composed]
+        except (KeyError, TypeError, ValueError):
+            side = ["both"]
+        if "both" not in side:
+            k = side.count("before")
+            if all(x == "before" for x in side[:k]):
+                before_ids = [s["id"] for s in composed[:k]]
+        markers.append({"start": start, "end": end, "before_ids": before_ids})
+    out["incomplete"] = {"unresolved": [[float(a), float(b)] for a, b in coverage["unresolved"]], "markers": markers}
+    return out
+
+
+def _execute_reflow_job(
+    *,
+    job_id: str,
+    job: Job,
+    payload: JobCreate,
+    result: Dict[str, object],
+    video_path: Optional[str],
+    export_opts: ExportOptions,
+) -> None:
+    """Clean reflow chart (output_model clean_reflow_v1) for a new capture job."""
+    from app.pipeline import reflow_layout
+    from app.pipeline import reflow_pipeline
+    from app.pipeline.export import ExportVerificationError, export_composed_pages, verify_composed_export
+
+    artifact_dir = Path(job.artifact_dir)
+    options = payload.options
+    if not video_path or not Path(video_path).is_file():
+        raise RuntimeError("clean reflow needs a local video file")
+    result["output_model"] = REFLOW_OUTPUT_MODEL
+
+    def progress(stage: str, fraction: float) -> None:
+        lo, hi = REFLOW_PROGRESS.get(stage, (0.5, 0.5))
+        job_store.set_state(job_id, JobStatus.RUNNING, lo + (hi - lo) * max(0.0, min(1.0, fraction)), stage, f"{stage}")
+
+    try:
+        record = reflow_pipeline.analyse_source(
+            video_path=Path(video_path),
+            roi=options.detect.roi,
+            workspace=artifact_dir / "reflow",
+            start_sec=options.extract.start_sec,
+            end_sec=options.extract.end_sec,
+            label_roi=options.detect.label_roi,
+            ledger=options.dev_ledger,
+            logger=lambda msg: _append(job_id, msg),
+            progress=progress,
+            checkpoint=checkpoint,
+        )
+    except reflow_pipeline.UnsupportedLayoutError as exc:
+        result["reflow_state"] = "unsupported_layout"
+        result["reflow"] = {"issues": [{"kind": "UNSUPPORTED_LAYOUT", "layout": iv.get("kind"), "interval": [iv["start"], iv["end"]]}
+                                       for iv in exc.intervals]}
+        result["images"], result["pdf"] = [], None
+        job_store.log(job_id, f"job stopped: {exc}")
+        job_store.set_state(job_id, JobStatus.ERROR, 1.0, "unsupported_layout", str(exc), result=result,
+                            error_code="UNSUPPORTED_LAYOUT")
+        return
+    except reflow_pipeline.NoSystemsError as exc:
+        result["reflow_state"] = "no_systems"
+        result["images"], result["pdf"] = [], None
+        job_store.set_state(job_id, JobStatus.ERROR, 1.0, "no_systems", str(exc), result=result, error_code="NO_SCORE_SYSTEMS")
+        return
+    except reflow_pipeline.UnsupportedSourceError as exc:
+        # source-class gate: notation over live imagery is refused with its evidence, not processed
+        result["reflow_state"] = "unsupported_source"
+        result["source_class"] = reflow_pipeline.json_safe(exc.source_class)
+        result["images"], result["pdf"] = [], None
+        job_store.log(job_id, f"job stopped: {exc}")
+        job_store.set_state(job_id, JobStatus.ERROR, 1.0, "unsupported_source", str(exc), result=result,
+                            error_code=reflow_pipeline.UnsupportedSourceError.code)
+        return
+    result["source_class"] = reflow_pipeline.json_safe(record.get("source_class"))
+    if record.get("coverage") is not None:
+        # jump view: every leftover interval accounted for; an unresolved one marks the result incomplete
+        result["coverage"] = reflow_pipeline.json_safe(record["coverage"])
+        _log_coverage(job_id, result["coverage"])
+
+    checkpoint()
+    header = _default_reflow_header(job, payload, export_opts)
+    included = [s for s in record["systems"] if s["included"]]
+    job_store.set_state(job_id, JobStatus.RUNNING, 0.88, "composing", "composing A4 pages")
+    reflow = reflow_pipeline.public_record(record)
+    reflow["header"] = header
+    reflow["revision"] = 1
+    reflow["staff_gap_mm"] = options.staff_gap_mm
+    # sizing mode: a size the user chose is used as it is (a misfit is a layout conflict), else automatic
+    staff_gap_explicit = bool(options.staff_gap_mm_explicit)
+    reflow["staff_gap_mm_default"] = options.staff_gap_mm
+    reflow["staff_gap_mm_explicit"] = staff_gap_explicit
+    reflow["duplicate_suggestions"] = []
+    reflow["suggestions_state"] = "pending"
+    ledger_sink = {"job_id": job_id, "export_revision": 1}
+    try:
+        plan, pages = reflow_pipeline.compose_systems(included, header=_compose_header(header, result.get("coverage"), included),
+                                                      staff_gap_mm=options.staff_gap_mm,
+                                                      all_systems=record["systems"], workspace=Path(record["workspace"]),
+                                                      measure_reflow=bool(options.measure_reflow),
+                                                      auto_staff_size=not staff_gap_explicit, ledger_sink=ledger_sink)
+    except reflow_pipeline.DependencyUnavailableError as exc:
+        # fail closed: no chart from a cut strip whose destination is not the next placed system
+        result["reflow"] = reflow
+        result["reflow_state"] = "dependency_unavailable"
+        result["images"], result["pdf"] = [], None
+        job_store.log(job_id, f"job stopped: {exc}")
+        job_store.set_state(job_id, JobStatus.ERROR, 1.0, "dependency_unavailable", UNCUT_STRIP_UNAVAILABLE_DETAIL,
+                            result=result, error_code=reflow_pipeline.DependencyUnavailableError.code)
+        return
+    except reflow_layout.LayoutConflictError as exc:
+        # Whole systems that do not fit even at the automatic floor (1.2 mm), or at a size the user
+        # chose: the user excludes the system or chooses a smaller staff size for this document in
+        # review. No final files until then, and the job is not "done" (STRATEGY Step 2A): status
+        # ERROR with error code LAYOUT_CONFLICT; review export stays allowed for it.
+        conflict_plan = reflow_pipeline.json_safe(exc.plan)
+        conflict = _layout_conflict_record(conflict_plan)
+        reflow["page_plan"] = conflict_plan
+        reflow["layout_conflict"] = conflict
+        result["measure_reflow"] = _measure_reflow_summary(bool(options.measure_reflow), conflict_plan)
+        _log_measure_reflow(job_id, result["measure_reflow"])
+        result.update(_reflow_capture_fields(reflow))
+        result["reflow"] = reflow
+        result["reflow_state"] = "layout_conflict"
+        result["images"], result["pdf"], result["preview_images"] = [], None, []
+        result["raw_frames"], result["page_diagnostics"], result["dropped_pages"] = [], [], []
+        result["output_dir"] = str(artifact_dir / "export")
+        detail = _layout_conflict_detail(conflict)
+        job_store.log(job_id, detail)
+        job_store.set_state(job_id, JobStatus.ERROR, 1.0, "layout_conflict", detail, result=result,
+                            error_code=LAYOUT_CONFLICT_CODE)
+        _finish_reflow_suggestions(job_id, record)
+        return
+    export_workspace = artifact_dir / "export"
+    staged = _create_staged_export_workspace(target_workspace=export_workspace)
+    job_store.set_state(job_id, JobStatus.RUNNING, 0.92, "exporting", "writing files")
+    try:
+        export_result = export_composed_pages(pages=pages, formats=list(export_opts.formats), workspace=staged,
+                                              logger=lambda msg: _append(job_id, msg))
+        # "done" only with a valid placement plan and readable files whose page count matches it
+        verified = verify_composed_export(export_result, plan=plan, pages=pages)
+        binding = _verify_reflow_ledger(reflow, export_result, staged, ledger_sink)
+        checkpoint()
+        commit = _install_verified_reflow_export(staged, export_workspace, binding)
+    except ExportVerificationError as exc:
+        shutil.rmtree(staged, ignore_errors=True)
+        if exc.code == "LEDGER_VERIFICATION_FAILED" and reflow.get("ledger_summary", {}).get("status") != "fail":
+            check = str(exc.facts.get("check") or "ARTIFACT_DIGEST")
+            reflow["ledger_summary"]["status"] = "fail"
+            reflow["ledger_summary"]["issue_counts"][check] = 1
+            reflow["ledger_verification"].update(status="fail", assessment="fail")
+            reflow["review_required"] = True
+            reflow["review_reasons"] = sorted(set(reflow.get("review_reasons", []) + ["LEDGER_VERIFICATION_FAILED"]))
+        reflow["page_plan"] = plan
+        reflow["export_verification"] = {"error_code": exc.code, "detail": exc.detail, **reflow_pipeline.json_safe(exc.facts)}
+        result["measure_reflow"] = _measure_reflow_summary(bool(options.measure_reflow), plan)
+        result.update(_reflow_capture_fields(reflow))
+        result["reflow"] = reflow
+        result["reflow_state"] = "ledger_failed" if exc.code == "LEDGER_VERIFICATION_FAILED" else "export_invalid"
+        result["images"], result["pdf"], result["preview_images"] = [], None, []
+        job_store.log(job_id, f"job stopped: {exc}")
+        job_store.set_state(job_id, JobStatus.ERROR, 1.0, "export_invalid", str(exc), result=result, error_code=exc.code)
+        return
+    except Exception:
+        shutil.rmtree(staged, ignore_errors=True)
+        raise
+    export_result = _rewrite_export_result_paths(export_result=export_result, staged_workspace=staged,
+                                                 target_workspace=export_workspace)
+    reflow["page_plan"] = plan
+    reflow["export_verification"] = reflow_pipeline.json_safe(verified)
+    reflow["dependencies"] = plan.get("dependencies", {})
+    _log_dependencies(job_id, reflow["dependencies"])
+    result["measure_reflow"] = _measure_reflow_summary(bool(options.measure_reflow), plan)
+    _log_measure_reflow(job_id, result["measure_reflow"])
+    result.update(_reflow_capture_fields(reflow))
+    result["reflow"] = reflow
+    result["reflow_state"] = _finished_reflow_state(result)
+    result["images"] = export_result.get("images", [])
+    result["pdf"] = export_result.get("pdf")
+    result["preview_images"] = export_result.get("preview_images", [])
+    result["raw_frames"] = []
+    result["page_diagnostics"] = []
+    result["dropped_pages"] = []
+    result["output_dir"] = str(export_workspace)
+    # The chart is published (DONE) first; likely-repeat suggestions follow in a
+    # bounded, cancellable step that only adds "looks similar" notes to the job.
+    try:
+        job_store.set_state(job_id, JobStatus.DONE, 1.0, "done", "export finished", result=result, error_code=None)
+    except Exception:
+        commit.revert()
+        raise
+    commit.finalize()
+    job_store.log(job_id, f"job finished: {len(included)} systems on {len(pages)} pages")
+    _finish_reflow_suggestions(job_id, record)
+
+
+SUGGESTION_TIME_BUDGET_SEC = 90.0
+suggestion_controls: Dict[str, Event] = {}
+
+
+def cancel_pending_suggestions(job_id: Optional[str] = None) -> None:
+    with maintenance_lock:
+        for jid, event in list(suggestion_controls.items()):
+            if job_id is None or jid == job_id:
+                event.set()
+
+
+def _finish_reflow_suggestions(job_id: str, record: Dict[str, Any], *, time_budget_sec: Optional[float] = None) -> None:
+    """Likely-repeat suggestions after the job is DONE: bounded by a time budget,
+    cancellable (a new job or a cancel request stops it), never blocking and never
+    applied. The result is merged into the job's latest record."""
+    from app.pipeline import reflow_pipeline
+
+    cancel = Event()
+    with maintenance_lock:
+        suggestion_controls[job_id] = cancel
+    budget = SUGGESTION_TIME_BUDGET_SEC if time_budget_sec is None else time_budget_sec
+    deadline = time.monotonic() + budget
+    # checked between items by every step (strip loading, frame decoding, label samples)
+    should_stop = lambda: cancel.is_set() or time.monotonic() > deadline  # noqa: E731
+    state = "done"
+    incomplete: List[str] = []
+    suggestions: List[Dict[str, Any]] = []
+    labels = None
+    try:
+        try:
+            suggestions = reflow_pipeline.duplicate_suggestions(record, logger=lambda msg: _append(job_id, msg), should_stop=should_stop)
+            if should_stop():
+                incomplete.append("similar_suggestions")
+        except Exception as exc:  # suggestions are optional; the chart is already done
+            state = "failed"
+            _append(job_id, f"similar-system suggestions skipped: {exc}")
+        if (record.get("labels") or {}).get("status") == "not_checked":
+            if should_stop():
+                labels = dict(record.get("labels") or {}, check="incomplete")
+                incomplete.append("label_check")
+            else:
+                try:
+                    # section labels drawn outside the applied score region (report only; never applied)
+                    labels = reflow_pipeline.check_labels_outside(record, should_stop=should_stop)
+                    if labels.get("check") == "incomplete" or should_stop():
+                        # a result reached after the budget or a cancel is not published as a finding
+                        labels = dict(record.get("labels") or {}, check="incomplete")
+                        incomplete.append("label_check")
+                except Exception as exc:  # pragma: no cover - defensive
+                    _append(job_id, f"label check skipped: {exc}")
+        if state != "failed" and incomplete:
+            state = "cancelled" if cancel.is_set() else "partial"
+    finally:
+        with maintenance_lock:
+            suggestion_controls.pop(job_id, None)
+        reflow_pipeline.prune_frames(record)
+    with maintenance_lock:
+        lock = review_locks.setdefault(job_id, RLock())
+    with lock:
+        job = job_store.get(job_id)
+        if not job or not isinstance(job.result, dict) or not isinstance(job.result.get("reflow"), dict):
+            return
+        result = dict(job.result)
+        reflow = dict(result["reflow"])
+        reflow["duplicate_suggestions"] = reflow_pipeline.json_safe(suggestions)
+        reflow["suggestions_state"] = state
+        reflow["suggestions_incomplete"] = incomplete  # steps stopped by the time budget or a cancel
+        if labels is not None:
+            reflow["labels"] = reflow_pipeline.json_safe(labels)
+        reflow["frames_pruned"] = bool(record.get("frames_pruned"))
+        if record.get("overlay_evidence_path"):
+            reflow["overlay_evidence_path"] = record["overlay_evidence_path"]
+        result["reflow"] = reflow
+        result["similar_capture_pairs"] = _reflow_capture_fields(reflow)["similar_capture_pairs"]
+        job_store.set_state(job_id, job.status, result=result)
+    _append(job_id, f"similar-system suggestions: {len(suggestions)} ({state})")
+
+
+def _reflow_export_inputs(job: Job, payload: JobReviewExportRequest) -> Dict[str, Any]:
+    """Check the request against the job (selection, order, formats) and resolve what to compose.
+    Raises HTTPException 400 for a selection or format the job cannot export."""
+    result = dict(job.result or {})
+    reflow = dict(result.get("reflow") or {})
+    systems = [dict(s) for s in reflow.get("systems", [])]
+    by_path = {str(Path(s["strip_path"]).resolve()): s for s in systems}
+
+    def lookup(raw: str) -> Optional[Dict[str, Any]]:
+        try:
+            return by_path.get(str(Path(str(raw)).resolve()))
+        except Exception:
+            return None
+
+    if payload.keep_images:
+        raise HTTPException(status_code=400, detail="clean reflow jobs select systems with keep_captures")
+    keep = []
+    for raw in payload.keep_captures:
+        s = lookup(raw)
+        if s is None:
+            raise HTTPException(status_code=400, detail=f"unknown system: {raw}")
+        if s not in keep:
+            keep.append(s)
+    if not keep:
+        raise HTTPException(status_code=400, detail="no valid systems selected")
+    order = []
+    for raw in payload.system_order:
+        s = lookup(raw)
+        if s is not None and s not in order:
+            order.append(s)
+    if order:
+        order += [s for s in systems if s not in order]
+    else:
+        order = list(systems)
+    # Selected systems follow the arranged order; keep_captures order is used when no arrangement is given.
+    keep_ids = {s["id"] for s in keep}
+    composed = [s for s in order if s["id"] in keep_ids] if payload.system_order else keep
+
+    export_config = _resolve_job_export_options(job)
+    requested = payload.formats if payload.formats is not None else list(export_config.formats)
+    formats = _normalize_requested_export_formats(requested)
+    if not formats:
+        raise HTTPException(status_code=400, detail="formats must include at least one export format")
+    return {"result": result, "reflow": reflow, "systems": systems, "order": order, "keep_ids": keep_ids,
+            "composed": composed, "formats": formats, "export_config": export_config}
+
+
+def _review_export_reflow(job: Job, job_id: str, payload: JobReviewExportRequest) -> JobReviewExportResponse:
+    """Re-compose the clean reflow chart from the user's system order and selection.
+
+    Transactional: the pages are written to a staged folder and installed only when complete; a
+    failure or a cancel (process_control.OperationCancelled, raised at a stage boundary before the
+    install) leaves the previous export files and the job's result as they were."""
+    from app.pipeline import reflow_layout
+    from app.pipeline import reflow_pipeline
+    from app.pipeline.export import ExportVerificationError, export_composed_pages, verify_composed_export
+
+    inputs = _reflow_export_inputs(job, payload)
+    result, reflow, systems = inputs["result"], inputs["reflow"], inputs["systems"]
+    order, keep_ids, composed, formats = inputs["order"], inputs["keep_ids"], inputs["composed"], inputs["formats"]
+    export_config = inputs["export_config"]
+    previous_result = dict(job.result or {})
+    header = reflow.get("header") or {}
+    if export_config.document_header is not None:
+        header = export_config.document_header.model_dump()
+    default_gap = float((job.options or {}).get("staff_gap_mm") or 1.5) if isinstance(job.options, dict) else 1.5
+    # An explicit user choice (a smaller size allowed for this document) is kept for later rebuilds.
+    staff_gap_mm = float(payload.staff_gap_mm) if payload.staff_gap_mm is not None else float(reflow.get("staff_gap_mm") or default_gap)
+    # Modern clients send the mode explicitly, including a locked 1.5 mm or automatic False.
+    # Old clients without it retain the previous inference: a different size is explicit,
+    # while the job's size allows automatic sizing unless the job itself locked that size.
+    job_gap_explicit = bool((job.options or {}).get("staff_gap_mm_explicit")) if isinstance(job.options, dict) else False
+    if payload.staff_gap_mm_explicit is not None:
+        staff_gap_explicit = payload.staff_gap_mm_explicit
+    elif payload.staff_gap_mm is not None:
+        staff_gap_explicit = job_gap_explicit or abs(float(payload.staff_gap_mm) - default_gap) > 1e-6
+    else:
+        staff_gap_explicit = bool(reflow.get("staff_gap_mm_explicit",
+                                             job_gap_explicit or abs(staff_gap_mm - default_gap) > 1e-6))
+    export_workspace = Path(job.artifact_dir) / "export"
+    user_excluded = {s["id"] for s in systems if s["id"] not in keep_ids and s.get("auto_included", s.get("included", True))}
+    user_excluded.update(set(reflow.get("user_excluded_system_ids", [])) - keep_ids)
+    ledger_sink = {"excluded_system_ids": sorted(user_excluded), "job_id": job_id,
+                   "export_revision": int(reflow.get("revision", 1))+1}
+    try:
+        # the export's own choice, else the job's option; dependencies are re-validated on every compose
+        measure_reflow = bool(payload.measure_reflow) if payload.measure_reflow is not None else _job_measure_reflow(job)
+        coverage = result.get("coverage") or reflow.get("coverage")
+        plan, pages = reflow_pipeline.compose_systems(composed, header=_compose_header(header, coverage, composed),
+                                                      staff_gap_mm=staff_gap_mm, all_systems=systems,
+                                                      workspace=Path(reflow.get("workspace") or Path(job.artifact_dir) / "reflow"),
+                                                      measure_reflow=measure_reflow, auto_staff_size=not staff_gap_explicit, ledger_sink=ledger_sink)
+    except reflow_pipeline.DependencyUnavailableError as exc:
+        # fail closed: the previous export files and result stay as they are
+        try:
+            _append(job_id, f"review export stopped: {exc}")
+        except Exception:
+            pass
+        raise HTTPException(status_code=409, detail=f"{UNCUT_STRIP_UNAVAILABLE_DETAIL} [{exc.system_id}: {exc.reason}]")
+    except reflow_layout.LayoutConflictError as exc:
+        conflict = _layout_conflict_record(reflow_pipeline.json_safe(exc.plan))
+        conflict["selected_system_ids"] = [s["id"] for s in composed]
+        # metadata only: the previous export files and order stay as they are
+        noted = dict(reflow)
+        noted["layout_conflict"] = conflict
+        noted_result = dict(result)
+        noted_result["reflow"] = noted
+        noted_result["capture_diagnostics"] = _reflow_capture_fields(noted)["capture_diagnostics"]
+        # the job keeps its state: done with its previous files, or still a pending layout conflict
+        job_store.set_state(job_id, job.status, result=noted_result)
+        raise HTTPException(status_code=409, detail=_layout_conflict_detail(conflict))
+    except reflow_pipeline.NoSystemsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except OperationCancelled:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"review export failed: {exc}")
+    measure_summary = _measure_reflow_summary(measure_reflow, plan)
+    report_progress("writing", 0.0)
+    staged = _create_staged_export_workspace(target_workspace=export_workspace)
+    try:
+        export_result = export_composed_pages(pages=pages, formats=formats, workspace=staged,
+                                              logger=lambda msg: _append(job_id, msg))
+        # published only with a valid placement plan and files whose page count matches it
+        verified = verify_composed_export(export_result, plan=plan, pages=pages)
+        reflow.setdefault("workspace", str(Path(job.artifact_dir) / "reflow"))
+        binding = _verify_reflow_ledger(reflow, export_result, staged, ledger_sink)
+        # last cancel point: after this the new export is installed and recorded
+        checkpoint()
+        commit = _install_verified_reflow_export(staged, export_workspace, binding)
+    except OperationCancelled:
+        shutil.rmtree(staged, ignore_errors=True)
+        raise
+    except ExportVerificationError as exc:
+        # the previous export files and result stay as they are; the task reports exc.code
+        shutil.rmtree(staged, ignore_errors=True)
+        try:
+            _append(job_id, f"review export stopped: {exc}")
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception as exc:
+        shutil.rmtree(staged, ignore_errors=True)
+        detail = _export_failure_detail(exc)
+        try:
+            _append(job_id, detail)
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=detail)
+
+    try:
+        export_result = _rewrite_export_result_paths(export_result=export_result, staged_workspace=staged,
+                                                     target_workspace=export_workspace)
+        for s in order:
+            s["included"] = s["id"] in keep_ids
+        reflow["systems"] = order
+        reflow["user_excluded_system_ids"] = sorted(user_excluded)
+        reflow["page_plan"] = plan
+        reflow["export_verification"] = reflow_pipeline.json_safe(verified)
+        reflow.pop("layout_conflict", None)
+        reflow["dependencies"] = plan.get("dependencies", {})
+        _log_dependencies(job_id, reflow["dependencies"])
+        reflow["header"] = header
+        reflow["staff_gap_mm"] = staff_gap_mm
+        reflow["staff_gap_mm_default"] = default_gap
+        reflow["staff_gap_mm_explicit"] = staff_gap_explicit
+        reflow.pop("layout_conflict", None)
+        reflow["revision"] = int(reflow.get("revision", 1)) + 1
+        result["measure_reflow"] = measure_summary
+        result.update(_reflow_capture_fields(reflow))
+        result["auto_excluded_captures"] = []
+        result["reflow"] = reflow
+        result["reflow_state"] = _finished_reflow_state(result)
+        result["images"] = export_result.get("images", [])
+        result["pdf"] = export_result.get("pdf")
+        result["preview_images"] = export_result.get("preview_images", [])
+        result["output_dir"] = str(export_workspace)
+        selected_paths = [s["strip_path"] for s in composed]
+        result["review_export"] = {
+            "revision": int(result.get("review_export", {}).get("revision", 0)) + 1,
+            "kept_count": len(composed),
+            "requested_count": len(payload.keep_captures),
+            "selection_mode": "captures",
+            "selected_captures": selected_paths,
+            "selected_pages": [],
+            "system_order": [s["strip_path"] for s in order],
+            "measure_reflow": measure_summary,
+        }
+        job_store.set_state(job_id, JobStatus.DONE, 1.0, "done", "review export finished", result=result, error_code=None)
+    except Exception as exc:
+        _revert_after_metadata_failure(job_id, commit, previous_result, exc, previous_status=job.status)
+    commit.finalize()
+    try:
+        _log_measure_reflow(job_id, measure_summary)
+    except Exception:
+        pass
+    return JobReviewExportResponse(
+        images=[str(p) for p in export_result.get("images", [])],
+        pdf=str(export_result.get("pdf")) if export_result.get("pdf") else None,
+        output_dir=str(export_workspace),
+        kept_count=len(composed),
+        measure_reflow=measure_summary,
+        revision=int(reflow.get("revision") or 0) or None,
+        review_required=bool(result.get("review_required")),
+        review_reasons=list(result.get("review_reasons") or []),
+    )
 
 
 def _run_source_prepare_job(job_id: str) -> None:
@@ -1939,18 +3066,86 @@ def _create_staged_export_workspace(*, target_workspace: Path) -> Path:
     return staged_root
 
 
-def _commit_staged_export_workspace(*, staged_workspace: Path, target_workspace: Path) -> None:
+class ExportCommitError(RuntimeError):
+    """Installing a new export failed and the previous export could not be put back
+    in place automatically. ``backup_path`` holds the previous export's files."""
+
+    def __init__(self, message: str, *, backup_path: Optional[Path] = None):
+        super().__init__(message)
+        self.backup_path = backup_path
+
+
+def _fs_replace(src: Path, dst: Path) -> None:
+    """Atomic rename used by the export commit (a seam for fault-injection tests)."""
+    Path(src).replace(dst)
+
+
+class _ExportCommit:
+    """A staged export installed at ``target``; the previous export stays in
+    ``backup`` until the caller has recorded the new result (``finalize``) or
+    puts the previous export back (``revert``)."""
+
+    def __init__(self, target: Path, backup: Optional[Path]):
+        self.target = target
+        self.backup = backup
+
+    def finalize(self) -> None:
+        if self.backup is not None:
+            shutil.rmtree(self.backup, ignore_errors=True)
+            self.backup = None
+
+    def revert(self) -> None:
+        """Post-commit failure (the new result could not be recorded): move the new
+        export aside and restore the previous one. Raises ExportCommitError, keeping
+        the backup, when that is not possible."""
+        failed = self.target.with_name(f"{self.target.name}_failed_{uuid.uuid4().hex[:8]}")
+        try:
+            if self.target.exists():
+                _fs_replace(self.target, failed)
+            if self.backup is not None:
+                _fs_replace(self.backup, self.target)
+                self.backup = None
+        except Exception as exc:
+            raise ExportCommitError(
+                f"could not restore the previous export; its files are kept at {self.backup}", backup_path=self.backup,
+            ) from exc
+        shutil.rmtree(failed, ignore_errors=True)
+
+
+def _install_staged_export_workspace(*, staged_workspace: Path, target_workspace: Path) -> _ExportCommit:
+    """Move ``staged_workspace`` into place. The previous export is renamed to a
+    backup first and is deleted only by ``_ExportCommit.finalize`` after the
+    caller recorded the new result. If installing fails the previous export is
+    moved back; if that also fails, the backup is kept and ExportCommitError
+    names it (the previous chart is never deleted on a failure path)."""
     backup_workspace = target_workspace.with_name(f"{target_workspace.name}_backup_{uuid.uuid4().hex[:8]}")
+    moved = False
     try:
         if target_workspace.exists():
-            target_workspace.replace(backup_workspace)
-        staged_workspace.replace(target_workspace)
-    except Exception:
-        if backup_workspace.exists() and not target_workspace.exists():
-            backup_workspace.replace(target_workspace)
+            _fs_replace(target_workspace, backup_workspace)
+            moved = True
+        _fs_replace(staged_workspace, target_workspace)
+    except Exception as exc:
+        if moved:
+            try:
+                if target_workspace.exists():
+                    # a partial install: keep it aside, never on top of the previous export
+                    _fs_replace(target_workspace, target_workspace.with_name(f"{target_workspace.name}_failed_{uuid.uuid4().hex[:8]}"))
+                _fs_replace(backup_workspace, target_workspace)
+            except Exception as rollback_exc:
+                raise ExportCommitError(
+                    f"export install failed ({exc}) and the previous export could not be restored "
+                    f"({rollback_exc}); its files are kept at {backup_workspace}",
+                    backup_path=backup_workspace,
+                ) from exc
         raise
-    finally:
-        shutil.rmtree(backup_workspace, ignore_errors=True)
+    return _ExportCommit(target_workspace, backup_workspace if moved else None)
+
+
+def _export_failure_detail(exc: Exception) -> str:
+    if isinstance(exc, ExportCommitError) and exc.backup_path is not None:
+        return f"review export failed: {exc} (previous export kept at {exc.backup_path})"
+    return f"review export failed: {exc}"
 
 
 def _rewrite_export_result_paths(

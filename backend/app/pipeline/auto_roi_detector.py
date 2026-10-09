@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Sequence
 import cv2
 import numpy as np
 
+from app.pipeline import notation_envelope
 from app.pipeline.extract import extract_preview_frame
 
 
@@ -74,7 +75,70 @@ def estimate_auto_roi_for_source(
     diagnostics = dict(result.get("diagnostics") or {})
     diagnostics["checked_seconds"] = checked_seconds
     result["diagnostics"] = diagnostics
-    return result
+    try:
+        envelope = notation_envelope.analyze_source(
+            source_type=source_type,
+            file_path=file_path,
+            youtube_url=youtube_url,
+            workspace=workspace,
+            logger=logger,
+        )
+    except Exception as exc:
+        logger(f"auto ROI notation envelope failed: {exc}")
+        envelope = {"status": "error", "reason": str(exc)}
+    return apply_notation_envelope(result, envelope)
+
+
+def apply_notation_envelope(result: Dict[str, object], envelope: Dict[str, object]) -> Dict[str, object]:
+    """Replace the fixed-padding suggestion with the full notation envelope.
+
+    The envelope covers marks, circles, text and lyrics around the staves,
+    sampled over the whole source (design section 3). When it finds no
+    consistent staff, the previous fixed-padding result is kept as the
+    fallback. Either way the suggestion stays a draft for the user to apply.
+    """
+    out = dict(result)
+    diagnostics = dict(out.get("diagnostics") or {})
+    status = str(envelope.get("status") or "")
+    evidence = {
+        "status": status,
+        "version": envelope.get("version", notation_envelope.ENVELOPE_VERSION),
+        "sampled_times": list(envelope.get("sampled_times") or []),
+        "score_times": list(envelope.get("score_times") or []),
+        "skipped_times": list(envelope.get("skipped_times") or []),
+        "envelope_bbox": envelope.get("envelope_bbox"),
+        "suggested_bbox": envelope.get("suggested_bbox"),
+        "staff_spacing": envelope.get("gap"),
+        "flags": list(envelope.get("flags") or []),
+        "rows": [
+            {"t_sec": frame.get("t_sec"), "staff_y": row.get("staff_y"), "staff_x": row.get("staff_x"),
+             "envelope_bbox": row.get("envelope_bbox"), "panel": row.get("panel"), "flags": row.get("flags")}
+            for frame in (envelope.get("frames") or [])
+            for row in (frame.get("rows") or [])
+        ],
+    }
+    if status == "found" and envelope.get("suggested_bbox"):
+        x1, y1, x2, y2 = [float(v) for v in envelope["suggested_bbox"]]
+        score_frames = len(evidence["score_times"])
+        out["status"] = "suggested"
+        out["roi"] = [
+            [round(x1, 2), round(y1, 2)],
+            [round(x2, 2), round(y1, 2)],
+            [round(x2, 2), round(y2, 2)],
+            [round(x1, 2), round(y2, 2)],
+        ]
+        out["evidence_level"] = "high" if score_frames >= 2 else "medium"
+        out["is_dark_mode"] = envelope.get("polarity") == "light_on_dark"
+        diagnostics["method"] = "notation_envelope"
+        diagnostics["reason"] = "union of staff notation and score text over sampled frames, padded 0.75 gap top/bottom and 0.5 gap at the sides"
+        diagnostics["supporting_frames"] = max(int(diagnostics.get("supporting_frames") or 0), score_frames)
+        diagnostics["staff_spacing"] = envelope.get("gap")
+    else:
+        diagnostics["method"] = "fixed_padding" if out.get("status") == "suggested" else "none"
+        diagnostics["reason"] = f"notation envelope {status or 'unavailable'}: kept the fixed-padding detector result"
+    diagnostics["envelope"] = evidence
+    out["diagnostics"] = diagnostics
+    return out
 
 
 def estimate_auto_roi(frames: Sequence[np.ndarray]) -> Dict[str, object]:

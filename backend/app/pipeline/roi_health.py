@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 
+from app.pipeline import notation_envelope
 from app.pipeline.extract import extract_preview_frame
 
 
@@ -35,6 +36,10 @@ def analyze_roi_health_frames(
     bottom_edge_hits = 0
     low_density_hits = 0
     avg_density_values: List[float] = []
+    # An ROI edge on (or within 1.5% of) the video frame edge cannot move further
+    # out. Paper there is harmless; only notation cut by the frame itself matters.
+    at_frame = {"top": top_margin_ratio < 0.015, "bottom": bottom_margin_ratio < 0.015}
+    frame_cut_hits = {"top": 0, "bottom": 0}
 
     for frame in frames:
         crop = frame[rect[1] : rect[3], rect[0] : rect[2]]
@@ -61,6 +66,9 @@ def analyze_roi_health_frames(
             top_edge_hits += 1
         if bottom_density > 0.058:
             bottom_edge_hits += 1
+        for side in ("top", "bottom"):
+            if at_frame[side] and _ink_cut_by_frame_edge(gray, side=side, frame_height=height, rect=rect):
+                frame_cut_hits[side] += 1
         if density < 0.018:
             low_density_hits += 1
 
@@ -92,21 +100,31 @@ def analyze_roi_health_frames(
     elif height_ratio > 0.88:
         push("warning", "roi_height_high", "세로 범위 과다", "ROI 높이가 너무 커서 불필요한 배경이 많이 포함될 수 있습니다.")
 
-    if top_margin_ratio < 0.015 or bottom_margin_ratio < 0.015:
-        push("critical", "roi_margin_tight", "상하 여백 부족", "상단 또는 하단 경계가 너무 바짝 붙어 있어 잘림 위험이 큽니다.")
+    # Margins at the frame edge: harmless when the edge rows are paper (info only);
+    # a warning when notation reaches the frame edge (cut by the video itself; moving
+    # the region cannot recover it). Never critical: it is not an ROI clipping error.
+    frame_sides = [side for side in ("top", "bottom") if at_frame[side]]
+    cut_sides = [side for side in frame_sides if frame_cut_hits[side] > 0]
+    if cut_sides:
+        labels = ", ".join("위" if side == "top" else "아래" for side in cut_sides)
+        push("warning", "frame_edge_content", "화면 끝에 닿은 악보",
+             f"악보 기호가 영상 화면 끝({labels})에 닿아 있습니다. 영상 자체에서 잘린 부분은 영역을 넓혀도 되살릴 수 없습니다.")
+    elif frame_sides:
+        push("info", "roi_at_frame_edge", "화면 끝까지 선택됨", "영역이 영상 화면 끝까지 닿아 있지만 그 가장자리는 빈 종이입니다.")
 
-    if top_edge_hits > 0:
+    # Content near an ROI edge that can still move out is a clipping risk.
+    if top_edge_hits > 0 and not at_frame["top"]:
         level = "critical" if top_edge_hits >= max(1, sampled_frames - 1) else "warning"
         push(level, "top_edge_busy", "상단 잘림 위험", f"샘플 프레임 {top_edge_hits}개에서 상단 경계가 악보 내용과 가깝습니다.")
 
-    if bottom_edge_hits > 0:
+    if bottom_edge_hits > 0 and not at_frame["bottom"]:
         level = "critical" if bottom_edge_hits >= max(1, sampled_frames - 1) else "warning"
         push(level, "bottom_edge_busy", "하단 잘림 위험", f"샘플 프레임 {bottom_edge_hits}개에서 하단 경계가 악보 내용과 가깝습니다.")
 
     if low_density_hits >= max(1, sampled_frames - 1):
         push("warning", "content_sparse", "내용 밀도 낮음", "선택 영역 안의 악보 밀도가 낮아 현재 프레임이 적절하지 않을 수 있습니다.")
 
-    if not diagnostics:
+    if all(item["level"] == "info" for item in diagnostics) and not any(item["code"] == "roi_healthy" for item in diagnostics):
         push("info", "roi_healthy", "ROI 상태 양호", "샘플 프레임 기준으로 뚜렷한 잘림 위험이 보이지 않습니다.")
 
     return {
@@ -122,6 +140,8 @@ def analyze_roi_health_frames(
             "average_content_density": round(avg_density, 5),
             "top_edge_hits": int(top_edge_hits),
             "bottom_edge_hits": int(bottom_edge_hits),
+            "roi_at_frame_edge": {side: bool(flag) for side, flag in at_frame.items()},
+            "frame_edge_cut_hits": {side: int(count) for side, count in frame_cut_hits.items()},
             "low_density_hits": int(low_density_hits),
         },
     }
@@ -166,7 +186,113 @@ def analyze_roi_health_for_source(
 
     analysis = analyze_roi_health_frames(frames, roi)
     analysis["checked_seconds"] = checked_seconds
-    return analysis
+    try:
+        envelope = notation_envelope.analyze_source(
+            source_type=source_type,
+            file_path=file_path,
+            youtube_url=youtube_url,
+            workspace=workspace,
+            logger=logger,
+        )
+    except Exception as exc:
+        logger(f"roi health notation envelope failed: {exc}")
+        envelope = {"status": "error", "reason": str(exc)}
+    return add_envelope_clipping(analysis, envelope, roi)
+
+
+def add_envelope_clipping(
+    analysis: Dict[str, object],
+    envelope: Dict[str, object],
+    roi: Sequence[Sequence[float]],
+) -> Dict[str, object]:
+    """Add the whole-source clipping check (``ENVELOPE_CLIPPED``) to an analysis.
+
+    Every content-bearing component near or beyond an ROI edge counts, so one
+    small circle is enough (design section 3, step 7). The level is
+    ``warning``: it informs and proposes a larger draft, it does not block
+    capture.
+    """
+    out = dict(analysis)
+    status = str(envelope.get("status") or "unavailable")
+    report: Dict[str, object] = {
+        "status": status,
+        "sampled_times": list(envelope.get("sampled_times") or []),
+        "score_times": list(envelope.get("score_times") or []),
+        "envelope_bbox": envelope.get("envelope_bbox"),
+        "flags": list(envelope.get("flags") or []),
+        "clipped": False,
+        "code": "",
+        "counts": {},
+        "cut_counts": {},
+        "locations": [],
+        "frames_with_clipping": [],
+        "suggested_roi": None,
+    }
+    if status == "found":
+        clip = notation_envelope.check_roi_clipping(envelope, roi)
+        report.update(clip)
+    out["envelope"] = report
+    if status == "found" and not report["clipped"]:
+        # The whole-source, component-level check found no cut notation. Edge
+        # density near the ROI edge then comes from video, UI or paper texture
+        # (e.g. drum footage behind a dark score band), not from clipped notes.
+        diagnostics = []
+        for item in list(out.get("diagnostics") or []):
+            if item.get("code") in ("top_edge_busy", "bottom_edge_busy") and item.get("level") in ("critical", "warning"):
+                item = dict(item, level="info", detail=f"{item.get('detail', '')} 영상 전체 점검에서는 잘린 기호가 없습니다.".strip(),
+                            downgraded_by="envelope_check")
+            diagnostics.append(item)
+        out["diagnostics"] = diagnostics
+        levels = [str(item.get("level") or "info") for item in diagnostics]
+        out["risk_level"] = "critical" if "critical" in levels else "warning" if "warning" in levels else "info"
+    if report["clipped"]:
+        diagnostics = list(out.get("diagnostics") or [])
+        diagnostics = [item for item in diagnostics if item.get("code") != "roi_healthy"]
+        counts = report["counts"] if isinstance(report["counts"], dict) else {}
+        sides = [label for key, label in (("top", "위"), ("bottom", "아래"), ("left", "왼쪽"), ("right", "오른쪽")) if counts.get(key)]
+        if counts.get("staff_outside"):
+            sides.append("영역 밖 악보 줄")
+        frames_hit = len(report["frames_with_clipping"] or [])
+        diagnostics.append({
+            "level": "warning",
+            "code": "envelope_clipped",
+            "title": "악보 위아래가 잘렸습니다",
+            "detail": f"영상 전체 샘플 {len(report['score_times'])}개 중 {frames_hit}개에서 기호나 글자가 영역 경계({', '.join(sides)})에 걸립니다.",
+        })
+        out["diagnostics"] = diagnostics
+        if out.get("risk_level") == "info":
+            out["risk_level"] = "warning"
+    return out
+
+
+def _ink_cut_by_frame_edge(gray: np.ndarray, *, side: str, frame_height: int, rect: Tuple[int, int, int, int]) -> bool:
+    """Notation touching the video frame's own top/bottom rows inside the ROI columns.
+
+    ``gray`` is the ROI crop. Only applies when the ROI edge is within the outer
+    1.5% of the frame; the rows between the ROI edge and the frame edge are not
+    visible here, so the crop's outermost rows stand for the frame edge when
+    the ROI reaches it, and nothing is reported otherwise. Long thin
+    horizontal lines (a UI border, a staff line) are not notation.
+    """
+    h, w = gray.shape[:2]
+    reaches = rect[1] <= 1 if side == "top" else rect[3] >= frame_height - 1
+    if not reaches or h < 8:
+        return False
+    paper = float(np.percentile(gray, 75))
+    dark = paper >= 110
+    ink = (gray < paper - 60) if dark else (gray > paper + 60)
+    ink = ink.astype(np.uint8)
+    count, _labels, stats, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
+    edge_rows = 2
+    hits = 0
+    for idx in range(1, count):
+        x, y, bw, bh, area = stats[idx]
+        if area < 6 or (bw > 0.5 * w and bh <= 4):
+            continue
+        touches = y < edge_rows if side == "top" else y + bh > h - edge_rows
+        if touches:
+            hits += 1
+    return hits >= 2
 
 
 def should_block_roi_capture(analysis: Dict[str, object]) -> bool:

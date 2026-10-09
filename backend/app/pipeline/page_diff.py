@@ -24,7 +24,7 @@ Verdicts:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -153,8 +153,14 @@ def playhead_jumped_back(prev_x: Optional[float], cur_x: Optional[float]) -> boo
 # --------------------------------------------------------------------------- #
 
 
-def compare_frames(prev_img: np.ndarray, cur_img: np.ndarray, *, dedupe_level: str = "normal") -> FrameDiffVerdict:
-    """Compare two BGR (or gray) frames of the same score region."""
+def compare_frames(prev_img: np.ndarray, cur_img: np.ndarray, *, dedupe_level: str = "normal",
+                   prev_cache: Optional[Dict[str, Any]] = None) -> FrameDiffVerdict:
+    """Compare two BGR (or gray) frames of the same score region.
+
+    ``prev_cache``: optional dict owned by ``prev_img`` (the caller does not change that image
+    while it passes the same dict). It keeps the work that depends on ``prev_img`` alone (its
+    gray image, ink, staff gap, staff-free ink and overlay mask), so comparing one reference
+    with many frames does it once. Results are the same with or without it."""
     if prev_img is None or cur_img is None or prev_img.size == 0 or cur_img.size == 0:
         return FrameDiffVerdict(VERDICT_DIFFERENT, "empty_input")
 
@@ -165,10 +171,18 @@ def compare_frames(prev_img: np.ndarray, cur_img: np.ndarray, *, dedupe_level: s
 
     sensitivity = sensitivity_for_level(dedupe_level)
 
-    prev_gray = cv2.cvtColor(prev_bgr, cv2.COLOR_BGR2GRAY)
+    # the cache serves only a prev image prepared on its own (same shapes: no pair-dependent resize)
+    pc = prev_cache if (prev_cache is not None and prev_img.shape == cur_img.shape) else None
+    if pc is not None and pc.get("shape") != prev_bgr.shape:
+        pc.clear()
+    if pc is not None and "gray" in pc:
+        prev_gray, prev_ink_full = pc["gray"], pc["ink_full"]
+    else:
+        prev_gray = cv2.cvtColor(prev_bgr, cv2.COLOR_BGR2GRAY)
+        prev_ink_full = _ink_mask(prev_gray)
+        if pc is not None:
+            pc.update(shape=prev_bgr.shape, gray=prev_gray, ink_full=prev_ink_full)
     cur_gray = cv2.cvtColor(cur_bgr, cv2.COLOR_BGR2GRAY)
-
-    prev_ink_full = _ink_mask(prev_gray)
     cur_ink_full = _ink_mask(cur_gray)
 
     prev_ink_ratio = float(cv2.countNonZero(prev_ink_full)) / float(h * w)
@@ -176,7 +190,13 @@ def compare_frames(prev_img: np.ndarray, cur_img: np.ndarray, *, dedupe_level: s
     if prev_ink_ratio < 0.0015 and cur_ink_ratio < 0.0015:
         return FrameDiffVerdict(VERDICT_SAME, "both_blank")
 
-    gap = estimate_staff_gap(prev_ink_full)
+    if pc is not None:
+        if "gap" not in pc:
+            pc["gap"] = estimate_staff_gap(prev_ink_full)
+        gap = pc["gap"]
+    else:
+        gap = estimate_staff_gap(prev_ink_full)
+    prev_gap_own = gap > 0
     if gap <= 0:
         gap = estimate_staff_gap(cur_ink_full)
     if gap <= 0:
@@ -185,12 +205,21 @@ def compare_frames(prev_img: np.ndarray, cur_img: np.ndarray, *, dedupe_level: s
     # Staff lines are identical in both frames and only serve to swallow note
     # heads sitting in the spaces once tolerance dilation is applied, so the
     # comparison runs on ink with the long horizontal lines removed.
-    prev_ink = _remove_staff_lines(prev_ink_full, gap=gap)
+    # (with the cache only when the gap is prev's own: otherwise these depend on cur)
+    if pc is not None and prev_gap_own and "ink" in pc:
+        prev_ink = pc["ink"]
+    else:
+        prev_ink = _remove_staff_lines(prev_ink_full, gap=gap)
     cur_ink = _remove_staff_lines(cur_ink_full, gap=gap)
 
     # Overlays (playhead line, highlight box, progress bar) are located per frame
     # so that they can be ignored in the diff and used for playhead tracking.
-    prev_overlay, prev_cursor = _overlay_mask(prev_bgr, prev_ink, gap=gap)
+    if pc is not None and prev_gap_own and "overlay" in pc:
+        prev_overlay, prev_cursor = pc["overlay"], pc["cursor"]
+    else:
+        prev_overlay, prev_cursor = _overlay_mask(prev_bgr, prev_ink, gap=gap)
+        if pc is not None and prev_gap_own:
+            pc.update(ink=prev_ink, overlay=prev_overlay, cursor=prev_cursor)
     cur_overlay, cur_cursor = _overlay_mask(cur_bgr, cur_ink, gap=gap)
 
     shift_x, shift_y, align_conf = _estimate_translation(prev_gray, cur_gray, prev_overlay, cur_overlay)
@@ -215,6 +244,8 @@ def compare_frames(prev_img: np.ndarray, cur_img: np.ndarray, *, dedupe_level: s
         warp=translation,
         gap=gap,
         sensitivity=sensitivity,
+        prev_full=prev_ink_full,
+        cur_full=cur_ink_full,
     )
     if result is None:
         return FrameDiffVerdict(
@@ -240,6 +271,8 @@ def compare_frames(prev_img: np.ndarray, cur_img: np.ndarray, *, dedupe_level: s
                 warp=refined_warp,
                 gap=gap,
                 sensitivity=sensitivity,
+                prev_full=prev_ink_full,
+                cur_full=cur_ink_full,
             )
             if refined is not None and (refined.significant, refined.minor) < (result.significant, result.minor):
                 result = refined
@@ -318,6 +351,8 @@ def _evaluate_alignment(
     warp: np.ndarray,
     gap: float,
     sensitivity: DiffSensitivity,
+    prev_full: Optional[np.ndarray] = None,
+    cur_full: Optional[np.ndarray] = None,
 ) -> Optional[_AlignmentResult]:
     aligned_cur_ink, aligned_cur_overlay, crop = _warp_to_prev(cur_ink, cur_overlay, warp)
     y0, y1, x0, x1 = crop
@@ -326,6 +361,12 @@ def _evaluate_alignment(
     prev_ink_c = prev_ink[y0:y1, x0:x1]
     cur_ink_c = aligned_cur_ink[y0:y1, x0:x1]
     overlay_c = prev_overlay[y0:y1, x0:x1] | aligned_cur_overlay[y0:y1, x0:x1]
+    # Full ink (staff lines kept) of both states: a change that only staff-line removal
+    # made (a line row removed in one frame and kept as dashes in the other) is ink in both.
+    prev_full_c = cur_full_c = None
+    if prev_full is not None and cur_full is not None:
+        prev_full_c = prev_full[y0:y1, x0:x1]
+        cur_full_c = _warp_to_prev(cur_full, cur_overlay, warp)[0][y0:y1, x0:x1]
 
     tolerance = int(np.clip(round(gap * 0.16), 1, 3))
     change = _tolerant_xor(prev_ink_c, cur_ink_c, radius=tolerance)
@@ -338,7 +379,14 @@ def _evaluate_alignment(
 
     ink_union = float(cv2.countNonZero(cv2.bitwise_or(prev_ink_c, cur_ink_c)))
     changed_ink_ratio = float(cv2.countNonZero(change)) / max(1.0, ink_union)
-    significant, minor, overlay_like, boxes = _classify_change_blobs(change, gap=gap, sensitivity=sensitivity)
+    staff_rows = None
+    if prev_full_c is not None:
+        staff_rows = staff_line_rows(prev_full_c, gap=gap) | staff_line_rows(cur_full_c, gap=gap)
+        # the change mask's even-sized openings (ink mask, tolerant xor) can move an edge by 1 px
+        staff_rows = staff_rows | np.roll(staff_rows, 1) | np.roll(staff_rows, -1)
+    significant, minor, overlay_like, boxes = _classify_change_blobs(
+        change, gap=gap, sensitivity=sensitivity, staff_rows=staff_rows,
+        presence=None if prev_full_c is None else (prev_ink_c, cur_ink_c, prev_full_c, cur_full_c, tolerance))
     return _AlignmentResult(significant, minor, overlay_like, changed_ink_ratio, boxes, crop)
 
 
@@ -708,14 +756,78 @@ def _tolerant_xor(a: np.ndarray, b: np.ndarray, *, radius: int) -> np.ndarray:
     return cv2.morphologyEx(change, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2)))
 
 
+def staff_line_rows(full_ink: np.ndarray, *, gap: float) -> np.ndarray:
+    """Rows of the staff lines of one band (each line widened by 1 px up and down).
+
+    Found per band, not by a global density threshold: a staff line drawn across two
+    pixel rows (anti-aliased, ~0.3 ink density per row) still reads as one long
+    horizontal run once the rows are joined. Only thin runs that have a partner line
+    one staff gap above or below are kept (five-line staff structure), so a single
+    beam or a text underline is not taken for a staff line."""
+    h, w = full_ink.shape[:2]
+    rows = np.zeros(h, dtype=bool)
+    if h < 8 or w < 24 or gap <= 0:
+        return rows
+    joined = cv2.dilate((full_ink > 0).astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_RECT, (1, 3)))
+    run = int(max(8, round(2.0 * gap)))
+    if run >= w:
+        return rows
+    lines = cv2.morphologyEx(joined, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (run, 1)))
+    cover = lines.sum(axis=1).astype(np.float32) / float(w)
+    if float(cover.max()) <= 0:
+        return rows
+    # an absolute floor, not a share of the densest line: a line left as dashes in this frame
+    # (~0.3 of the width) is still a line; the thickness and five-line checks below keep
+    # beams and text out
+    cand = cover >= 0.15
+    groups: List[Tuple[int, int]] = []
+    y = 0
+    while y < h:
+        if cand[y]:
+            start = y
+            while y < h and cand[y]:
+                y += 1
+            groups.append((start, y))
+        else:
+            y += 1
+    max_thick = 0.35 * gap + 3.0
+    thin = [(a, b) for a, b in groups if (b - a) <= max_thick]
+    centers = [(a + b - 1) / 2.0 for a, b in thin]
+    for (a, b), c in zip(thin, centers):
+        if any(0.8 * gap <= abs(c - o) <= 1.2 * gap for o in centers):
+            rows[a:b] = True
+    return rows
+
+
 def _classify_change_blobs(
     change: np.ndarray,
     *,
     gap: float,
     sensitivity: DiffSensitivity,
+    staff_rows: Optional[np.ndarray] = None,
+    presence: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]] = None,
 ) -> Tuple[int, int, int, List[Tuple[int, int, int, int]]]:
+    """Count change blobs. Staff-line rendering drift is never content:
+
+    * ``staff_rows`` (``staff_line_rows`` of both states): a blob whose changed pixels all lie
+      on staff-line rows (a line's thickness plus 1 px) is a residual line piece, ignored;
+    * ``presence`` = (prev staff-free ink, cur staff-free ink, prev full ink, cur full ink,
+      tolerance): a blob counts only when most of its changed pixels are ink in one state
+      and absent from the other state's full ink (staff lines kept) after a 1 px
+      dilation. A line row removed in one frame and left as dashes in the other is ink in
+      both full masks, so it is not a change; a mark added anywhere (a 1-gap dot, a note)
+      is absent from the other state and still counts."""
     if cv2.countNonZero(change) == 0:
         return 0, 0, 0, []
+    absent = None
+    if presence is not None:
+        a_rem, b_rem, a_full, b_full, _tol = presence
+        # 1 px only: the line piece sits where the other state's line is; a wider tolerance
+        # would let a staff line explain the rim of a note head drawn next to it
+        k = np.ones((3, 3), np.uint8)
+        a_grown = cv2.dilate(a_full, k) > 0
+        b_grown = cv2.dilate(b_full, k) > 0
+        absent = ((a_rem > 0) & ~b_grown) | ((b_rem > 0) & ~a_grown)
 
     # Merge the parts of one changed symbol (head + stem, broken beams) and
     # re-join vertical lines that staff-line removal cut into short pieces, so
@@ -739,6 +851,15 @@ def _classify_change_blobs(
         ink_pixels = int(np.count_nonzero(change_bool[y : y + bh, x : x + bw] & comp))
         if ink_pixels <= 0:
             continue
+        comp_change = change_bool[y : y + bh, x : x + bw] & comp
+        if staff_rows is not None:
+            on_rows = np.where(comp_change.any(axis=1))[0] + y
+            if on_rows.size and (on_rows[-1] - on_rows[0] + 1) <= 0.4 * gap + 2 and bool(staff_rows[on_rows].all()):
+                continue  # a thin residual staff-line piece
+        if absent is not None:
+            absent_px = int(np.count_nonzero(comp_change & absent[y : y + bh, x : x + bw]))
+            if absent_px * 2 < ink_pixels:
+                continue  # ink in both states: a staff-line removal difference, not content
         area_gaps = ink_pixels / gap_area
         min_dim_gaps = min(bw, bh) / gap
 

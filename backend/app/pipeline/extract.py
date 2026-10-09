@@ -207,6 +207,11 @@ def _download_youtube(url: str, workspace: Path, logger, progress_callback=None)
             "default-best",
             {
                 "format": "bestvideo+bestaudio/best",
+                # Largest height up to 1440p, VP9/H.264 before AV1 at the same height. A 1440p
+                # score already has more pixels per staff space than the A4 page needs
+                # (1080p sources measure 16-24 px, the page 17.7 px at 1.5 mm); 4K AV1 only
+                # makes the download and every decode pass slower.
+                "format_sort": list(YOUTUBE_FORMAT_SORT),
             },
         ),
         (
@@ -270,6 +275,9 @@ def _download_youtube(url: str, workspace: Path, logger, progress_callback=None)
             errors.append(f"{name}: {exc}")
             logger(f"youtube download strategy failed: {name}: {exc}")
     raise RuntimeError(f"failed to download youtube source from {url}: {' | '.join(errors)}")
+
+
+YOUTUBE_FORMAT_SORT = ("res:1440", "vcodec:vp9")
 
 
 def _emit_prepare_progress(progress_callback, update: Dict[str, object], *, logger=None) -> None:

@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Sequence
 
 import cv2
 
-from app.pipeline.process_control import checkpoint
+from app.pipeline.process_control import checkpoint, report_progress
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
@@ -791,3 +791,210 @@ def diagnose_capture_sequence(frame_paths: Sequence[Path]) -> Dict[str, Dict[str
         item["suspicious"] = bool(pairs)
         item["recommended_action"] = "review" if pairs else "keep"
     return diagnostics
+
+
+COMPOSED_JPEG_QUALITY = 92
+COMPOSED_PREVIEW_WIDTH = 1240
+
+
+def _write_composed_pdf(path: Path, pages: Sequence[np.ndarray], dpi: float) -> None:
+    """Deterministic, one-image-per-page PDF; compress pixels without a codec round trip.
+
+    Near-gray BGR pages use OpenCV's 8-bit luminance conversion (max chroma <= 24).
+    Color pages retain all RGB bytes. Only one page's encoded pixels are held at a time.
+    """
+    import zlib
+
+    offsets = [0]
+    with path.open("wb") as fh:
+        fh.write(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+
+        def obj(ident: int, body: bytes) -> None:
+            offsets.append(fh.tell())
+            fh.write(f"{ident} 0 obj\n".encode("ascii"))
+            fh.write(body)
+            fh.write(b"\nendobj\n")
+
+        obj(1, b"<< /Type /Catalog /Pages 2 0 R >>")
+        kids = " ".join(f"{3 + 3 * i} 0 R" for i in range(len(pages)))
+        obj(2, f"<< /Type /Pages /Kids [{kids}] /Count {len(pages)} >>".encode("ascii"))
+        for i, page in enumerate(pages):
+            checkpoint()
+            h, w = page.shape[:2]
+            width, height = f"{w * 72 / dpi:.8f}".rstrip("0").rstrip("."), f"{h * 72 / dpi:.8f}".rstrip("0").rstrip(".")
+            ident = 3 + 3 * i
+            obj(ident, (f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {width} {height}] "
+                        f"/Resources << /XObject << /Im {ident + 2} 0 R >> >> "
+                        f"/Contents {ident + 1} 0 R >>").encode("ascii"))
+            cmd = f"q {width} 0 0 {height} 0 0 cm /Im Do Q".encode("ascii")
+            obj(ident + 1, f"<< /Length {len(cmd)} >>\nstream\n".encode("ascii") + cmd + b"\nendstream")
+            chroma = int((page.max(axis=2) - page.min(axis=2)).max())
+            if chroma <= 24:
+                pixels, color_space = cv2.cvtColor(page, cv2.COLOR_BGR2GRAY), "DeviceGray"
+            else:
+                pixels, color_space = cv2.cvtColor(page, cv2.COLOR_BGR2RGB), "DeviceRGB"
+            encoded = zlib.compress(memoryview(np.ascontiguousarray(pixels)), level=9)
+            obj(ident + 2, (f"<< /Type /XObject /Subtype /Image /Width {w} /Height {h} "
+                            f"/ColorSpace /{color_space} /BitsPerComponent 8 /Filter /FlateDecode "
+                            f"/Length {len(encoded)} >>\nstream\n").encode("ascii") + encoded + b"\nendstream")
+        xref = fh.tell()
+        fh.write(f"xref\n0 {len(offsets)}\n0000000000 65535 f \n".encode("ascii"))
+        for offset in offsets[1:]:
+            fh.write(f"{offset:010d} 00000 n \n".encode("ascii"))
+        fh.write((f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\n"
+                  f"startxref\n{xref}\n%%EOF\n").encode("ascii"))
+
+
+def export_composed_pages(
+    *,
+    pages: Sequence[np.ndarray],
+    formats: List[str],
+    workspace: Path,
+    logger,
+    dpi: float = PDF_RESOLUTION,
+) -> Dict[str, object]:
+    """Write already-composed page rasters (clean reflow chart) to PNG/JPG/PDF.
+
+    Every format encodes the same rasters: no page finalization or splitting,
+    no extra header band, no resizing. PNG retains the color pixels; PDF embeds
+    lossless 8-bit gray (max chroma <= 24) or RGB pixels. JPG is derived. All files declare
+    ``dpi`` so A4 rasters print at A4. Preview images (reduced JPEGs) are
+    always written for the review screen. ``workspace`` should be a staged
+    folder: on any failure the caller discards it and keeps the previous files.
+    """
+    normalized = _normalize_formats(formats)  # empty -> png + pdf, like the other export paths
+    if not pages:
+        raise RuntimeError("no composed pages to export")
+    if not np.isfinite(dpi) or dpi <= 0:
+        raise ValueError("composed PDF resolution must be finite and positive")
+    workspace = Path(workspace)
+    image_dir = workspace / "images"
+    preview_dir = workspace / "preview"
+    image_dir.mkdir(parents=True, exist_ok=True)
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    images: List[str] = []
+    previews: List[str] = []
+    for index, page in enumerate(pages, start=1):
+        report_progress("writing", (index - 1) / float(len(pages)))
+        if (page is None or page.ndim != 3 or page.shape[2] != 3
+                or page.dtype != np.uint8 or min(page.shape[:2]) <= 0):
+            raise RuntimeError(f"composed page {index} is not a color raster")
+        rgb = Image.fromarray(cv2.cvtColor(page, cv2.COLOR_BGR2RGB))
+        if "png" in normalized:
+            target = image_dir / f"page_{index:04d}.png"
+            rgb.save(target, "PNG", dpi=(dpi, dpi))
+            images.append(str(target))
+        if "jpg" in normalized:
+            target = image_dir / f"page_{index:04d}.jpg"
+            rgb.save(target, "JPEG", quality=COMPOSED_JPEG_QUALITY, dpi=(int(dpi), int(dpi)))
+            images.append(str(target))
+        scale = COMPOSED_PREVIEW_WIDTH / float(rgb.width)
+        preview = rgb.resize((COMPOSED_PREVIEW_WIDTH, max(1, int(round(rgb.height * scale)))), Image.LANCZOS)
+        preview_path = preview_dir / f"preview_{index:04d}.jpg"
+        preview.save(preview_path, "JPEG", quality=88)
+        preview.close()
+        previews.append(str(preview_path))
+        rgb.close()
+    pdf_path = None
+    if "pdf" in normalized:
+        pdf_path = workspace / "sheet_export.pdf"
+        _write_composed_pdf(pdf_path, pages, float(dpi))
+    logger(f"composed export: {len(pages)} pages -> {', '.join(normalized)}")
+    return {
+        "images": images,
+        "pdf": str(pdf_path) if pdf_path else None,
+        "preview_images": previews,
+        "page_count": len(pages),
+        "formats": normalized,
+        "raw_frames": [],
+        "page_diagnostics": [],
+        "dropped_pages": [],
+    }
+
+
+class ExportVerificationError(RuntimeError):
+    """A composed export that may not be published as done (STRATEGY Step 2A "no done without a valid
+    placement plan and a non-empty PDF"). ``code`` is the job/task error code; the message starts
+    with it (``CODE: detail``) so a background task reports the same code."""
+
+    def __init__(self, code: str, detail: str, facts: Optional[Dict[str, object]] = None):
+        self.code = code
+        self.detail = detail
+        self.facts = dict(facts or {})
+        super().__init__(f"{code}: {detail}")
+
+
+_PDF_PAGE_RE = None
+
+
+def pdf_page_count(path: Path) -> Optional[int]:
+    """Pages of a PDF written by ``export_composed_pages`` (Pillow: uncompressed object table), or None
+    when the file is missing, empty or not structurally readable (no header, no %%EOF, no page tree,
+    or a page tree whose /Count disagrees with the page objects). No PDF library is required."""
+    import re
+
+    global _PDF_PAGE_RE
+    if _PDF_PAGE_RE is None:
+        _PDF_PAGE_RE = (re.compile(rb"/Type\s*/Page(?![A-Za-z])"), re.compile(rb"/Type\s*/Pages\b[^>]*?/Count\s+(\d+)", re.S),
+                        re.compile(rb"/Count\s+(\d+)[^>]*?/Type\s*/Pages\b", re.S))
+    try:
+        data = Path(path).read_bytes()
+    except OSError:
+        return None
+    if len(data) < 64 or not data.startswith(b"%PDF-") or b"%%EOF" not in data[-1024:]:
+        return None
+    pages = len(_PDF_PAGE_RE[0].findall(data))
+    counts = [int(m) for m in _PDF_PAGE_RE[1].findall(data)] + [int(m) for m in _PDF_PAGE_RE[2].findall(data)]
+    if not counts or max(counts) != pages:
+        return None
+    return pages
+
+
+def verify_composed_export(export_result: Dict[str, object], *, plan: Dict[str, object],
+                           pages: Sequence[np.ndarray]) -> Dict[str, object]:
+    """Check a composed export before it is published as done: the placement plan is valid (no
+    conflicts) and has at least one page, every page holds a placement (or, after the last page with
+    one, the incomplete-chart appendix), the rendered rasters match
+    the plan's page count, and every written format holds exactly those pages (the PDF readable,
+    when PDF was requested; each image file non-empty). Raises ExportVerificationError; returns
+    the facts checked."""
+    plan_pages = list((plan or {}).get("pages") or [])
+    validation = (plan or {}).get("validation") or {}
+    facts: Dict[str, object] = {"plan_pages": len(plan_pages), "rendered_pages": len(pages)}
+    if (plan or {}).get("conflicts") or not validation.get("valid", False):
+        raise ExportVerificationError("INVALID_PLACEMENT_PLAN", "the page plan is not valid "
+                                      + "; ".join(str(e) for e in (validation.get("errors") or [])[:3]), facts)
+    # A page without lines may only be a trailing page of the incomplete-chart appendix (the
+    # end-of-chart list of unresolved intervals, reflow_layout.append_trailing_rows).
+    with_lines = [i for i, p in enumerate(plan_pages) if p.get("placements")]
+    if (not with_lines or any(not p.get("placements") and not (p.get("appendix") and i > with_lines[-1])
+                              for i, p in enumerate(plan_pages))):
+        raise ExportVerificationError("EMPTY_EXPORT", "the page plan has no pages or an empty page", facts)
+    if len(pages) != len(plan_pages):
+        raise ExportVerificationError("PAGE_COUNT_MISMATCH",
+                                      f"{len(pages)} rendered pages for {len(plan_pages)} planned pages", facts)
+    formats = list(export_result.get("formats") or [])
+    n = len(plan_pages)
+    if "pdf" in formats:
+        pdf = export_result.get("pdf")
+        if not pdf or not Path(str(pdf)).is_file() or Path(str(pdf)).stat().st_size == 0:
+            raise ExportVerificationError("EMPTY_EXPORT", "the PDF was not written", facts)
+        count = pdf_page_count(Path(str(pdf)))
+        facts["pdf_pages"] = count
+        if count is None:
+            raise ExportVerificationError("PDF_UNREADABLE", "the PDF could not be read back", facts)
+        if count != n:
+            raise ExportVerificationError("PAGE_COUNT_MISMATCH", f"the PDF has {count} pages, the plan {n}", facts)
+    images = [Path(str(p)) for p in (export_result.get("images") or [])]
+    for ext in ("png", "jpg"):
+        if ext in formats:
+            files = [p for p in images if p.suffix.lower() == f".{ext}"]
+            facts[f"{ext}_pages"] = len(files)
+            if len(files) != n:
+                raise ExportVerificationError("PAGE_COUNT_MISMATCH", f"{len(files)} {ext.upper()} files for {n} planned pages", facts)
+            if any(not p.is_file() or p.stat().st_size == 0 for p in files):
+                raise ExportVerificationError("EMPTY_EXPORT", f"an empty or missing {ext.upper()} page", facts)
+    if not formats or not any(f in formats for f in ("pdf", "png", "jpg")):
+        raise ExportVerificationError("EMPTY_EXPORT", "no output format was written", facts)
+    facts["verified"] = True
+    return facts

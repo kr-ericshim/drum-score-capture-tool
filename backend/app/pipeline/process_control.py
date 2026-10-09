@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from queue import Empty, SimpleQueue
 from threading import Event, Thread
+from typing import Callable, Optional
 
 
 class OperationCancelled(Exception):
@@ -31,6 +32,34 @@ def checkpoint() -> None:
     event = _cancel_event.get()
     if event is not None and event.is_set():
         raise OperationCancelled("capture cancelled")
+
+
+_progress_callback: ContextVar[Callable[[str, Optional[float]], None] | None] = ContextVar("operation_progress", default=None)
+
+
+@contextmanager
+def progress_scope(callback: Callable[[str, Optional[float]], None]):
+    """Route ``report_progress`` calls made in this context (e.g. a background review export) to ``callback``."""
+    token = _progress_callback.set(callback)
+    try:
+        yield
+    finally:
+        _progress_callback.reset(token)
+
+
+def report_progress(stage: str, fraction: Optional[float] = None) -> None:
+    """A stage boundary (or a step inside one): honours a pending cancel first, then tells the
+    current progress callback, if any. A failing callback never stops the work."""
+    checkpoint()
+    callback = _progress_callback.get()
+    if callback is None:
+        return
+    try:
+        callback(stage, fraction)
+    except OperationCancelled:
+        raise
+    except Exception:
+        pass
 
 
 def run_capture_process(command, *, on_line=None, idle_timeout=120.0):

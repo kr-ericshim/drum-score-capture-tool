@@ -72,7 +72,7 @@ class TestJobReviewCandidates(unittest.TestCase):
                     },
                 ),
             ):
-                _run_job("job-1", payload)
+                _run_job("job-1", payload, legacy_pipeline=True)
 
             job = store.get("job-1")
             self.assertIsNotNone(job)

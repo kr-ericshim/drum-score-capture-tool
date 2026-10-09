@@ -54,6 +54,8 @@ class DownloadYoutubeTests(unittest.TestCase):
                 output = extract._download_youtube("https://example.com/watch?v=abc", Path(tmpdir), logger=lambda _: None)
                 self.assertTrue(output.exists())
         self.assertEqual(FakeYoutubeDL.seen_opts[0]["format"], "bestvideo+bestaudio/best")
+        # up to 1440p, VP9/H.264 before AV1 at the same height
+        self.assertEqual(FakeYoutubeDL.seen_opts[0]["format_sort"], ["res:1440", "vcodec:vp9"])
         self.assertNotIn("merge_output_format", FakeYoutubeDL.seen_opts[0])
         self.assertNotIn("extractor_args", FakeYoutubeDL.seen_opts[0])
 
