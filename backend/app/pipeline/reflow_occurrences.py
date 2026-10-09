@@ -45,11 +45,14 @@ Input: an observation manifest (observations.py) and its display episodes
   (``identity_verdict``: paper level, written display, measure-number area). A pair
   with evidence of two written occurrences is vetoed, recorded in ``identity_vetoes``,
   and no later rule may join it, directly or through a third display (``_VetoGuard``;
-  Codex H1: a steady second row let a 13/17 pair be joined after its veto).
+  Codex H1: a steady second row let a 13/17 pair be joined after its veto). Pixel-only
+  rules check every raw member of both episodes; an unresolved member likewise
+  keeps the groups apart, while the scan continues to look for a definite veto.
 """
 
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from pathlib import Path
 import time
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -118,7 +121,7 @@ class _UF:
 
 
 class _VetoGuard:
-    """Joins over a ``_UF`` that never merge two groups holding an identity-vetoed pair."""
+    """Never merge groups holding a vetoed or unresolved pixel-identity pair."""
 
     def __init__(self, uf: _UF):
         self.uf = uf
@@ -679,14 +682,24 @@ def build_occurrences(
     raw_cache: Dict[str, Tuple] = {}
 
     def ep_raw_window(e: Dict[str, Any], where) -> Tuple:
-        """Raw episode window: an endpoint for identity, or a member index for coverage."""
+        """Cache endpoints only; whole-span member windows are transient."""
+        if isinstance(where, int):
+            if where == 0:
+                where = "first"
+            elif where == len(e["observation_ids"]) - 1:
+                where = "last"
+            else:
+                return _raw_window_of(obs_by, load_image, e["observation_ids"][where], e["region_ids"][where])
         key = f"{e['id']}:{where}"
         if key not in raw_cache:
-            k = where if isinstance(where, int) else (0 if where == "first" else len(e["observation_ids"]) - 1)
+            k = 0 if where == "first" else len(e["observation_ids"]) - 1
             raw_cache[key] = _raw_window_of(obs_by, load_image, e["observation_ids"][k], e["region_ids"][k])
         return raw_cache[key]
 
-    def identity_verdict(a: Dict[str, Any], b: Dict[str, Any], *, identifier_veto_only: bool = False) -> Tuple[str, Dict[str, Any]]:
+    playhead_index: Dict[str, Tuple[List[float], List[Tuple]]] = {}
+
+    def identity_verdict(a: Dict[str, Any], b: Dict[str, Any], *, identifier_veto_only: bool = False,
+                         where_a="last", where_b="first") -> Tuple[str, Dict[str, Any]]:
         """One identity gate for every join rule, on raw windows of a's last and b's first view
         (audit G1: cleaning whitens gray measure numbers). ``same``: positive evidence of one
         written occurrence (the same written display, or a difference that is only the playback
@@ -694,9 +707,24 @@ def build_occurrences(
         evidence of two written occurrences (notation or a printed identifier one side does not
         draw). ``uncertain``: no confident comparison (paper not clearly light, staff size
         differs, number area under an overlay, no pixels). The record carries ``kept_apart``."""
-        xa, xb = _playhead_end(a, "last"), _playhead_end(b, "first")
+        def reading(e, where):
+            if not isinstance(where, int):
+                return _playhead_end(e, where)
+            # Cursor-only evidence must use this member's reading, not the episode endpoint.
+            if e["id"] not in playhead_index:
+                entries = sorted((float(ts), i, x) for i, (ts, x) in enumerate(
+                    (e.get("motion") or {}).get("playhead_track") or []))
+                playhead_index[e["id"]] = ([ts for ts, _i, _x in entries], entries)
+            times, entries = playhead_index[e["id"]]
+            t = obs_by[e["observation_ids"][where]]["t_sec"]
+            lo, hi = bisect_left(times, t - 0.0001), bisect_right(times, t + 0.0001)
+            matches = [entry for entry in entries[lo:hi] if abs(entry[0] - t) < 0.0001]
+            # Preserve the first track reading if timestamps coincide or nearly coincide.
+            return float(min(matches, key=lambda entry: entry[1])[2]) if matches else None
+
         try:
-            wa_raw, wb_raw = ep_raw_window(a, "last"), ep_raw_window(b, "first")
+            xa, xb = reading(a, where_a), reading(b, where_b)
+            wa_raw, wb_raw = ep_raw_window(a, where_a), ep_raw_window(b, where_b)
             papers = [raw_paper_level(wa_raw), raw_paper_level(wb_raw)]
         except Exception as exc:  # pragma: no cover - defensive: no pixels, no verdict
             logger(f"identity comparison failed: {exc}")
@@ -745,17 +773,35 @@ def build_occurrences(
     def gated_join(a: Dict[str, Any], b: Dict[str, Any], path: str, *, need_same: bool) -> Tuple[bool, str, Dict[str, Any]]:
         """Run the identity gate for a join rule. ``need_same``: the rule has only pixel evidence
         (an uncertain identity keeps the pair apart); otherwise the rule has its own tracker
-        evidence and only a veto keeps it apart. A veto is recorded and binds every later rule."""
+        evidence and only a veto keeps it apart. Pixel-only rules require whole-span sameness;
+        both a veto and uncertainty bind every later rule, including joins through a group."""
         if guard.blocks(a["id"], b["id"]):
             identity_vetoes.append({"a": a["id"], "b": b["id"], "path": path, "verdict": "group_holds_identity_veto"})
             return False, "veto", {"kept_apart": "group_holds_identity_veto"}
         kind, rec = identity_verdict(a, b, identifier_veto_only=not need_same)
-        if kind == "veto":
+        if need_same and kind != "veto":
+            # A late tracker boundary may put the new display at both endpoints.
+            # Before unioning, every raw member of BOTH episodes must agree with
+            # b's first window under the same strict identity gate. Uncertainty
+            # keeps the split and binds subsequent rules. Continue after uncertainty
+            # so a later definite difference is still recorded as the stronger evidence.
+            for e in (a, b):
+                for k in range(len(e["observation_ids"])):
+                    if (e is a and k == len(a["observation_ids"]) - 1) or (e is b and k == 0):
+                        continue  # already compared, or the reference itself
+                    member_kind, member_rec = identity_verdict(e, b, where_a=k, where_b=0)
+                    if member_kind == "veto" or (member_kind == "uncertain" and kind == "same"):
+                        kind = member_kind
+                        rec = {**member_rec, "observations": [e["observation_ids"][k], b["observation_ids"][0]]}
+                    if kind == "veto":
+                        break
+                if kind == "veto":
+                    break
+        if kind == "veto" or (kind == "uncertain" and need_same):
             guard.veto(a["id"], b["id"])
             identity_vetoes.append({"a": a["id"], "b": b["id"], "path": path, "verdict": rec["kept_apart"],
-                                    "evidence": rec.get("evidence"), "playhead": rec.get("playhead")})
-            return False, kind, rec
-        if kind == "uncertain" and need_same:
+                                    "evidence": rec.get("evidence"), "playhead": rec.get("playhead"),
+                                    **({"observations": rec["observations"]} if "observations" in rec else {})})
             return False, kind, rec
         return guard.join(a["id"], b["id"]), kind, rec
 
@@ -816,7 +862,9 @@ def build_occurrences(
     #     polarity-normalized pixels (audit G1: cleaning whitens gray >= CLEAN_INK_MAX, so gray
     #     measure numbers 13/17 vanished and the lines merged); where the paper is not clearly
     #     lighter than the ink threshold, or the number area is under an overlay, the identity
-    #     is uncertain and the split is kept (``identity_uncertain``). Done before the short-display cut,
+    #     is uncertain and the split is kept (``identity_uncertain``). Every raw member of both
+    #     episodes must pass: matching boundary frames alone can both show a new display when
+    #     the tracker closes the old episode late (Fzc 77-80 -> 81-84). Done before the short-display cut,
     #     so the parts of a split display are judged together.
     step = sample_interval(manifest)
     family_pairs: List[Dict[str, Any]] = []  # kept for the self-check schema; never filled (F1)

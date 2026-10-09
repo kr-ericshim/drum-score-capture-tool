@@ -11,7 +11,10 @@ B. reflow_occurrences: consecutive displays of one slot split at ``content_chang
 C. GT-free self-checks: ``adjacent_duplicate``, ``score_time_uncovered``, ``revisit_count``.
 """
 
+import copy
 import unittest
+from unittest import mock
+import weakref
 from typing import Any, Dict, List, Optional, Sequence
 
 import cv2
@@ -165,6 +168,85 @@ def run(frames, cuts, **kw):
 
 
 class SplitJoinTest(unittest.TestCase):
+    def test_long_whole_span_scan_retains_only_endpoint_windows(self):
+        # Reuse one decoded frame so this measures raw-window retention, independently
+        # of the image loader's own bounded decoded-frame cache.
+        image = render(strip(4, numbers=True))
+        manifest, _images = build([(0.0, image)])
+        template = manifest["observations"][0]
+        manifest["observations"] = []
+        for i in range(256):
+            obs = copy.deepcopy(template)
+            obs["id"], obs["t_sec"] = f"obs-{i:06d}", i * STEP
+            obs["system_regions"][0]["region_id"] = f"{obs['id']}-r0"
+            manifest["observations"].append(obs)
+        tracking = tracking_from(manifest, [128], playhead=ramp(256))
+        windows, peak = [], 0
+        raw_window_of = ro._raw_window_of
+
+        def counted_window(*args):
+            nonlocal peak
+            result = raw_window_of(*args)
+            windows.append(weakref.ref(result[0]))
+            peak = max(peak, sum(w() is not None for w in windows))
+            return result
+
+        with mock.patch.object(ro, "_raw_window_of", side_effect=counted_window):
+            occ = ro.build_occurrences(tracking, manifest, lambda _o: image)
+        self.assertEqual([s["episode_ids"] for s in occ["systems"] if s["included"]],
+                         [["ep-0000", "ep-0001"]])
+        self.assertGreaterEqual(len(windows), 256)  # all members were actually examined
+        self.assertLessEqual(peak, 6, f"retained {peak} raw windows for 256 members")
+
+    def test_late_boundary_observations_of_next_display_do_not_join(self):
+        # Same groove, different printed measures. The tracker has already admitted
+        # two frames of 81 into the episode for 77, so boundary-only identity agrees.
+        a = numbered(show(strip(4), 0.0, 4.0, seed=51), "77")
+        b = numbered(show(strip(4), 4.0, 4.0, seed=52), "81")
+        frames = a + b
+        cut = len(a) + 2
+        for readings in (ramp(len(frames), restart_at=[len(a)]),
+                         [None] * len(frames), ramp(len(frames))):
+            with self.subTest(motion=readings[:2]):
+                occ, _m = run(frames, [cut], playhead=readings)
+                placed = [s for s in occ["systems"] if s["included"]]
+                self.assertEqual([s["episode_ids"] for s in placed], [["ep-0000"], ["ep-0001"]])
+                self.assertEqual(occ["joins"], [])
+                self.assertFalse(any(s.get("alternate_of") for s in placed))
+                checks = occ["self_checks"]["split_joins"]["kept_apart"]
+                self.assertEqual(len(checks), 1)
+                self.assertIn(checks[0]["kept_apart"],
+                              ("playhead_went_back", "written_display_differs", "measure_number_area_differs"))
+
+    def test_middle_member_difference_in_either_episode_keeps_split(self):
+        # Matching endpoints do not establish sameness over either episode's span.
+        frames = numbered(show(strip(4), 0.0, 8.0, seed=53), "81")
+        changed = numbered(show(strip(4), 0.0, 8.0, seed=53), "77")
+        cut = len(frames) // 2
+        for index in (cut // 2, cut + cut // 2):
+            with self.subTest(changed_member=index):
+                mixed = list(frames)
+                mixed[index] = changed[index]
+                occ, _m = run(mixed, [cut], playhead=ramp(len(frames)))
+                self.assertEqual(occ["joins"], [])
+                self.assertEqual(len([s for s in occ["systems"] if s["included"]]), 2)
+
+    def test_false_split_with_staff_drift_and_continuing_playhead_still_joins(self):
+        spec = strip(4, numbers=True)
+        frames = show(spec, 0.0, 6.0, seed=54)
+        cut = len(frames) // 2
+        top = _staff_rows(spec)[0]
+        manifest, images = build(frames)
+        tracking = tracking_from(manifest, [cut], playhead=ramp(len(frames)))
+        # Keep the detected staff geometry fixed while its rendering drifts.
+        for i, o in enumerate(manifest["observations"]):
+            images[o["id"]] = _dash_top_line(images[o["id"]], top, phase=0 if i < cut else 25)
+        occ = ro.build_occurrences(tracking, manifest, loader(images))
+        self.assertEqual([s["episode_ids"] for s in occ["systems"] if s["included"]],
+                         [["ep-0000", "ep-0001"]])
+        self.assertEqual(len(occ["joins"]), 1)
+        self.assertFalse(occ["joins"][0]["joined_without_motion_evidence"])
+
     def test_false_split_with_continuing_playhead_is_one_display(self):
         frames = show(strip(4, numbers=True), 0.0, 6.0, seed=1)
         occ, _m = run(frames, [14], playhead=ramp(len(frames)))
@@ -345,6 +427,22 @@ class SplitJoinTest(unittest.TestCase):
         j = occ["self_checks"]["split_joins"]["joined"]
         self.assertEqual(len(j), 1)
         self.assertTrue(j[0].get("differs_only_by_cursor"), j)
+        # The indexed member lookup preserves the old timestamp tolerance and uses
+        # each member's own cursor reading, even when stored times differ slightly.
+        jittered = tracking_from(manifest, [8], playhead=readings)
+        for episode in jittered["episodes"]:
+            episode["motion"]["playhead_track"] = [[t + 0.00005, x]
+                for t, x in episode["motion"]["playhead_track"]]
+        occ = ro.build_occurrences(jittered, manifest, loader(images))
+        self.assertEqual(len([s for s in occ["systems"] if s["included"]]), 1)
+        # A reading near the boundary but outside the member timestamp tolerance
+        # is endpoint evidence only. It cannot explain the reference frame's cursor
+        # during the whole-span scan when that frame has no actual reading.
+        missing_reference = tracking_from(manifest, [8], playhead=readings)
+        b_track = missing_reference["episodes"][1]["motion"]["playhead_track"]
+        b_track[0][0] += 0.01
+        occ = ro.build_occurrences(missing_reference, manifest, loader(images))
+        self.assertEqual(len([s for s in occ["systems"] if s["included"]]), 2)
         # the same cursor with a playhead reading elsewhere is no evidence: kept apart
         far = [round(min(0.98, x + 0.3), 4) if k >= 8 else x for k, x in enumerate(readings)]
         occ = ro.build_occurrences(tracking_from(manifest, [8], playhead=far), manifest, loader(images))
@@ -418,6 +516,43 @@ class IdentityVetoAllPathsTest(unittest.TestCase):
 
     def _top_systems(self, occ):
         return [s["episode_ids"] for s in occ["systems"] if s["included"] and set(s["episode_ids"]) & {"ep-0000", "ep-0001"}]
+
+    def test_late_boundary_with_uncertain_first_member_and_steady_peer_keeps_split(self):
+        # Review reproduction: the last two old-episode members already show 81;
+        # its first member has paper 210, while later members clearly show 77.
+        # The steady bottom row must not undo the whole-span rejection.
+        (manifest, images), half = self._page("77", "81")
+        first = manifest["observations"][0]
+        images[first["id"]] = (images[first["id"]].astype(np.uint16) * 210 // 255).astype(np.uint8)
+        cut = half + 2
+        tracking = two_row_tracking(manifest, cut, boundary="content_change")
+        occ = ro.build_occurrences(tracking, manifest, loader(images))
+        self.assertEqual(self._top_systems(occ), [["ep-0000"], ["ep-0001"]], occ["joins"])
+        self.assertEqual(occ["joins"], [])
+        vetoes = [v for v in occ["identity_vetoes"] if v["path"] == "content_change_same_written_display"]
+        self.assertEqual(len(vetoes), 1)
+        self.assertIn(vetoes[0]["verdict"], ("written_display_differs", "measure_number_area_differs"))
+        self.assertEqual(vetoes[0]["observations"][0], manifest["observations"][1]["id"])
+        self.assertTrue(any(v["verdict"] == "group_holds_identity_veto" for v in occ["identity_vetoes"]))
+
+    def test_uncertain_span_is_binding_even_without_a_definite_difference(self):
+        (manifest, images), cut = self._page("81", "81")
+        first = manifest["observations"][0]
+        images[first["id"]] = (images[first["id"]].astype(np.uint16) * 210 // 255).astype(np.uint8)
+        occ = ro.build_occurrences(two_row_tracking(manifest, cut, boundary="content_change"),
+                                   manifest, loader(images))
+        self.assertEqual(self._top_systems(occ), [["ep-0000"], ["ep-0001"]], occ["joins"])
+        self.assertEqual(occ["joins"], [])
+        self.assertEqual([v["verdict"] for v in occ["identity_vetoes"]],
+                         ["identity_uncertain", "group_holds_identity_veto"])
+
+    def test_steady_row_rule_checks_the_whole_span_without_the_false_split_rule(self):
+        (manifest, images), half = self._page("77", "81")
+        occ = ro.build_occurrences(two_row_tracking(manifest, half + 2, boundary="registration_change"),
+                                   manifest, loader(images))
+        self.assertEqual(self._top_systems(occ), [["ep-0000"], ["ep-0001"]], occ["joins"])
+        self.assertEqual(occ["joins"], [])
+        self.assertTrue(any(v["path"] == "unchanged_page_view_same_row" for v in occ["identity_vetoes"]))
 
     def test_steady_row_join_respects_the_measure_number_veto(self):
         for boundary, playhead in (("content_change", None), ("content_change", "ramp"), ("registration_change", None)):
