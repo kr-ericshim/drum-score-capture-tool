@@ -1440,7 +1440,7 @@ def build_panorama(chain: Sequence[str], seam_of: Dict[Tuple[str, str], Dict[str
 # Panorama preservation ledger (Codex J1). Kept apart from CONFIG (whose hash is frozen in
 # JUMP_FREEZE.md): it never changes what a run, a seam or a strip image becomes, only whether
 # the discarded overlap content of a display is shown to exist in the panorama.
-PRESERVE_VERSION = "jump_preservation-4"
+PRESERVE_VERSION = "jump_preservation-6"  # 6: recurring faded panel label past the panel edge (pixel mask)
 PRESERVE_CONFIG: Dict[str, Any] = {
     # a display component's pixels in columns another display owns are looked up in the
     # panorama ink dilated by this many px (registration and ink-level slack: +-1 px)
@@ -1452,6 +1452,15 @@ PRESERVE_CONFIG: Dict[str, Any] = {
     "min_foreign_px": 6,
     # conflicts listed per chain (evidence)
     "evidence_components": 12,
+    # panel label recurring past the panel edge (panel_label_recurring): a faded unmatched
+    # component of a later display starting within this many staff gaps right of the panel edge
+    "label_reach_gaps": 3.0,
+    # ... at least label_mask_cover of whose pixels are screen-fixed faded ink: crop pixels that
+    # are faded near-panel ink in at least label_recur_min_others + 1 displays of the chain
+    # (dilated 1 px for antialiasing). Pixel-level, so a glyph fragmented differently per display
+    # still recurs; a mark at a new position never does.
+    "label_recur_min_others": 3,
+    "label_mask_cover": 0.8,
 }
 JUMP_OVERLAP_CONFLICT = "JUMP_OVERLAP_CONTENT_CONFLICT"
 
@@ -1583,6 +1592,11 @@ def panorama_preservation(chain: Sequence[str], info: Dict[str, Any], pano: np.n
     An unmatched component of a later display that starts at its panel edge and is faded (darkest
     ink below ``panel_faded_contrast`` of the 90th-percentile contrast of the display's ink)
     is the panel's label running past it (``panel_overflow``, on record, not a conflict).
+    An unmatched faded component starting within ``label_reach_gaps`` right of that edge with at
+    least ``label_mask_cover`` of its pixels on screen-fixed faded ink (crop pixels faded near the
+    panel in >= ``label_recur_min_others`` + 1 displays, dilated 1 px) is the same label wider
+    than the measured panel (``panel_label_recurring``, listed, not a conflict); position alone
+    or fadedness alone never exempts.
     Recurrent crop positions and the registration's ``fixed`` mask are suspicions only.
     Only positive, appearance-matched screen chrome can explain discarded pixels;
     the detector's grown mask alone cannot explain notation. Returns the ledger: per-display and total
@@ -1602,7 +1616,15 @@ def panorama_preservation(chain: Sequence[str], info: Dict[str, Any], pano: np.n
     ph, pw = pink.shape
     per: List[Dict[str, Any]] = []
     conflicts: List[Dict[str, Any]] = []
-    tot = {"components": 0, "owned": 0, "matched": 0, "unmatched": 0, "speckle": 0, "panel_overflow": 0, "screen_fixed": 0}
+    tot = {"components": 0, "owned": 0, "matched": 0, "unmatched": 0, "speckle": 0, "panel_overflow": 0,
+           "panel_label_recurring": 0, "screen_fixed": 0}
+    cnt_by: Dict[str, Dict[str, int]] = {}
+    # per crop pixel: in how many displays it is faded ink just right of the panel edge; and the
+    # unmatched faded components there (with their crop pixels), decided once every display is seen
+    lh = max(int(composites[d].shape[0]) for d in chain)
+    lw = max(int(composites[d].shape[1]) for d in chain)
+    label_votes = np.zeros((lh, lw), np.int32)
+    label_pending: List[Tuple[Dict[str, Any], np.ndarray, np.ndarray]] = []
     items: List[Dict[str, Any]] = []
     # Use the line-switch chrome detector, with its own steady appearance. Direct
     # callers without a raw loader can still obtain positive evidence from the
@@ -1632,8 +1654,11 @@ def panorama_preservation(chain: Sequence[str], info: Dict[str, Any], pano: np.n
         if cov is not None:
             ink[:, np.asarray(cov[:w], dtype=bool)] = False  # unrecovered overlay columns (on record as such)
         n, lab, stats, _c = cv2.connectedComponentsWithStats(ink.astype(np.uint8), connectivity=8)
-        cnt = {"components": 0, "owned": 0, "matched": 0, "unmatched": 0, "speckle": 0, "panel_overflow": 0}
+        cnt = {"components": 0, "owned": 0, "matched": 0, "unmatched": 0, "speckle": 0, "panel_overflow": 0,
+               "panel_label_recurring": 0}
+        cnt_by[d] = cnt
         edge = int(panel_right) if k > 0 else 0
+        label_reach = edge + 1 + float(pcfg["label_reach_gaps"]) * float(ep["staff_gap_px"])
         contrast = ref_c = None
         if edge > 0:
             norm, _inv = sd.normalize_polarity(comp)
@@ -1641,6 +1666,11 @@ def panorama_preservation(chain: Sequence[str], info: Dict[str, Any], pano: np.n
             contrast = np.clip(float(np.percentile(g, 75)) - g, 0, None)
             body = contrast[:, edge:][ink[:, edge:]]  # the display's own ink right of its panel
             ref_c = float(np.percentile(body, 90)) if body.size else None
+            if ref_c:
+                b0, b1 = edge + 2, min(w, int(np.floor(label_reach)) + 1)  # edge+1 < x <= label_reach
+                if b1 > b0:
+                    band = ink[:, b0:b1] & (contrast[:, b0:b1] < cfg["panel_faded_contrast"] * ref_c)
+                    label_votes[:h, b0:b1] += band
         for i in range(1, n):
             x, y, bw, bh, area = (int(v) for v in stats[i])
             cnt["components"] += 1
@@ -1648,6 +1678,11 @@ def panorama_preservation(chain: Sequence[str], info: Dict[str, Any], pano: np.n
                 cnt["speckle"] += 1
                 continue
             items.append({"display": d, "box": [x, y, x + bw, y + bh], "area_px": area})
+            # faded ink starting just right of (not at) a later display's panel edge
+            near_label = False
+            if edge > 0 and ref_c and edge + 1 < x <= label_reach:
+                near_label = float(contrast[y:y + bh, x:x + bw][lab[y:y + bh, x:x + bw] == i].max()) < \
+                    cfg["panel_faded_contrast"] * ref_c
             ys, xs = np.nonzero(lab[y:y + bh, x:x + bw] == i)
             px, py = xs + x + ox, ys + y + oy
             foreign = (px < own0) | (px >= own1)
@@ -1681,12 +1716,34 @@ def panorama_preservation(chain: Sequence[str], info: Dict[str, Any], pano: np.n
                 # chrome, never panorama content of a later display (on record)
                 cnt["panel_overflow"] += 1
                 continue
+            conflict = {"display": d, "box_crop": [x, y, x + bw, y + bh], "box_pano": [x + ox, y + oy, x + bw + ox, y + bh + oy],
+                        "area_px": area, "foreign_px": nf, "matched_frac": round(frac, 3),
+                        "owner": next((o["display"] for o in info["owners"]
+                                       if o["pano_cols"][0] <= int(np.median(fx)) < o["pano_cols"][1]), None)}
+            if near_label:
+                label_pending.append((conflict, ys + y, xs + x))  # decided by recurrence below
+                continue
             cnt["unmatched"] += 1
-            conflicts.append({"display": d, "box_crop": [x, y, x + bw, y + bh], "box_pano": [x + ox, y + oy, x + bw + ox, y + bh + oy],
-                              "area_px": area, "foreign_px": nf, "matched_frac": round(frac, 3),
-                              "owner": next((o["display"] for o in info["owners"]
-                                             if o["pano_cols"][0] <= int(np.median(fx)) < o["pano_cols"][1]), None)})
-        per.append(dict(cnt, display=d, screen_fixed=0))
+            conflicts.append(conflict)
+    # A faded component starting just right of a later display's panel edge whose pixels lie
+    # (>= label_mask_cover) on crop pixels that are faded near-panel ink in at least
+    # label_recur_min_others + 1 displays is the panel's own label running past the measured
+    # panel (an instrument name wider than the panel's static columns): screen chrome, on record
+    # as panel_label_recurring. Position alone or fadedness alone never exempts; dark ink there,
+    # or faded ink at a position few displays share, stays a conflict.
+    label_out: List[Dict[str, Any]] = []
+    recurring = label_votes >= int(pcfg["label_recur_min_others"]) + 1
+    if recurring.any():
+        recurring = cv2.dilate(recurring.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
+    for c, cy, cx in label_pending:
+        cover = float(recurring[cy, cx].mean()) if cy.size else 0.0
+        if cover >= float(pcfg["label_mask_cover"]):
+            cnt_by[c["display"]]["panel_label_recurring"] += 1
+            label_out.append(dict(c, classification="PANEL_LABEL_RECURRING", recurring_cover=round(cover, 3)))
+        else:
+            cnt_by[c["display"]]["unmatched"] += 1
+            conflicts.append(c)
+    per = [dict(cnt_by[d], display=d, screen_fixed=0) for d in chain]
     # Position recurrence is suspicion, consistent with audit_jump_minority.
     suspicions: List[Dict[str, Any]] = []
     if conflicts:
@@ -1702,6 +1759,7 @@ def panorama_preservation(chain: Sequence[str], info: Dict[str, Any], pano: np.n
     conflicts.sort(key=lambda c: (c["box_pano"][0], c["display"]))
     return {"version": PRESERVE_VERSION, "checked": True, "config": dict(pcfg), "displays": per, "counts": tot,
             "content_preserved": not conflicts, "conflicts": conflicts,
+            "panel_label_recurring": label_out,
             "screen_fixed": fixed_out, "screen_fixed_suspicions": suspicions,
             "chrome_evidence": chrome_evidence}
 
@@ -2089,6 +2147,7 @@ def build_jump_systems(jump: Dict[str, Any], tracking: Dict[str, Any], manifest:
                                      "chain_conflicts": len(preservation["conflicts"]),
                                      "screen_fixed": preservation["screen_fixed"] if k == 0 else [],
                                      "screen_fixed_suspicions": preservation["screen_fixed_suspicions"] if k == 0 else [],
+                                     "panel_label_recurring": preservation["panel_label_recurring"] if k == 0 else [],
                                      "chrome_evidence": preservation["chrome_evidence"],
                                      "conflicts": chunk_conf},
                 }
