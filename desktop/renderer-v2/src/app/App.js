@@ -8,6 +8,13 @@ import {
   createInitialExportConfig,
   createInitialSessionState,
   deriveCapturePages,
+  createReviewHypothesesState,
+  deriveOutputPages,
+  deriveReflowInfo,
+  isLayoutConflictPending,
+  isLedgerFailurePending,
+  isReviewableRun,
+  jobRevision,
   formatSecondsLabel,
   getAccessibleSteps,
   getProcessRailItems,
@@ -53,11 +60,16 @@ import {
   preparePreviewSource,
   requestAutoRoi,
   requestPreviewFrame,
+  requestLabelRegion,
   requestPreviewRoiHealth,
   reviewExport,
+  getReviewExportTask,
+  waitForReviewExport,
+  cancelReviewExport,
+  getReviewHypotheses,
 } from "../lib/api.js";
 import { escapeHtml } from "../lib/html.js";
-import { t } from "../lib/i18n.js";
+import { describeError, errorDetailText, t } from "../lib/i18n.js";
 import { baseName } from "../lib/paths.js";
 import { persistLocale } from "../lib/i18n.js";
 import { mergePrepareLogs, notice, youtubePrepareDetail, youtubePrepareError } from "../lib/messages.js";
@@ -97,16 +109,43 @@ function isSupportedVideoPath(filePath = "") {
   return SUPPORTED_VIDEO_EXTENSIONS.has(fileExtension(normalized));
 }
 
-function formatExportJobMessage(message, { status = "", locale = "en" } = {}) {
+/** Job/task error codes of a composed export that may not be published as done (STRATEGY Step 2A). */
+export const EXPORT_INVALID_CODES = ["INVALID_PLACEMENT_PLAN", "EMPTY_EXPORT", "PAGE_COUNT_MISMATCH", "PDF_UNREADABLE"];
+
+/** The user-facing message for a failed job's error code, or "" when the code has no specific one. */
+export function exportErrorCodeMessage(errorCode, locale = "en") {
+  const code = String(errorCode || "");
+  if (EXPORT_INVALID_CODES.includes(code)) {
+    return t("export.failedExportInvalid", { locale, replacements: { reason: t(`export.invalid.${code}`, { locale }) } });
+  }
+  if (code === "LAYOUT_CONFLICT") return t("export.failedLayoutConflict", { locale });
+  if (code === "LEDGER_VERIFICATION_FAILED") return t("export.failedLedgerVerification", { locale });
+  if (code === "UNSUPPORTED_SOURCE") return t("export.failedUnsupportedSource", { locale });
+  if (code === "UNSUPPORTED_LAYOUT") return t("export.failedUnsupportedLayout", { locale });
+  if (code === "NO_SCORE_SYSTEMS") return t("export.failedNoSystems", { locale });
+  return "";
+}
+
+export function formatExportJobMessage(message, { status = "", locale = "en", errorCode = "" } = {}) {
   if (status === "cancelled") return t("export.cancelled", { locale });
   // The progress card already says the run finished; the backend's English log line adds nothing.
   if (status === "done") return "";
+  if (String(status || "").toLowerCase() === "error") {
+    const coded = exportErrorCodeMessage(errorCode, locale);
+    if (coded) return coded;
+  }
   const raw = String(message || "").trim();
   if (!raw) {
     return "";
   }
   const detail = raw.replace(/^job failed:\s*/i, "").trim();
   if (String(status || "").toLowerCase() === "error") {
+    if (/horizontal-scroll score is not supported/i.test(detail)) {
+      return t("export.failedUnsupportedLayout", { locale });
+    }
+    if (/no score system was found/i.test(detail)) {
+      return t("export.failedNoSystems", { locale });
+    }
     if (/roi is unsafe|unsafe for capture|score region|representative frame/i.test(detail)) {
       return t("export.failedRegionUnsafe", { locale });
     }
@@ -280,11 +319,20 @@ function captureStageInputFocus() {
   };
 }
 
+// While a PDF rebuild runs its Cancel button takes the Rebuild button's place (and back), so focus follows it.
+const FOCUS_STAND_INS = {
+  '[data-action="apply-review"]': '[data-action="cancel-review-export"]',
+  '[data-action="cancel-review-export"]': '[data-action="apply-review"]',
+};
+
 function restoreStageInputFocus(stagePane, snapshot) {
   if (!stagePane || !snapshot?.selector) {
     return;
   }
-  const nextField = stagePane.querySelector?.(snapshot.selector);
+  let nextField = stagePane.querySelector?.(snapshot.selector);
+  if (!nextField && FOCUS_STAND_INS[snapshot.selector]) {
+    nextField = stagePane.querySelector?.(FOCUS_STAND_INS[snapshot.selector]);
+  }
   if (typeof nextField?.focus !== "function") {
     return;
   }
@@ -444,6 +492,7 @@ export function createApp(root, dependencies = {}) {
         isDarkMode: false,
         diagnostics: {},
       }),
+      requestLabelRegion: async () => ({ status: "not_found", labelRoi: null, evidence: {} }),
       ...dependencies.api,
     }
     : {
@@ -460,8 +509,13 @@ export function createApp(root, dependencies = {}) {
       preparePreviewSource,
       requestAutoRoi,
       requestPreviewFrame,
+      requestLabelRegion,
       requestPreviewRoiHealth,
       reviewExport,
+      getReviewExportTask,
+      waitForReviewExport,
+      cancelReviewExport,
+      getReviewHypotheses,
     };
   const mountShellImpl = dependencies.mountShell || mountShell;
   const mountRoiEditorImpl = dependencies.mountRoiEditor || mountRoiEditor;
@@ -493,6 +547,9 @@ export function createApp(root, dependencies = {}) {
   let roiEditorKey = "";
   let roiEditorNodes = null;
   let activePoll = null;
+  let activeSuggestionPoll = null;
+  // a job id whose rebuild was cancelled before its start request answered
+  let pendingExportCancel = "";
   let activeJobHandle = null;
   let activeSourcePreparePoll = null;
   let activeSourcePrepareHandle = null;
@@ -572,6 +629,9 @@ export function createApp(root, dependencies = {}) {
       keptCount: 0,
       outputDir: "",
       pdfPath: "",
+      outputPages: [],
+      exportTask: null,
+      hypotheses: createReviewHypothesesState(),
     };
   }
 
@@ -585,6 +645,9 @@ export function createApp(root, dependencies = {}) {
       keptCount: 0,
       outputDir: "",
       pdfPath: "",
+      outputPages: [],
+      exportTask: null,
+      hypotheses: createReviewHypothesesState(),
     };
   }
 
@@ -599,6 +662,7 @@ export function createApp(root, dependencies = {}) {
       : nextExportConfig.formats;
     nextExportConfig.pageFillMode = currentExportConfig.pageFillMode || nextExportConfig.pageFillMode;
     nextExportConfig.layoutHint = currentExportConfig.layoutHint || nextExportConfig.layoutHint;
+    nextExportConfig.measureReflow = currentExportConfig.measureReflow !== false;
     nextExportConfig.documentHeader = documentHeader;
     nextExportConfig.metadataModal = createExportMetadataModalState(next.source.filePath, new Date(), documentHeader, sourceDisplayName);
     next.exportConfig = nextExportConfig;
@@ -662,13 +726,16 @@ export function createApp(root, dependencies = {}) {
       destroyRoiEditor();
       return;
     }
-    const nextKey = `${state.roi.previewSourcePath || state.roi.previewImage}`;
+    const labels = state.roi.editTarget === "labels";
+    const draftKey = labels ? "labelDraftRect" : "draftRect";
+    const appliedKey = labels ? "labelAppliedRect" : "appliedRect";
+    const nextKey = `${state.roi.previewSourcePath || state.roi.previewImage}|${labels ? "labels" : "score"}`;
     const nodesChanged = !roiEditorNodes
       || roiEditorNodes.image !== image
       || roiEditorNodes.canvas !== canvas
       || roiEditorNodes.input !== input;
     if (roiEditor && roiEditorKey === nextKey && !nodesChanged) {
-      roiEditor.setDraft?.(state.roi.draftRect || state.roi.appliedRect || null);
+      roiEditor.setDraft?.(state.roi[draftKey] || state.roi[appliedKey] || null);
       return;
     }
     destroyRoiEditor();
@@ -678,17 +745,18 @@ export function createApp(root, dependencies = {}) {
         image,
         canvas,
         input,
-        initialPoints: state.roi.draftRect || state.roi.appliedRect,
+        initialPoints: state.roi[draftKey] || state.roi[appliedKey],
         onDraftChange(points) {
-          if (rectMatches(points, store.getState().roi.draftRect)) {
+          if (rectMatches(points, store.getState().roi[draftKey])) {
             return;
           }
           setState((next) => {
-            next.roi.draftRect = points;
+            next.roi[draftKey] = points;
             return next;
           });
         },
         onUserEdit() {
+          if (labels) return;
           setState((next) => {
             next.roi.autoRoiUserEdited = true;
             return next;
@@ -701,7 +769,7 @@ export function createApp(root, dependencies = {}) {
       mountingRoiEditor = false;
     }
     const latestRoi = store.getState().roi;
-    roiEditor?.setDraft?.(latestRoi.draftRect || latestRoi.appliedRect || null);
+    roiEditor?.setDraft?.(latestRoi[draftKey] || latestRoi[appliedKey] || null);
   }
 
   function render() {
@@ -829,6 +897,7 @@ export function createApp(root, dependencies = {}) {
       lastStatusMarkup = statusMarkup;
     }
     attachRoiEditor(state);
+    maybeCheckAppliedRoi(state);
     reviewController.syncEditor();
     if (isMetadataModalOpen && !lastMetadataModalOpen) {
       workspaceMotion.enter(shell.stagePane.querySelector?.('.export-metadata-overlay'));
@@ -952,7 +1021,7 @@ export function createApp(root, dependencies = {}) {
       }
       setState((next) => {
         next.archive.status = "error";
-        next.archive.error = String(error?.message || error);
+        next.archive.error = describeError(error, store.getState().ui.locale || "en");
         next.archive.selectedSourceKey = "";
         return next;
       });
@@ -1010,7 +1079,7 @@ export function createApp(root, dependencies = {}) {
       setArchiveStorage({
         status: "ready",
         confirm: false,
-        error: error?.status === 409 ? t("archive.storage.blocked", { locale }) : String(error?.message || error),
+        error: error?.status === 409 ? t("archive.storage.blocked", { locale }) : describeError(error, store.getState().ui.locale || "en"),
       });
       return;
     }
@@ -1085,13 +1154,30 @@ export function createApp(root, dependencies = {}) {
     await loadPreview();
   }
 
+  /** A restored review draft applies only to the job revision it was made on. */
+  function restoredDraftFor(review, job, pages) {
+    if (!pages.length || !Array.isArray(review.restoredSelectedPaths)) return null;
+    const key = review.restoredDraftKey;
+    if (key && (key.jobId !== String(job.job_id || "") || key.revision !== jobRevision(job.result || {}))) return null;
+    return { selectedPaths: review.restoredSelectedPaths, systemOrder: Array.isArray(review.restoredSystemOrder) ? review.restoredSystemOrder : null };
+  }
+
+  function orderPagesBySystemIds(pages, systemOrder) {
+    if (!Array.isArray(systemOrder) || !pages.some(page => page.kind === "system")) return pages;
+    const rank = new Map(systemOrder.map((id, index) => [String(id), index]));
+    const keyOf = page => page.systemId || page.capturePath;
+    return [...pages].sort((a, b) => (rank.has(keyOf(a)) ? rank.get(keyOf(a)) : systemOrder.length + a.index)
+      - (rank.has(keyOf(b)) ? rank.get(keyOf(b)) : systemOrder.length + b.index));
+  }
+
   function applyJobSnapshot(job) {
     const locale = store.getState().ui.locale || "en";
-    const pages = deriveCapturePages(job.result || {}, locale);
+    let pages = deriveCapturePages(job.result || {}, locale);
     setState((next) => {
       const displayMessage = formatExportJobMessage(job.message, {
         status: job.status,
         locale: next.ui.locale,
+        errorCode: job.error_code,
       });
       next.exportConfig.jobId = job.job_id;
       next.exportConfig.runStatus = ["done", "error", "cancelled"].includes(job.status) ? job.status : "running";
@@ -1100,20 +1186,36 @@ export function createApp(root, dependencies = {}) {
       next.exportConfig.currentStep = String(job.current_step || "");
       next.exportConfig.message = displayMessage;
       next.exportConfig.error = job.status === "error" ? displayMessage || t("export.failed", { locale: next.ui.locale }) : "";
+      next.exportConfig.errorCode = job.status === "error" && job.error_code ? String(job.error_code) : "";
       next.exportConfig.outputDir = String(job.result?.output_dir || "");
       next.exportConfig.pdfPath = String(job.result?.pdf || "");
+      const draft = restoredDraftFor(next.review, job, pages);
+      if (draft) pages = orderPagesBySystemIds(pages, draft.systemOrder);
       next.review.pages = pages;
+      next.review.jobRevision = jobRevision(job.result || {});
+      next.review.reflow = deriveReflowInfo(job.result || {});
+      // hypotheses belong to one delivered export: another job or a rebuild reloads them
+      if (next.review.hypotheses?.jobId !== job.job_id || next.review.hypotheses?.revision !== next.review.jobRevision) {
+        next.review.hypotheses = createReviewHypothesesState();
+      }
+      next.review.outputPages = deriveOutputPages(job.result || {});
+      if (!next.review.outputPages.length) next.review.pagePreview = false;
       const preferredPageIds = pages.filter((page) => !page.autoExcludeCandidate).map((page) => page.id);
       const savedSelection = job.result?.review_export?.selected_captures?.length
         ? job.result.review_export.selected_captures : job.result?.review_export?.selected_pages;
-      const restoredDraft = pages.length && Array.isArray(next.review.restoredSelectedPaths);
+      const restoredDraft = Boolean(draft);
       next.review.selectedPageIds = savedSelection?.length
         ? pages.filter(page => savedSelection.includes(page.capturePath)).map(page => page.id)
         : pages.some(page => page.autoExcludeCandidate) ? preferredPageIds : pages.map((page) => page.id);
-      if (pages.length && Array.isArray(next.review.restoredSelectedPaths)) {
-        next.review.selectedPageIds = pages.filter(page => next.review.restoredSelectedPaths.includes(page.capturePath)).map(page => page.id);
+      if (draft) {
+        next.review.selectedPageIds = pages.filter(page => draft.selectedPaths.includes(page.capturePath)).map(page => page.id);
         next.review.status = "idle";
+      }
+      if (pages.length) {
+        // consumed (applied, or dropped because it belongs to another job revision)
         delete next.review.restoredSelectedPaths;
+        delete next.review.restoredDraftKey;
+        delete next.review.restoredSystemOrder;
       }
       next.review.focusedPageId = pages.some(page => page.id === next.review.focusedPageId)
         ? next.review.focusedPageId : next.review.selectedPageIds[0] || pages[0]?.id || "";
@@ -1122,7 +1224,8 @@ export function createApp(root, dependencies = {}) {
       next.review.keptCount = Number(job.result?.review_export?.kept_count || pages.length || 0);
       next.review.status = restoredDraft ? "idle" : job.result?.review_export ? "applied" : "idle";
       next.review.error = "";
-      if (job.status === "done" && pages.length) {
+      // Recoverable failures retain the systems for review and rebuilding.
+      if (isReviewableRun(next) && pages.length) {
         next.ui.activeStep = "review";
       }
       return next;
@@ -1133,6 +1236,57 @@ export function createApp(root, dependencies = {}) {
     if (activePoll) {
       clearTimeout(activePoll);
       activePoll = null;
+    }
+  }
+
+  function stopSuggestionPolling() {
+    if (activeSuggestionPoll) {
+      clearTimeout(activeSuggestionPoll);
+      activeSuggestionPoll = null;
+    }
+  }
+
+  /**
+   * Merge facts that arrive after a job is done (clean reflow "looks similar"
+   * suggestions, a layout conflict found by a rebuild) into the review list
+   * without touching the user's selection, order or pending edits.
+   */
+  function mergeJobFacts(job) {
+    const locale = store.getState().ui.locale || "en";
+    const fresh = deriveCapturePages(job.result || {}, locale);
+    const byPath = new Map(fresh.map(page => [page.capturePath, page]));
+    setState((next) => {
+      if (next.exportConfig.jobId !== job.job_id) return next;
+      next.review.reflow = deriveReflowInfo(job.result || {});
+      if (jobRevision(job.result || {}) !== next.review.jobRevision) return next;
+      next.review.pages = next.review.pages.map((page) => {
+        const update = byPath.get(page.capturePath);
+        if (!update) return page;
+        return {
+          ...page,
+          similarTo: update.similarTo,
+          suspicious: update.suspicious,
+          warningReason: update.warningReason,
+          diagnosticCodes: update.diagnosticCodes,
+        };
+      });
+      return next;
+    });
+  }
+
+  async function pollSuggestions(jobId, jobHandle, attempt = 0) {
+    stopSuggestionPolling();
+    try {
+      const job = await runtimeApi.getJob(jobId);
+      if (!runtimeGuards.isCurrentJob(jobHandle, jobId)) return;
+      mergeJobFacts(job);
+      if (job.result?.reflow?.suggestions_state === "pending" && attempt < 200) {
+        activeSuggestionPoll = setTimeout(() => pollSuggestions(jobId, jobHandle, attempt + 1), 1500);
+      }
+    } catch (_) {
+      if (runtimeGuards.isCurrentJob(jobHandle, jobId) && attempt < 200) {
+        activeSuggestionPoll = setTimeout(() => pollSuggestions(jobId, jobHandle, attempt + 5), 4000);
+      }
     }
   }
 
@@ -1374,8 +1528,21 @@ export function createApp(root, dependencies = {}) {
       applyJobSnapshot(job);
       if (["done", "error", "cancelled"].includes(job.status)) {
         stopPolling();
+        if (job.status === "error" && (isLayoutConflictPending(store.getState()) || isLedgerFailurePending(store.getState()))) {
+          // no chart yet; suggestions and a rebuild started before a reload still arrive
+          if (job.result?.reflow?.suggestions_state === "pending") {
+            activeSuggestionPoll = setTimeout(() => pollSuggestions(jobId, jobHandle), 1500);
+          }
+          void resumeReviewExport(jobId);
+        }
         if (job.status === "done") {
           refreshCompletedLibraries();
+          // The chart is published first; "looks similar" suggestions arrive afterwards.
+          if (job.result?.reflow?.suggestions_state === "pending") {
+            activeSuggestionPoll = setTimeout(() => pollSuggestions(jobId, jobHandle), 1500);
+          }
+          // a PDF rebuild may still be running from before a reload: follow it
+          if (job.result?.output_model === "clean_reflow_v1") void resumeReviewExport(jobId);
         }
         return;
       }
@@ -1415,7 +1582,7 @@ export function createApp(root, dependencies = {}) {
       await runtimeApi.cancelJob(state.exportConfig.jobId);
       if (store.getState().exportConfig.jobId === state.exportConfig.jobId) reconnectJob();
     } catch (error) {
-      setInlineNotice(String(error?.message || error));
+      setInlineNotice(describeError(error, store.getState().ui.locale || "en"));
     }
   }
 
@@ -1525,7 +1692,7 @@ export function createApp(root, dependencies = {}) {
       }
       setState((next) => {
         next.source.status = "error";
-        next.source.error = String(error?.message || error);
+        next.source.error = describeError(error, store.getState().ui.locale || "en");
         return next;
       });
     }
@@ -1591,7 +1758,7 @@ export function createApp(root, dependencies = {}) {
     } catch (error) {
       setState((next) => {
         next.source.status = "error";
-        next.source.error = String(error?.message || error);
+        next.source.error = describeError(error, store.getState().ui.locale || "en");
         return next;
       });
     }
@@ -1669,7 +1836,7 @@ export function createApp(root, dependencies = {}) {
       }
       setState((next) => {
         next.roi.status = "error";
-        next.roi.error = String(error?.message || error);
+        next.roi.error = describeError(error, store.getState().ui.locale || "en");
         return next;
       });
     }
@@ -1700,6 +1867,150 @@ export function createApp(root, dependencies = {}) {
     await loadPreview();
   }
 
+  // Whole-video clipping check of the applied region. The result only shows a
+  // warning and offers a larger draft; it never changes the draft or the
+  // applied region by itself.
+  async function checkAppliedRoi(rect) {
+    const state = store.getState();
+    if (!isRectValid(rect) || !state.source.filePath) return;
+    const rectKey = JSON.stringify(rect);
+    const sourcePath = state.source.filePath;
+    setState((next) => {
+      next.roi.clipCheck = { status: "loading", rectKey, suggestedRect: null };
+      return next;
+    });
+    let status = "error";
+    let suggestedRect = null;
+    try {
+      const health = await runtimeApi.requestPreviewRoiHealth({
+        filePath: sourcePath,
+        startSec: state.roi.frameTime || 0,
+        roi: rect,
+      });
+      const envelope = health?.envelope || {};
+      suggestedRect = envelope.clipped && isRectValid(envelope.suggestedRoi) ? envelope.suggestedRoi : null;
+      status = envelope.clipped ? "clipped" : envelope.status === "found" ? "clear" : "error";
+    } catch (_) {
+      status = "error";
+    }
+    setState((next) => {
+      // Ignore a result for a region or source that is no longer applied.
+      if (next.source.filePath !== sourcePath || next.roi.clipCheck?.rectKey !== rectKey) return next;
+      next.roi.clipCheck = { status, rectKey, suggestedRect };
+      return next;
+    });
+  }
+
+  function maybeCheckAppliedRoi(state) {
+    // Apply starts the check itself (and moves to the export step, which shows the
+    // result); here only a region applied earlier and viewed on the ROI step is checked.
+    if (state.ui.activeStep !== "roi" || !isRectValid(state.roi.appliedRect)) return;
+    const rectKey = JSON.stringify(state.roi.appliedRect);
+    if (state.roi.clipCheck?.rectKey === rectKey) return;
+    const rect = state.roi.appliedRect;
+    // Start after the current render pass; the check sets its own state.
+    Promise.resolve().then(() => {
+      const latest = store.getState();
+      if (latest.roi.clipCheck?.rectKey === rectKey || JSON.stringify(latest.roi.appliedRect) !== rectKey) return;
+      void checkAppliedRoi(rect);
+    });
+  }
+
+  // Section labels outside the applied score region: the result is only shown,
+  // and a suggested label area is loaded as an editable draft by a user action.
+  async function checkLabelRegion(rect) {
+    const state = store.getState();
+    if (!isRectValid(rect) || !state.source.filePath || typeof runtimeApi.requestLabelRegion !== "function") return;
+    const rectKey = JSON.stringify(rect);
+    const sourcePath = state.source.filePath;
+    setState((next) => {
+      next.roi.labelCheck = { status: "loading", rectKey, suggestedRect: null };
+      return next;
+    });
+    let status = "error";
+    let suggestedRect = null;
+    try {
+      const range = captureRange(state);
+      const found = await runtimeApi.requestLabelRegion({ filePath: sourcePath, roi: rect, startSec: range.start, endSec: range.end });
+      suggestedRect = found?.status === "suggested" && isRectValid(found.labelRoi) ? found.labelRoi : null;
+      status = suggestedRect ? "suggested" : "not_found";
+    } catch (_) {
+      status = "error";
+    }
+    setState((next) => {
+      if (next.source.filePath !== sourcePath || next.roi.labelCheck?.rectKey !== rectKey) return next;
+      next.roi.labelCheck = { status, rectKey, suggestedRect };
+      return next;
+    });
+  }
+
+  function defaultLabelDraft(state) {
+    const applied = state.roi.appliedRect;
+    const width = Number(state.roi.imageWidth) || 1920;
+    const height = Number(state.roi.imageHeight) || 1080;
+    const top = isRectValid(applied) ? Math.min(...applied.map(point => Number(point[1]))) : height * 0.7;
+    const y1 = Math.max(height * 0.08, top - height * 0.12);
+    const y0 = Math.max(0, y1 - height * 0.1);
+    return [[width * 0.03, y0], [width * 0.3, y0], [width * 0.3, y1], [width * 0.03, y1]].map(point => point.map(Math.round));
+  }
+
+  function editLabelArea({ useSuggestion = false } = {}) {
+    const state = store.getState();
+    const suggestion = state.roi.labelCheck?.status === "suggested" ? state.roi.labelCheck.suggestedRect : null;
+    const draft = useSuggestion && isRectValid(suggestion) ? suggestion
+      : state.roi.labelAppliedRect || (isRectValid(suggestion) ? suggestion : defaultLabelDraft(state));
+    setState((next) => {
+      next.roi.editTarget = "labels";
+      next.roi.labelDraftRect = draft.map((point) => [Number(point[0]), Number(point[1])]);
+      next.ui.activeStep = "roi";
+      return next;
+    });
+  }
+
+  function applyLabelArea() {
+    const points = roiEditor?.applyDraft?.() || store.getState().roi.labelDraftRect;
+    if (!isRectValid(points)) return;
+    setState((next) => {
+      next.roi.labelAppliedRect = points.map((point) => [Number(point[0]), Number(point[1])]);
+      next.roi.labelDraftRect = null;
+      next.roi.editTarget = "score";
+      return next;
+    });
+  }
+
+  function removeLabelArea() {
+    setState((next) => {
+      next.roi.labelAppliedRect = null;
+      next.roi.labelDraftRect = null;
+      next.roi.editTarget = "score";
+      return next;
+    });
+  }
+
+  function useSuggestedRoi() {
+    const state = store.getState();
+    const check = state.roi.clipCheck || {};
+    if (check.status !== "clipped" || !isRectValid(check.suggestedRect)) return;
+    if (check.rectKey !== JSON.stringify(state.roi.appliedRect)) return;
+    const rect = check.suggestedRect.map((point) => [Number(point[0]), Number(point[1])]);
+    setState((next) => {
+      // A user action: load as an editable draft only, and keep a late
+      // automatic suggestion from replacing it.
+      next.roi.draftRect = rect;
+      next.roi.autoRoiUserEdited = true;
+      // Show the score draft, not a label area being edited.
+      next.roi.editTarget = "score";
+      next.roi.labelDraftRect = null;
+      if (next.roi.status === "idle") next.roi.status = "ready";
+      // From the export step, go back to the region step to see and apply the draft.
+      next.ui.activeStep = "roi";
+      return next;
+    });
+    roiEditor?.setDraft?.(rect);
+    // The used button is now disabled; keep keyboard focus on the next step.
+    shell.stagePane?.querySelector?.('[data-action="apply-roi"]:not([disabled])')?.focus?.();
+  }
+
   function applyRoi() {
     const points = roiEditor?.applyDraft?.() || store.getState().roi.draftRect;
     if (!isRectValid(points)) {
@@ -1716,6 +2027,8 @@ export function createApp(root, dependencies = {}) {
       next.ui.activeStep = "export";
       return next;
     });
+    void checkAppliedRoi(points);
+    void checkLabelRegion(points);
   }
 
   function buildJobPayload(state) {
@@ -1745,6 +2058,8 @@ export function createApp(root, dependencies = {}) {
           roi,
           auto_fit: Boolean(state.roi.autoFit),
           layout_hint: layoutHint,
+          // section-label area applied by the user (never the unapplied suggestion)
+          ...(isRectValid(state.roi.labelAppliedRect) ? { label_roi: state.roi.labelAppliedRect } : {}),
         },
         rectify: {
           auto: true,
@@ -1766,6 +2081,8 @@ export function createApp(root, dependencies = {}) {
           page_fill_mode: state.exportConfig.pageFillMode || "performance",
           document_header: documentHeader,
         },
+        // score layout: rearrange by measure (default) or keep the video's lines
+        measure_reflow: state.exportConfig.measureReflow !== false,
       },
     };
   }
@@ -1773,6 +2090,7 @@ export function createApp(root, dependencies = {}) {
   function resetExportOutputs(next) {
     next.exportConfig.runStatus = "running";
     next.exportConfig.error = "";
+    next.exportConfig.errorCode = "";
     next.exportConfig.progress = 0;
     next.exportConfig.message = t("export.starting", { locale: next.ui.locale });
     next.exportConfig.currentStep = "";
@@ -1787,6 +2105,7 @@ export function createApp(root, dependencies = {}) {
     next.review.keptCount = 0;
     next.review.error = "";
     next.review.status = "idle";
+    next.review.reflow = null;
     return next;
   }
 
@@ -1962,9 +2281,10 @@ export function createApp(root, dependencies = {}) {
       }
       setState((next) => {
         next.exportConfig.runStatus = "error";
+        next.exportConfig.errorCode = "";
         next.exportConfig.currentStep = "";
         next.exportConfig.message = "";
-        next.exportConfig.error = String(error?.message || error);
+        next.exportConfig.error = describeError(error, store.getState().ui.locale || "en");
         return next;
       });
       return false;
@@ -2045,13 +2365,203 @@ export function createApp(root, dependencies = {}) {
     await startExportRun(state);
   }
 
-  async function applyReviewSelection() {
+  function reviewErrorMessage(error, locale) {
+    const detail = errorDetailText(error);
+    if (detail.startsWith("LAYOUT_CONFLICT:")) return t("review.layoutConflictError", { locale });
+    if (error?.code === "LEDGER_VERIFICATION_FAILED" || detail.startsWith("LEDGER_VERIFICATION_FAILED:")) return t("review.ledgerVerificationFailed", { locale });
+    if (detail.startsWith("LEGACY_JOB:")) return t("review.legacyJob", { locale });
+    if (detail.startsWith("UNCUT_STRIP_UNAVAILABLE:")) return t("review.uncutStripUnavailable", { locale });
+    if (detail.startsWith("EXPORT_INTERRUPTED:")) return t("review.exportInterrupted", { locale });
+    // a rebuild that may not be published (no valid plan, empty or unreadable files): previous files kept
+    const invalid = EXPORT_INVALID_CODES.find(code => error?.code === code || detail.startsWith(`${code}:`));
+    if (invalid) return t("review.exportInvalid", { locale, replacements: { reason: t(`export.invalid.${invalid}`, { locale }) } });
+    return describeError(error, locale);
+  }
+
+  /** The background rebuild's latest snapshot, shown as progress in the review toolbar. */
+  function trackExportTask(jobId, task, sourceSessionToken) {
+    if (!task || !runtimeGuards.isCurrentSourceSession(sourceSessionToken)) return;
+    setState((next) => {
+      if (next.exportConfig.jobId !== jobId || next.review.status !== "running") return next;
+      const previous = next.review.exportTask || {};
+      next.review.exportTask = {
+        jobId,
+        taskId: task.taskId || previous.taskId || "",
+        state: task.state || "queued",
+        stage: task.stage || "queued",
+        progress: Number(task.progress || 0),
+        // a cancel asked in this window stays shown until the backend reports it
+        cancelRequested: Boolean(task.cancelRequested || previous.cancelRequested),
+      };
+      return next;
+    });
+    // Cancel was pressed before the backend named the task: send it now
+    const current = store.getState().review.exportTask;
+    if (task.taskId && current?.cancelRequested && !task.cancelRequested && pendingExportCancel === jobId) {
+      pendingExportCancel = "";
+      void sendReviewExportCancel(jobId, task.taskId);
+    }
+  }
+
+  async function sendReviewExportCancel(jobId, taskId) {
+    try {
+      await runtimeApi.cancelReviewExport(jobId, taskId);
+    } catch (error) {
+      setState((next) => {
+        if (next.review.exportTask?.taskId === taskId) next.review.exportTask.cancelRequested = false;
+        return next;
+      });
+      setInlineNotice(describeError(error, store.getState().ui.locale || "en"));
+    }
+  }
+
+  /** The rebuild finished: load the job's new revision. */
+  async function finishReviewExport(jobId, sourceSessionToken) {
+    pendingExportCancel = "";
+    const refreshed = await runtimeApi.getJob(jobId);
+    if (!runtimeGuards.isCurrentSourceSession(sourceSessionToken)) {
+      return;
+    }
+    if (activeJobHandle && !runtimeGuards.isCurrentJob(activeJobHandle, jobId)) {
+      return;
+    }
+    applyJobSnapshot(refreshed);
+    setState((next) => { next.review.exportTask = null; return next; });
+    refreshCompletedLibraries();
+    setInlineNotice(notice("review.applied", { locale: store.getState().ui.locale || "en" }));
+    if (refreshed.result?.reflow?.suggestions_state === "pending" && activeJobHandle) {
+      void pollSuggestions(jobId, activeJobHandle);
+    }
+  }
+
+  /** The rebuild did not finish (cancelled, failed, refused, or its answer was lost). */
+  async function failReviewExport(error, { jobId, previousRevision, previousStatus, sourceSessionToken }) {
+    pendingExportCancel = "";
+    if (!runtimeGuards.isCurrentSourceSession(sourceSessionToken) || error?.code === "EXPORT_POLL_STOPPED") {
+      return;
+    }
+    const locale = store.getState().ui.locale || "en";
+    if (error?.code === "EXPORT_IN_PROGRESS") {
+      // a rebuild started earlier (another window, or before a reload) is still running: follow it
+      setState((next) => { next.review.status = previousStatus; next.review.exportTask = null; return next; });
+      setInlineNotice(t("review.exportInProgress", { locale }));
+      void resumeReviewExport(jobId);
+      return;
+    }
+    if (error?.code === "EXPORT_CANCELLED") {
+      // the previous files and result are untouched; the selection stays as it was before the rebuild
+      setState((next) => {
+        next.review.status = previousStatus === "applied" ? "applied" : "idle";
+        next.review.exportTask = null;
+        next.review.error = "";
+        return next;
+      });
+      setInlineNotice(t("review.rebuildCancelled", { locale }));
+      return;
+    }
+    if (!error?.status && await recoverFinishedRebuild(jobId, previousRevision, sourceSessionToken)) {
+      setState((next) => { next.review.exportTask = null; return next; });
+      return;
+    }
+    setState((next) => {
+      next.review.status = "error";
+      next.review.exportTask = null;
+      next.review.error = reviewErrorMessage(error, locale);
+      return next;
+    });
+    if (String(error?.message || "").startsWith("LAYOUT_CONFLICT:")
+      || error?.code === "LEDGER_VERIFICATION_FAILED"
+      || errorDetailText(error).startsWith("LEDGER_VERIFICATION_FAILED:")) {
+      // Refresh recoverable conflict/ledger facts without losing edits.
+      try {
+        const job = await runtimeApi.getJob(jobId);
+        if (runtimeGuards.isCurrentSourceSession(sourceSessionToken)) mergeJobFacts(job);
+      } catch (_) {
+        // the error message above still explains the conflict
+      }
+    }
+  }
+
+  /**
+   * Follow a rebuild that is already running on the backend (after a reload, or one started from
+   * another window): show its progress, allow cancel, then load its result.
+   */
+  async function resumeReviewExport(jobId) {
+    if (typeof runtimeApi.getReviewExportTask !== "function" || typeof runtimeApi.waitForReviewExport !== "function") return;
+    const sourceSessionToken = runtimeGuards.captureSourceSession();
+    let task;
+    try {
+      task = await runtimeApi.getReviewExportTask(jobId);
+    } catch (_) {
+      return;
+    }
+    const state = store.getState();
+    if (!task || !["queued", "running"].includes(task.state) || !runtimeGuards.isCurrentSourceSession(sourceSessionToken)
+      || state.exportConfig.jobId !== jobId || ["running", "editing"].includes(state.review.status)) {
+      return;
+    }
+    const previousRevision = Number(state.review.jobRevision || 0);
+    const previousStatus = state.review.status;
+    setState((next) => {
+      next.review.status = "running";
+      next.review.error = "";
+      return next;
+    });
+    trackExportTask(jobId, task, sourceSessionToken);
+    try {
+      await runtimeApi.waitForReviewExport(jobId, task, {
+        onTask: (snapshot) => trackExportTask(jobId, snapshot, sourceSessionToken),
+        shouldStop: () => destroyed || !runtimeGuards.isCurrentSourceSession(sourceSessionToken),
+      });
+      if (!runtimeGuards.isCurrentSourceSession(sourceSessionToken)) return;
+      await finishReviewExport(jobId, sourceSessionToken);
+    } catch (error) {
+      await failReviewExport(error, { jobId, previousRevision, previousStatus, sourceSessionToken });
+    }
+  }
+
+  async function cancelRunningReviewExport() {
+    const state = store.getState();
+    const task = state.review.exportTask;
+    if (state.review.status !== "running" || !task || task.cancelRequested || typeof runtimeApi.cancelReviewExport !== "function") return;
+    setState((next) => {
+      if (next.review.exportTask) next.review.exportTask.cancelRequested = true;
+      return next;
+    });
+    if (!task.taskId) {
+      // the start request has not answered yet: cancel as soon as the task is known
+      pendingExportCancel = task.jobId;
+      return;
+    }
+    await sendReviewExportCancel(task.jobId, task.taskId);
+  }
+
+  /**
+   * A rebuild whose answer never arrived (a timeout or a dropped connection, not an HTTP error)
+   * may still have finished on the backend. When the job's revision moved past the one this
+   * screen showed, the rebuild is taken as applied instead of reported as a failure.
+   */
+  async function recoverFinishedRebuild(jobId, previousRevision, sourceSessionToken) {
+    try {
+      const job = await runtimeApi.getJob(jobId);
+      if (!runtimeGuards.isCurrentSourceSession(sourceSessionToken)) return true;
+      if (job?.status !== "done" || jobRevision(job.result || {}) <= previousRevision) return false;
+      applyJobSnapshot(job);
+      refreshCompletedLibraries();
+      setInlineNotice(notice("review.applied", { locale: store.getState().ui.locale || "en" }));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async function applyReviewSelection({ staffGapMm = null } = {}) {
     const state = store.getState();
     if (hasDirtyRoiDraft(state)) return;
     const formats = Array.isArray(state.exportConfig.formats) ? state.exportConfig.formats : [];
     if (
       !state.exportConfig.jobId
-      || state.exportConfig.runStatus !== "done"
+      || !isReviewableRun(state)
       || ["running", "editing"].includes(state.review.status)
       || state.ui.savingPdfAs
     ) {
@@ -2071,39 +2581,39 @@ export function createApp(root, dependencies = {}) {
     }
     const usePageSelection = selectedPages.every((page) => page.selectionMode === "pages");
     const selected = selectedPages.map((page) => page.capturePath);
+    // Clean reflow: the list order is the output order.
+    const systemOrder = state.review.pages.some((page) => page.kind === "system")
+      ? state.review.pages.map((page) => page.capturePath) : [];
+    const previousRevision = Number(state.review.jobRevision || 0);
+    const previousStatus = state.review.status;
+    const jobId = state.exportConfig.jobId;
     setState((next) => {
       next.review.status = "running";
       next.review.error = "";
+      next.review.exportTask = { jobId, taskId: "", state: "queued", stage: "queued", progress: 0, cancelRequested: false };
       return next;
     });
     try {
-      await runtimeApi.reviewExport(state.exportConfig.jobId, {
+      // starts a background rebuild and polls it; the toolbar shows its progress and can cancel it
+      await runtimeApi.reviewExport(jobId, {
         keepCaptures: usePageSelection ? [] : selected,
         keepImages: usePageSelection ? selected : [],
         formats,
+        ...(systemOrder.length ? { systemOrder } : {}),
+        // an explicit choice: a smaller staff size for this document only
+        ...(Number.isFinite(staffGapMm) ? { staffGapMm, staffGapMmExplicit: true } : {}),
+        // the score layout chosen now (each rebuild sends it, so an older job follows the toggle too)
+        measureReflow: state.exportConfig.measureReflow !== false,
+      }, {
+        onTask: (task) => trackExportTask(jobId, task, sourceSessionToken),
+        shouldStop: () => destroyed || !runtimeGuards.isCurrentSourceSession(sourceSessionToken),
       });
       if (!runtimeGuards.isCurrentSourceSession(sourceSessionToken)) {
         return;
       }
-      const refreshed = await runtimeApi.getJob(state.exportConfig.jobId);
-      if (!runtimeGuards.isCurrentSourceSession(sourceSessionToken)) {
-        return;
-      }
-      if (activeJobHandle && !runtimeGuards.isCurrentJob(activeJobHandle, state.exportConfig.jobId)) {
-        return;
-      }
-      applyJobSnapshot(refreshed);
-      refreshCompletedLibraries();
-      setInlineNotice(notice("review.applied", { locale: store.getState().ui.locale || "en" }));
+      await finishReviewExport(jobId, sourceSessionToken);
     } catch (error) {
-      if (!runtimeGuards.isCurrentSourceSession(sourceSessionToken)) {
-        return;
-      }
-      setState((next) => {
-        next.review.status = "error";
-        next.review.error = String(error?.message || error);
-        return next;
-      });
+      await failReviewExport(error, { jobId, previousRevision, previousStatus, sourceSessionToken });
     }
   }
 
@@ -2123,7 +2633,7 @@ export function createApp(root, dependencies = {}) {
     } catch (error) {
       setInlineNotice(notice("open.failed", {
         locale,
-        replacements: { label, reason: String(error?.message || error) },
+        replacements: { label, reason: describeError(error, store.getState().ui.locale || "en") },
       }));
     }
   }
@@ -2146,7 +2656,7 @@ export function createApp(root, dependencies = {}) {
       setInlineNotice(t("review.saveAsSuccess", { locale, replacements: { path: result.filePath } }));
     } catch (error) {
       if (runtimeGuards.isCurrentSourceSession(token)) setInlineNotice(t("review.saveAsFailed", {
-        locale, replacements: { reason: String(error?.message || error) },
+        locale, replacements: { reason: describeError(error, store.getState().ui.locale || "en") },
       }));
     } finally {
       setState(next => { next.ui.savingPdfAs = false; return next; });
@@ -2167,7 +2677,7 @@ export function createApp(root, dependencies = {}) {
     } catch (error) {
       setInlineNotice(notice("copy.error", {
         locale,
-        replacements: { label, reason: String(error?.message || error) },
+        replacements: { label, reason: describeError(error, store.getState().ui.locale || "en") },
       }));
     }
   }
@@ -2213,6 +2723,12 @@ export function createApp(root, dependencies = {}) {
       } catch (_) { setInlineNotice(t("support.actionFailed", { locale: store.getState().ui.locale })); }
       return;
     }
+    if (action === "review-use-staff-size") {
+      // the explicit user choice of a document staff size (never applied automatically)
+      const size = Number(target.dataset.size);
+      if (Number.isFinite(size) && size >= 1 && size <= 2.5) await applyReviewSelection({ staffGapMm: size });
+      return;
+    }
     if (action?.startsWith("review-")) { await reviewController.handleAction(action, target.dataset.value); return; }
     if (action === "cancel-job") { await cancelCurrentJob(); return; }
     if (action === "reconnect-job") { reconnectJob(); return; }
@@ -2234,7 +2750,7 @@ export function createApp(root, dependencies = {}) {
       } catch (error) {
         setState((next) => {
           next.source.status = "error";
-          next.source.error = String(error?.message || error);
+          next.source.error = describeError(error, store.getState().ui.locale || "en");
           return next;
         });
       }
@@ -2260,7 +2776,7 @@ export function createApp(root, dependencies = {}) {
         await runtimeBridge.restartBackend();
         setInlineNotice(t("status.restartTriggered", { locale: store.getState().ui.locale || "en" }));
       } catch (error) {
-        setInlineNotice(String(error?.message || error));
+        setInlineNotice(describeError(error, store.getState().ui.locale || "en"));
       }
       return;
     }
@@ -2269,7 +2785,7 @@ export function createApp(root, dependencies = {}) {
         await runtimeBridge.runGuidedSetup();
         setInlineNotice(t("status.setupTriggered", { locale: store.getState().ui.locale || "en" }));
       } catch (error) {
-        setInlineNotice(String(error?.message || error));
+        setInlineNotice(describeError(error, store.getState().ui.locale || "en"));
       }
       return;
     }
@@ -2332,6 +2848,23 @@ export function createApp(root, dependencies = {}) {
       applyRoi();
       return;
     }
+    if (action === "use-suggested-roi") {
+      useSuggestedRoi();
+      return;
+    }
+    if (action === "use-suggested-label-roi") { editLabelArea({ useSuggestion: true }); return; }
+    if (action === "edit-label-roi") { editLabelArea(); return; }
+    if (action === "apply-label-roi") { applyLabelArea(); return; }
+    if (action === "remove-label-roi") { removeLabelArea(); return; }
+    if (action === "edit-score-roi") {
+      setState((next) => { next.roi.editTarget = "score"; next.roi.labelDraftRect = null; return next; });
+      return;
+    }
+    if (action === "recheck-roi") {
+      const applied = store.getState().roi.appliedRect;
+      if (isRectValid(applied)) void checkAppliedRoi(applied);
+      return;
+    }
     if (action === "run-export") {
       await runExport();
       return;
@@ -2368,6 +2901,10 @@ export function createApp(root, dependencies = {}) {
     }
     if (action === "apply-review") {
       await applyReviewSelection();
+      return;
+    }
+    if (action === "cancel-review-export") {
+      await cancelRunningReviewExport();
       return;
     }
     if (action === "open-output-dir") {
@@ -2412,7 +2949,7 @@ export function createApp(root, dependencies = {}) {
       } catch (error) {
         setState((next) => {
           next.source.status = "error";
-          next.source.error = String(error?.message || error);
+          next.source.error = describeError(error, store.getState().ui.locale || "en");
           return next;
         });
       }
@@ -2471,6 +3008,20 @@ export function createApp(root, dependencies = {}) {
           preserveCandidates: true,
         });
         next.roi.selectedPreviewCandidateId = "";
+        return next;
+      });
+      return;
+    }
+    if (target.dataset.action === "toggle-measure-reflow") {
+      const state = store.getState();
+      if (state.exportConfig.runStatus === "running" || ["running", "editing"].includes(state.review.status)) {
+        target.checked = state.exportConfig.measureReflow !== false;
+        return;
+      }
+      setState((next) => {
+        next.exportConfig.measureReflow = Boolean(target.checked);
+        // saved files were made with the other layout: rebuilding is pending again
+        if (next.review.status === "applied") next.review.status = "idle";
         return next;
       });
       return;
@@ -2653,6 +3204,7 @@ export function createApp(root, dependencies = {}) {
       reviewController.destroy();
       stopPersistence();
       stopPolling();
+      stopSuggestionPolling();
       stopSourcePreparePolling();
       releasePreviewImageUrl(store.getState().roi?.previewImage);
       destroyRoiEditor();

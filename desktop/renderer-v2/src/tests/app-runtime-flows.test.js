@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { createApp } from "../app/App.js";
 import { createInitialSessionState, getStepState } from "../app/session/selectors.js";
+import { t } from "../lib/i18n.js";
 
 function deferred() {
   let resolve = () => {};
@@ -639,6 +640,105 @@ test("late automatic ROI does not overwrite a draft drawn while detection runs",
   await loading;
 
   assert.deepEqual(app.debug.getState().roi.draftRect, manual);
+});
+
+test("applying a region runs the clipping check; the larger area loads only as a draft", async () => {
+  installBrowserStubs();
+  const root = createDynamicStageRoot();
+  const suggested = [[0, 20], [320, 20], [320, 180], [0, 180]];
+  const healthCalls = [];
+  const app = createApp(root, {
+    exposeTestApi: true,
+    mountRoiEditor: () => ({
+      applyDraft() {
+        return ROI_RECT;
+      },
+      setDraft() {},
+      destroy() {},
+    }),
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "/tmp/preview.png", sourcePath: "/tmp/preview.png", diagnostics: [] }),
+      requestPreviewRoiHealth: async (request) => {
+        healthCalls.push(request);
+        return { riskLevel: "warning", diagnostics: [], envelope: { status: "found", clipped: true, suggestedRoi: suggested } };
+      },
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+      reviewExport: async () => ({}),
+    },
+  });
+
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/source-a.mp4";
+    next.source.metadata = { durationSec: 120, width: 320, height: 180 };
+    next.ui.activeStep = "roi";
+    next.roi.frameTime = 10;
+    return next;
+  });
+  await root.dispatchAction("load-preview-frame");
+  await flush();
+  app.debug.setState((next) => {
+    next.roi.draftRect = ROI_RECT;
+    return next;
+  });
+  await root.dispatchAction("apply-roi");
+  await flush();
+
+  let state = app.debug.getState();
+  assert.equal(healthCalls.length, 1);
+  assert.deepEqual(healthCalls[0].roi, ROI_RECT);
+  assert.equal(state.roi.clipCheck.status, "clipped");
+  assert.deepEqual(state.roi.appliedRect, ROI_RECT);
+
+  app.debug.setState((next) => {
+    next.ui.activeStep = "roi";
+    return next;
+  });
+  await flush();
+  assert.equal(healthCalls.length, 1, "the same applied region is not checked twice");
+
+  await root.dispatchAction("use-suggested-roi");
+  state = app.debug.getState();
+  assert.deepEqual(state.roi.draftRect, suggested);
+  assert.deepEqual(state.roi.appliedRect, ROI_RECT, "the suggestion is not applied automatically");
+  assert.equal(state.roi.autoRoiUserEdited, true);
+});
+
+test("a clipping result for a region that is no longer applied is ignored", async () => {
+  installBrowserStubs();
+  const root = createDynamicStageRoot();
+  const pending = deferred();
+  const other = [[30, 30], [280, 30], [280, 150], [30, 150]];
+  const app = createApp(root, {
+    exposeTestApi: true,
+    mountRoiEditor: () => ({ applyDraft() { return ROI_RECT; }, setDraft() {}, destroy() {} }),
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "/tmp/preview.png", sourcePath: "/tmp/preview.png", diagnostics: [] }),
+      requestPreviewRoiHealth: () => pending.promise,
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+      reviewExport: async () => ({}),
+    },
+  });
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/source-a.mp4";
+    next.source.metadata = { durationSec: 120, width: 320, height: 180 };
+    next.ui.activeStep = "roi";
+    next.roi.frameTime = 10;
+    next.roi.draftRect = ROI_RECT;
+    return next;
+  });
+  await root.dispatchAction("apply-roi");
+  app.debug.setState((next) => {
+    next.roi.appliedRect = other;
+    next.roi.clipCheck = { status: "idle", rectKey: JSON.stringify(other), suggestedRect: null };
+    return next;
+  });
+  pending.resolve({ envelope: { status: "found", clipped: true, suggestedRoi: [[0, 0], [320, 0], [320, 180], [0, 180]] } });
+  await flush();
+  const state = app.debug.getState();
+  assert.notEqual(state.roi.clipCheck.status, "clipped");
+  assert.deepEqual(state.roi.draftRect, ROI_RECT);
 });
 
 test("same-frame apply-roi relocks export and clears stale review outputs", async () => {
@@ -2688,4 +2788,1010 @@ test("without a relay the dialog goes straight to GitHub and asks for nothing th
   assert.doesNotMatch(modal, /data-bug-report-field="includeScreenshot"/);
   assert.match(modal, /(GitHub issues are public|누구나 볼 수 있으니)/);
   app.destroy?.();
+});
+
+test("after Apply the export step shows the region check and its suggested area returns to the ROI step as a draft", async () => {
+  installBrowserStubs();
+  const root = createDynamicStageRoot();
+  const suggested = [[0, 40], [1920, 40], [1920, 1080], [0, 1080]];
+  const health = deferred();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    mountRoiEditor: () => ({ applyDraft() { return ROI_RECT; }, setDraft() {}, destroy() {} }),
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "/tmp/preview.png", sourcePath: "/tmp/preview.png", diagnostics: [] }),
+      requestPreviewRoiHealth: () => health.promise,
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+      reviewExport: async () => ({}),
+    },
+  });
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/source-a.mp4";
+    next.source.displayName = "source-a.mp4";
+    next.source.metadata = { durationSec: 120, width: 1920, height: 1080 };
+    next.ui.activeStep = "roi";
+    next.roi.frameTime = 10;
+    next.roi.draftRect = ROI_RECT;
+    return next;
+  });
+  await root.dispatchAction("apply-roi");
+  let state = app.debug.getState();
+  assert.equal(state.ui.activeStep, "export");
+  assert.equal(state.roi.clipCheck.status, "loading");
+  assert.match(root.querySelector("#stagePane").innerHTML, /export-clip-note is-loading/);
+
+  health.resolve({ envelope: { status: "found", clipped: true, suggestedRoi: suggested } });
+  await flush();
+  state = app.debug.getState();
+  assert.equal(state.roi.clipCheck.status, "clipped");
+  assert.match(root.querySelector("#stagePane").innerHTML, /data-action="use-suggested-roi"/);
+
+  await root.dispatchAction("use-suggested-roi");
+  state = app.debug.getState();
+  assert.equal(state.ui.activeStep, "roi");
+  assert.deepEqual(state.roi.draftRect, suggested);
+  assert.deepEqual(state.roi.appliedRect, ROI_RECT, "applying stays a separate user action");
+});
+
+test("a failed region check after Apply offers a retry on the export step", async () => {
+  installBrowserStubs();
+  const root = createDynamicStageRoot();
+  let calls = 0;
+  const app = createApp(root, {
+    exposeTestApi: true,
+    mountRoiEditor: () => ({ applyDraft() { return ROI_RECT; }, setDraft() {}, destroy() {} }),
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+      requestPreviewRoiHealth: async () => { calls += 1; if (calls === 1) throw new Error("backend busy"); return { envelope: { status: "found", clipped: false } }; },
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+      reviewExport: async () => ({}),
+    },
+  });
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/source-a.mp4";
+    next.ui.activeStep = "roi";
+    next.roi.draftRect = ROI_RECT;
+    return next;
+  });
+  await root.dispatchAction("apply-roi");
+  await flush();
+  assert.equal(app.debug.getState().roi.clipCheck.status, "error");
+  assert.match(root.querySelector("#stagePane").innerHTML, /data-action="recheck-roi"/);
+  await root.dispatchAction("recheck-roi");
+  await flush();
+  assert.equal(app.debug.getState().roi.clipCheck.status, "clear");
+  assert.doesNotMatch(root.querySelector("#stagePane").innerHTML, /export-clip-note/);
+});
+
+test("rebuilding a clean reflow chart sends the arranged system order with the selection", async () => {
+  installBrowserStubs();
+  const root = createRoot();
+  const calls = [];
+  const strips = ["/j/strip_sys-001.png", "/j/strip_sys-002.png", "/j/strip_sys-003.png"];
+  const result = {
+    output_model: "clean_reflow_v1", review_candidates: strips, preview_images: ["/j/p1.jpg"], pdf: "/j/out.pdf", images: ["/j/p1.png"],
+    capture_diagnostics: Object.fromEntries(strips.map((p, i) => [p, { system_id: `sys-00${i + 1}`, recommended_action: "keep" }])),
+  };
+  const app = createApp(root, {
+    exposeTestApi: true,
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result }),
+      reviewExport: async (jobId, body) => { calls.push(body); return {}; },
+    },
+  });
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/source-a.mp4";
+    next.roi.appliedRect = ROI_RECT;
+    next.roi.draftRect = ROI_RECT;
+    next.exportConfig.jobId = "job-1";
+    next.exportConfig.runStatus = "done";
+    next.exportConfig.formats = ["pdf"];
+    next.ui.activeStep = "review";
+    return next;
+  });
+  await root.dispatchAction("reconnect-job");
+  await flush();
+  app.debug.setState((next) => {
+    const [a, b, c] = next.review.pages;
+    next.review.pages = [c, a, b];
+    next.review.selectedPageIds = [c.id, b.id];
+    return next;
+  });
+  await root.dispatchAction("apply-review");
+  await flush();
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].systemOrder, [strips[2], strips[0], strips[1]]);
+  assert.deepEqual(calls[0].keepCaptures, [strips[2], strips[1]]);
+});
+
+test("an other-moment alternate starts unchecked and can be placed instead of its system or with it", async () => {
+  installBrowserStubs();
+  const root = createRoot();
+  const calls = [];
+  const strips = ["/j/strip_sys-001.png", "/j/alt/strip_sys-001-alt1.png", "/j/strip_sys-002.png"];
+  const diag = {
+    [strips[0]]: { system_id: "sys-001", recommended_action: "keep", suspicious: true, diagnostic_codes: ["MINORITY_CONTENT_DROPPED"] },
+    [strips[1]]: { system_id: "sys-001-alt1", recommended_action: "exclude", suspicious: true, alternate_of: "sys-001",
+      diagnostic_codes: ["MINORITY_ALTERNATE"] },
+    [strips[2]]: { system_id: "sys-002", recommended_action: "keep" },
+  };
+  const result = {
+    output_model: "clean_reflow_v1", review_candidates: strips, preview_images: ["/j/p1.jpg"], pdf: "/j/out.pdf", images: ["/j/p1.png"],
+    capture_diagnostics: diag, auto_excluded_captures: [strips[1]],
+  };
+  const app = createApp(root, {
+    exposeTestApi: true,
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result }),
+      reviewExport: async (jobId, body) => { calls.push(body); return {}; },
+    },
+  });
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/source-a.mp4";
+    next.roi.appliedRect = ROI_RECT;
+    next.roi.draftRect = ROI_RECT;
+    next.exportConfig.jobId = "job-1";
+    next.exportConfig.runStatus = "done";
+    next.exportConfig.formats = ["pdf"];
+    next.ui.activeStep = "review";
+    return next;
+  });
+  await root.dispatchAction("reconnect-job");
+  await flush();
+  const pages = app.debug.getState().review.pages;
+  assert.deepEqual(pages.map(page => page.capturePath), strips); // listed right after its system
+  assert.equal(pages[1].minorityAlternate, true);
+  assert.deepEqual(app.debug.getState().review.selectedPageIds, [pages[0].id, pages[2].id]); // unchecked
+  // instead of its system
+  app.debug.setState((next) => { next.review.selectedPageIds = [pages[1].id, pages[2].id]; return next; });
+  await root.dispatchAction("apply-review");
+  await flush();
+  assert.deepEqual(calls[0].keepCaptures, [strips[1], strips[2]]);
+  assert.deepEqual(calls[0].systemOrder, strips);
+  // with its system
+  app.debug.setState((next) => { next.review.selectedPageIds = [pages[0].id, pages[1].id, pages[2].id]; return next; });
+  await root.dispatchAction("apply-review");
+  await flush();
+  assert.deepEqual(calls[1].keepCaptures, strips);
+});
+
+function reflowJob({ revision = 1, suggestions = "done", pairs = [], extraReflow = {} } = {}) {
+  const strips = [1, 2, 3, 4].map(n => `/job/reflow/strips/strip_sys-00${n}.png`);
+  return {
+    job_id: "job-r",
+    status: "done",
+    progress: 1,
+    result: {
+      output_model: "clean_reflow_v1",
+      reflow_state: "done",
+      reflow: { revision, suggestions_state: suggestions, staff_gap_mm: 1.5, ...extraReflow },
+      review_candidates: strips,
+      auto_excluded_captures: [],
+      capture_diagnostics: Object.fromEntries(strips.map((path, i) => [path, { system_id: `sys-00${i + 1}`, t_start: i * 10, recommended_action: "keep", diagnostic_codes: [] }])),
+      similar_capture_pairs: pairs,
+      images: ["/job/export/images/page_0001.png"],
+      preview_images: ["/job/export/preview/preview_0001.jpg"],
+      pdf: "/job/export/sheet_export.pdf",
+    },
+  };
+}
+
+function memoryStorage() {
+  const values = new Map();
+  return { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
+}
+
+async function openReflowApp({ storage, getJob, reviewExport = async () => ({}) }) {
+  installBrowserStubs();
+  const root = createRoot();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    storage,
+    api: { requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }), getJob, reviewExport },
+  });
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/source.mp4";
+    next.exportConfig.jobId = "job-r";
+    next.exportConfig.formats = ["pdf"];
+    return next;
+  });
+  await root.dispatchAction("reconnect-job");
+  await flush();
+  return { app, root };
+}
+
+test("an unsaved system order and selection survive a restart onto the same job revision only", async () => {
+  const storage = memoryStorage();
+  const first = await openReflowApp({ storage, getJob: async () => reflowJob({ revision: 2 }) });
+  assert.deepEqual(first.app.debug.getState().review.pages.map(page => page.systemId), ["sys-001", "sys-002", "sys-003", "sys-004"]);
+  first.app.debug.setState((next) => { next.review.focusedPageId = "3"; return next; });
+  await first.root.dispatchAction("review-move-up");
+  await first.root.dispatchAction("review-move-up");
+  first.root.dispatchInput({ dataset: { action: "toggle-review-page", pageId: "2" }, checked: false });
+  const edited = first.app.debug.getState().review;
+  assert.deepEqual(edited.pages.map(page => page.systemId), ["sys-003", "sys-001", "sys-002", "sys-004"]);
+  first.app.destroy();
+
+  // restart: the backend still has revision 2 -> the draft order and selection come back
+  const second = await openReflowApp({ storage, getJob: async () => reflowJob({ revision: 2 }) });
+  const restored = second.app.debug.getState().review;
+  assert.deepEqual(restored.pages.map(page => page.systemId), ["sys-003", "sys-001", "sys-002", "sys-004"]);
+  assert.deepEqual(restored.pages.filter(page => restored.selectedPageIds.includes(page.id)).map(page => page.systemId), ["sys-003", "sys-001", "sys-004"]);
+  assert.equal(restored.status, "idle");
+  second.app.destroy();
+
+  // restart onto a newer revision (rebuilt elsewhere): the stale draft is not applied
+  const storage3 = memoryStorage();
+  const third0 = await openReflowApp({ storage: storage3, getJob: async () => reflowJob({ revision: 2 }) });
+  third0.app.debug.setState((next) => { next.review.focusedPageId = "3"; return next; });
+  await third0.root.dispatchAction("review-move-up");
+  third0.app.destroy();
+  const third = await openReflowApp({ storage: storage3, getJob: async () => reflowJob({ revision: 3 }) });
+  assert.deepEqual(third.app.debug.getState().review.pages.map(page => page.systemId), ["sys-001", "sys-002", "sys-003", "sys-004"]);
+  third.app.destroy();
+});
+
+test("looks-similar suggestions that arrive after the job is done do not reset the user's edits", async () => {
+  let calls = 0;
+  const pair = [{ kept: "/job/reflow/strips/strip_sys-001.png", candidate: "/job/reflow/strips/strip_sys-003.png", reason: "looks_similar", metrics: {} }];
+  const timers = [];
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (fn) => { timers.push(fn); return timers.length; };
+  try {
+    const { app, root } = await openReflowApp({
+      storage: null,
+      getJob: async () => (++calls === 1 ? reflowJob({ suggestions: "pending" }) : reflowJob({ suggestions: "done", pairs: pair })),
+    });
+    let review = app.debug.getState().review;
+    assert.equal(review.reflow.suggestionsState, "pending");
+    assert.equal(review.pages[2].similarTo, null);
+    // the user edits while suggestions are computed
+    root.dispatchInput({ dataset: { action: "toggle-review-page", pageId: "4" }, checked: false });
+    app.debug.setState((next) => { next.review.focusedPageId = "2"; return next; });
+    await root.dispatchAction("review-move-up");
+    // the follow-up poll merges the suggestion only
+    const followUp = timers.shift();
+    await followUp();
+    await flush();
+    review = app.debug.getState().review;
+    assert.equal(review.reflow.suggestionsState, "done");
+    assert.deepEqual(review.pages.map(page => page.systemId), ["sys-002", "sys-001", "sys-003", "sys-004"]);
+    assert.ok(!review.selectedPageIds.includes("4"));
+    const third = review.pages.find(page => page.systemId === "sys-003");
+    assert.equal(third.similarTo.reason, "looks_similar");
+    assert.equal(third.similarTo.referenceId, "1");
+    app.destroy();
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
+});
+
+test("a layout conflict on rebuild is shown, and the smaller size is sent only as the user's explicit choice", async () => {
+  const calls = [];
+  let conflict = true;
+  const { app, root } = await openReflowApp({
+    storage: null,
+    getJob: async () => reflowJob(conflict ? { extraReflow: { layout_conflict: { requested_staff_gap_mm: 1.5, largest_fitting_staff_gap_mm: 1.2, conflicts: [{ system_id: "sys-002" }] } } } : { revision: 2 }),
+    reviewExport: async (jobId, payload) => {
+      calls.push(payload);
+      if (!Number.isFinite(payload.staffGapMm)) throw Object.assign(new Error("LAYOUT_CONFLICT: sys-002 do not fit the page at 1.5 mm"), { status: 409 });
+      conflict = false;
+      return {};
+    },
+  });
+  await root.dispatchAction("apply-review");
+  await flush();
+  let review = app.debug.getState().review;
+  assert.equal(review.status, "error");
+  assert.match(review.error, /does not fit the page/);
+  assert.equal(review.reflow.conflict.offeredMm, 1.2);
+  assert.equal(calls.length, 1);
+  assert.equal("staffGapMm" in calls[0], false);  // never reduced without the user's choice
+  await root.dispatchAction("review-use-staff-size", { size: "1.2" });
+  await flush();
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].staffGapMm, 1.2);
+  review = app.debug.getState().review;
+  assert.equal(review.reflow.conflict, null);
+  app.destroy();
+});
+
+test("a section-label area outside the score region is suggested as a draft and sent only after the user applies it", async () => {
+  installBrowserStubs();
+  const root = createDynamicStageRoot();
+  const labelSuggestion = [[10, 2], [120, 2], [120, 18], [10, 18]];
+  const labelCalls = [];
+  const jobs = [];
+  let editorDraft = null;
+  const app = createApp(root, {
+    exposeTestApi: true,
+    mountRoiEditor: ({ initialPoints }) => {
+      editorDraft = initialPoints;
+      return { applyDraft() { return editorDraft; }, setDraft(points) { editorDraft = points; }, destroy() {} };
+    },
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "/tmp/preview.png", sourcePath: "/tmp/preview.png", diagnostics: [] }),
+      requestPreviewRoiHealth: async () => ({ riskLevel: "info", diagnostics: [], envelope: { status: "found", clipped: false } }),
+      requestLabelRegion: async (request) => { labelCalls.push(request); return { status: "suggested", labelRoi: labelSuggestion, evidence: {} }; },
+      createJob: async (payload) => { jobs.push(payload); return "job-1"; },
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+      reviewExport: async () => ({}),
+    },
+  });
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/source-a.mp4";
+    next.source.metadata = { durationSec: 120, width: 320, height: 180 };
+    next.ui.activeStep = "roi";
+    next.roi.frameTime = 10;
+    return next;
+  });
+  await root.dispatchAction("load-preview-frame");
+  await flush();
+  app.debug.setState((next) => { next.roi.draftRect = ROI_RECT; return next; });
+  await root.dispatchAction("apply-roi");
+  await flush();
+  let state = app.debug.getState();
+  assert.equal(labelCalls.length, 1);
+  assert.deepEqual(labelCalls[0].roi, ROI_RECT);
+  assert.equal(state.roi.labelCheck.status, "suggested");
+  assert.equal(state.roi.labelAppliedRect, null, "a suggestion is never applied by itself");
+  assert.equal(state.roi.labelDraftRect, null);
+
+  // the user loads it as an editable draft on the region step
+  await root.dispatchAction("use-suggested-label-roi");
+  state = app.debug.getState();
+  assert.equal(state.ui.activeStep, "roi");
+  assert.equal(state.roi.editTarget, "labels");
+  assert.deepEqual(state.roi.labelDraftRect, labelSuggestion);
+  assert.deepEqual(state.roi.appliedRect, ROI_RECT, "the score region is unchanged");
+  // ... edits it and applies it
+  editorDraft = [[12, 1], [130, 1], [130, 20], [12, 20]];
+  await root.dispatchAction("apply-label-roi");
+  state = app.debug.getState();
+  assert.deepEqual(state.roi.labelAppliedRect, [[12, 1], [130, 1], [130, 20], [12, 20]]);
+  assert.equal(state.roi.editTarget, "score");
+
+  app.debug.setState((next) => { next.ui.activeStep = "export"; next.exportConfig.formats = ["png"]; return next; });
+  await root.dispatchAction("run-export");
+  await flush();
+  assert.deepEqual(jobs[0].options.detect.label_roi, [[12, 1], [130, 1], [130, 20], [12, 20]]);
+  assert.deepEqual(jobs[0].options.detect.roi, ROI_RECT);
+
+  // removing it: the next job has no label area
+  await root.dispatchAction("remove-label-roi");
+  assert.equal(app.debug.getState().roi.labelAppliedRect, null);
+  app.destroy();
+});
+
+test("the score layout toggle is sent with a new job and with each rebuild, and marks saved files as pending", async () => {
+  installBrowserStubs();
+  const jobs = [];
+  const root = createRoot();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+      createJob: async (payload) => { jobs.push(payload); return "job-1"; },
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, current_step: "done", message: "", result: {} }),
+      reviewExport: async () => ({}),
+    },
+  });
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/source.mp4";
+    next.roi.appliedRect = ROI_RECT;
+    next.exportConfig.formats = ["png"];
+    next.ui.activeStep = "export";
+    return next;
+  });
+  await root.dispatchAction("run-export");
+  await flush();
+  assert.equal(jobs[0].options.measure_reflow, true, "on by default");
+  root.dispatchInput({ dataset: { action: "toggle-measure-reflow" }, checked: false });
+  assert.equal(app.debug.getState().exportConfig.measureReflow, false);
+  // a format change keeps the layout choice
+  root.dispatchInput({ dataset: { action: "toggle-format", format: "jpg" }, checked: true });
+  assert.equal(app.debug.getState().exportConfig.measureReflow, false);
+  await root.dispatchAction("run-export");
+  await flush();
+  assert.equal(jobs[1].options.measure_reflow, false);
+  app.destroy();
+
+  const calls = [];
+  const { app: reviewApp, root: reviewRoot } = await openReflowApp({
+    storage: null,
+    getJob: async () => reflowJob({ revision: calls.length + 1, extraReflow: {} }),
+    reviewExport: async (jobId, payload) => { calls.push(payload); return {}; },
+  });
+  await reviewRoot.dispatchAction("apply-review");
+  await flush();
+  assert.equal(calls[0].measureReflow, true);
+  reviewApp.debug.setState((next) => { next.review.status = "applied"; return next; });  // files saved
+  reviewRoot.dispatchInput({ dataset: { action: "toggle-measure-reflow" }, checked: false });
+  assert.equal(reviewApp.debug.getState().review.status, "idle", "files made with the other layout are pending again");
+  await reviewRoot.dispatchAction("apply-review");
+  await flush();
+  assert.equal(calls[1].measureReflow, false);
+  // the toggle is ignored while a rebuild runs
+  reviewApp.debug.setState((next) => { next.review.status = "running"; return next; });
+  const target = { dataset: { action: "toggle-measure-reflow" }, checked: true };
+  reviewRoot.dispatchInput(target);
+  assert.equal(reviewApp.debug.getState().exportConfig.measureReflow, false);
+  assert.equal(target.checked, false);
+  reviewApp.destroy();
+});
+
+test("a rebuild that fell back to whole systems shows the notice from the job record", async () => {
+  const { app } = await openReflowApp({
+    storage: null,
+    getJob: async () => {
+      const job = reflowJob();
+      job.result.measure_reflow = { requested: true, applied: false, status: "fallback_whole_systems", reason: "LINE_WIDTH_MISMATCH" };
+      return job;
+    },
+  });
+  const info = app.debug.getState().review.reflow;
+  assert.equal(info.measureReflow.fellBack, true);
+  assert.equal(info.measureReflow.reason, "LINE_WIDTH_MISMATCH");
+  app.destroy();
+});
+
+// A real jump-view job (2026-10-07): 14 wide strips, measure lines at an automatically reduced
+// staff size, an OVERLAY_UNRECOVERED warning written in both languages. Paths are shortened and
+// the large page plan is left out.
+const JUMP_VIEW_JOB_URL = new URL("./fixtures/jump-view-review-job.json", import.meta.url);
+
+async function loadJumpViewJob() {
+  const { readFile } = await import("node:fs/promises");
+  return JSON.parse(await readFile(JUMP_VIEW_JOB_URL, "utf8"));
+}
+
+async function openJumpViewApp({ locale, getJob, reviewExport, api = {} }) {
+  installBrowserStubs();
+  const root = createRoot();
+  const app = createApp(root, {
+    exposeTestApi: true,
+    storage: null,
+    api: { requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }), getJob, reviewExport, ...api },
+  });
+  app.debug.setState((next) => {
+    next.ui.locale = locale;
+    next.source.filePath = "/tmp/source.mp4";
+    next.roi.appliedRect = ROI_RECT;
+    next.roi.draftRect = ROI_RECT;
+    next.exportConfig.jobId = "cd90c1eb-fe4c-4533-8c7b-0a537aab2119";
+    next.exportConfig.formats = ["png", "pdf"];
+    return next;
+  });
+  await root.dispatchAction("reconnect-job");
+  await flush();
+  return { app, root };
+}
+
+function failureText(state) {
+  return [state.source.error, state.roi.error, state.exportConfig.error, state.review.error].filter(Boolean).join("\n");
+}
+
+for (const locale of ["ko", "en"]) {
+  test(`the rebuilt jump-view job renders as saved with no failure toast (${locale})`, async () => {
+    const job = await loadJumpViewJob();
+    const { app, root } = await openJumpViewApp({
+      locale,
+      getJob: async () => structuredClone(job),
+      reviewExport: async () => ({ images: job.result.images, pdf: job.result.pdf, output_dir: job.result.output_dir, kept_count: 14, measure_reflow: job.result.measure_reflow }),
+    });
+    await root.dispatchAction("apply-review");
+    await flush();
+    await flush();
+    const state = app.debug.getState();
+    assert.equal(failureText(state), "");
+    assert.equal(state.review.status, "applied");
+    assert.equal(state.review.selectedPageIds.length, 14);
+    assert.equal(state.review.reflow.autoStaff.usedMm, 1.3);
+    const stage = root.querySelector("#stagePane").innerHTML;
+    const status = root.querySelector("#statusBar").innerHTML;
+    assert.doesNotMatch(stage + status, /\[object Object\]/);
+    assert.doesNotMatch(status, new RegExp(t("support.failureTitle", { locale })));
+    assert.match(stage, new RegExp(t("review.savedState", { locale })));
+    // the playback-mark note on line 1 is shown in the UI language only
+    const note = /<p class="review-risk-note">([^<]*)<\/p>/.exec(stage)?.[1] || "";
+    assert.equal(note, locale === "ko" ? "재생 표시가 남아 있을 수 있습니다" : "A playback mark may remain");
+    app.destroy();
+  });
+}
+
+test("a rebuild whose answer is lost shows a readable message, never [object Object]", async () => {
+  const job = await loadJumpViewJob();
+  for (const [thrown, expected] of [
+    [{}, t("error.unknown", { locale: "ko" })],
+    [new Error("REQUEST_TIMEOUT: POST /jobs/x/review-export did not answer within 30 s"), t("error.requestTimeout", { locale: "ko" })],
+    [Object.assign(new Error("review export failed: 디스크가 가득 찼습니다 / The disk is full"), { status: 500 }), "review export failed: 디스크가 가득 찼습니다"],
+  ]) {
+    const { app, root } = await openJumpViewApp({
+      locale: "ko",
+      getJob: async () => structuredClone(job),
+      reviewExport: async () => { throw thrown; },
+    });
+    await root.dispatchAction("apply-review");
+    await flush();
+    await flush();
+    const state = app.debug.getState();
+    assert.equal(state.review.status, "error");
+    assert.equal(state.review.error, expected);
+    assert.doesNotMatch(root.querySelector("#stagePane").innerHTML + root.querySelector("#statusBar").innerHTML, /\[object Object\]/);
+    app.destroy();
+  }
+});
+
+test("a rebuild that timed out on the way but finished on the backend is shown as applied", async () => {
+  const job = await loadJumpViewJob();
+  const before = structuredClone(job);
+  before.result.reflow.revision = 1;
+  delete before.result.review_export;
+  let finished = false;
+  const { app, root } = await openJumpViewApp({
+    locale: "ko",
+    getJob: async () => structuredClone(finished ? job : before),
+    reviewExport: async () => { finished = true; throw new Error("REQUEST_TIMEOUT: POST /jobs/x/review-export did not answer within 30 s"); },
+  });
+  assert.equal(app.debug.getState().review.jobRevision, 1);
+  await root.dispatchAction("apply-review");
+  await flush();
+  await flush();
+  const state = app.debug.getState();
+  assert.equal(failureText(state), "");
+  assert.equal(state.review.status, "applied");
+  assert.equal(state.review.jobRevision, 2);
+  assert.equal(state.ui.inlineNotice, t("notice.review.applied", { locale: "ko" }));
+  app.destroy();
+});
+
+function exportTask(fields = {}) {
+  return { taskId: "t1", jobId: "cd90c1eb-fe4c-4533-8c7b-0a537aab2119", revision: 3, state: "running", stage: "planning",
+    progress: 0, cancelRequested: false, result: null, errorCode: "", error: "", errorStatus: null, ...fields };
+}
+
+for (const locale of ["ko", "en"]) {
+  test(`a background rebuild shows its stage and progress and can be cancelled, keeping the previous files (${locale})`, async () => {
+    const job = await loadJumpViewJob();
+    const outcome = deferred();
+    const cancels = [];
+    let report = null;
+    const { app, root } = await openJumpViewApp({
+      locale,
+      getJob: async () => structuredClone(job),
+      reviewExport: async (jobId, body, { onTask }) => {
+        report = onTask;
+        onTask(exportTask({ state: "queued", stage: "queued" }));
+        return outcome.promise;
+      },
+      api: { cancelReviewExport: async (jobId, taskId) => { cancels.push([jobId, taskId]); return exportTask({ cancelRequested: true }); } },
+    });
+    assert.equal(app.debug.getState().review.status, "applied");
+    const pending = root.dispatchAction("apply-review");
+    await flush();
+    report(exportTask({ stage: "sizing", progress: 0.42 }));
+    let stage = root.querySelector("#stagePane").innerHTML;
+    assert.equal(app.debug.getState().review.status, "running");
+    assert.match(stage, /role="progressbar"[^>]*aria-valuenow="42"/);
+    assert.match(stage, new RegExp(`${t("review.rebuildStage.sizing", { locale })} · 42%`));
+    assert.match(stage, /data-action="cancel-review-export"[^>]*>/);
+    assert.doesNotMatch(stage, /data-action="cancel-review-export"[^>]*aria-disabled/);
+    assert.doesNotMatch(stage, /data-action="apply-review"/);  // the rebuild button gives way to the progress
+    await root.dispatchAction("cancel-review-export");
+    assert.deepEqual(cancels, [["cd90c1eb-fe4c-4533-8c7b-0a537aab2119", "t1"]]);
+    stage = root.querySelector("#stagePane").innerHTML;
+    assert.match(stage, new RegExp(`${t("review.rebuildStage.cancelling", { locale })} · 42%`));
+    assert.match(stage, /data-action="cancel-review-export"[^>]*aria-disabled="true"/);
+    await root.dispatchAction("cancel-review-export");  // a second click sends nothing
+    assert.equal(cancels.length, 1);
+    outcome.reject(Object.assign(new Error("EXPORT_CANCELLED: the rebuild was cancelled"), { code: "EXPORT_CANCELLED", cancelled: true }));
+    await pending;
+    const state = app.debug.getState();
+    assert.equal(state.review.status, "applied");
+    assert.equal(state.review.exportTask, null);
+    assert.equal(failureText(state), "");
+    assert.equal(state.ui.inlineNotice, t("review.rebuildCancelled", { locale }));
+    stage = root.querySelector("#stagePane").innerHTML;
+    assert.doesNotMatch(stage, /role="progressbar"/);
+    assert.match(stage, /data-action="apply-review"/);
+    app.destroy();
+  });
+}
+
+test("Cancel pressed before the backend named the task is sent once the task is known", async () => {
+  const job = await loadJumpViewJob();
+  const outcome = deferred();
+  const cancels = [];
+  let report = null;
+  const { app, root } = await openJumpViewApp({
+    locale: "en",
+    getJob: async () => structuredClone(job),
+    reviewExport: async (jobId, body, { onTask }) => { report = onTask; return outcome.promise; },
+    api: { cancelReviewExport: async (jobId, taskId) => { cancels.push(taskId); return exportTask({ cancelRequested: true }); } },
+  });
+  const pending = root.dispatchAction("apply-review");
+  await flush();
+  await root.dispatchAction("cancel-review-export");
+  assert.deepEqual(cancels, []);
+  assert.equal(app.debug.getState().review.exportTask.cancelRequested, true);
+  report(exportTask({ state: "queued", stage: "queued" }));
+  await flush();
+  assert.deepEqual(cancels, ["t1"]);
+  report(exportTask({ stage: "planning", progress: 0.05 }));
+  await flush();
+  assert.deepEqual(cancels, ["t1"]);
+  outcome.reject(Object.assign(new Error("EXPORT_CANCELLED"), { code: "EXPORT_CANCELLED", cancelled: true }));
+  await pending;
+  assert.equal(app.debug.getState().ui.inlineNotice, t("review.rebuildCancelled", { locale: "en" }));
+  app.destroy();
+});
+
+test("a failed background rebuild shows the backend's reason in the UI language", async () => {
+  const job = await loadJumpViewJob();
+  for (const [thrown, expected] of [
+    [Object.assign(new Error("EXPORT_INTERRUPTED: 처리기가 다시 시작되어 ... / The processor restarted"), { status: 500, code: "EXPORT_INTERRUPTED" }), t("review.exportInterrupted", { locale: "en" })],
+    [Object.assign(new Error("UNCUT_STRIP_UNAVAILABLE: ... / ..."), { status: 409, code: "UNCUT_STRIP_UNAVAILABLE" }), t("review.uncutStripUnavailable", { locale: "en" })],
+    [Object.assign(new Error("review export failed: 디스크가 가득 찼습니다 / The disk is full"), { status: 500, code: "EXPORT_FAILED" }), "The disk is full"],
+  ]) {
+    const { app, root } = await openJumpViewApp({
+      locale: "en",
+      getJob: async () => structuredClone(job),
+      reviewExport: async (jobId, body, { onTask }) => { onTask(exportTask({ stage: "rendering", progress: 0.7 })); throw thrown; },
+    });
+    await root.dispatchAction("apply-review");
+    await flush();
+    const state = app.debug.getState();
+    assert.equal(state.review.status, "error");
+    assert.equal(state.review.error, expected);
+    assert.equal(state.review.exportTask, null);
+    assert.doesNotMatch(root.querySelector("#stagePane").innerHTML, /role="progressbar"/);
+    app.destroy();
+  }
+});
+
+test("after a reload, a rebuild still running on the backend is followed to its result", async () => {
+  const job = await loadJumpViewJob();
+  const before = structuredClone(job);
+  before.result.reflow.revision = 1;
+  let finished = false;
+  const outcome = deferred();
+  let report = null;
+  const { app, root } = await openJumpViewApp({
+    locale: "ko",
+    getJob: async () => structuredClone(finished ? job : before),
+    reviewExport: async () => { throw new Error("not started from this window"); },
+    api: {
+      getReviewExportTask: async () => exportTask({ stage: "writing", progress: 0.85 }),
+      waitForReviewExport: async (jobId, task, { onTask }) => { report = onTask; return outcome.promise; },
+    },
+  });
+  await flush();
+  await flush();
+  let state = app.debug.getState();
+  assert.equal(state.review.status, "running");
+  assert.equal(state.review.exportTask.taskId, "t1");
+  let stage = root.querySelector("#stagePane").innerHTML;
+  assert.match(stage, new RegExp(`${t("review.rebuildStage.writing", { locale: "ko" })} · 85%`));
+  report(exportTask({ stage: "writing", progress: 0.97 }));
+  assert.match(root.querySelector("#stagePane").innerHTML, /aria-valuenow="97"/);
+  finished = true;
+  outcome.resolve({ kept_count: 14, revision: 2 });
+  await flush(); await flush(); await flush();
+  state = app.debug.getState();
+  assert.equal(state.review.status, "applied");
+  assert.equal(state.review.jobRevision, 2);
+  assert.equal(state.review.exportTask, null);
+  assert.equal(state.ui.inlineNotice, t("notice.review.applied", { locale: "ko" }));
+  app.destroy();
+
+  // nothing running (or an older backend without tasks): the screen opens as saved
+  const idle = await openJumpViewApp({
+    locale: "ko",
+    getJob: async () => structuredClone(job),
+    api: { getReviewExportTask: async () => null, waitForReviewExport: async () => { throw new Error("must not wait"); } },
+  });
+  await flush();
+  assert.equal(idle.app.debug.getState().review.status, "applied");
+  idle.app.destroy();
+});
+
+test("a rebuild refused because one is already running follows the running one", async () => {
+  const job = await loadJumpViewJob();
+  const outcome = deferred();
+  let lookups = 0;
+  const { app, root } = await openJumpViewApp({
+    locale: "en",
+    getJob: async () => structuredClone(job),
+    reviewExport: async () => { throw Object.assign(new Error("EXPORT_IN_PROGRESS: ... / This score's PDF is already being rebuilt. [task t9]"), { status: 409, code: "EXPORT_IN_PROGRESS" }); },
+    api: {
+      // nothing ran when the screen opened; another window's rebuild runs when this one asks
+      getReviewExportTask: async () => (++lookups === 1 ? null : exportTask({ taskId: "t9", stage: "sizing", progress: 0.4 })),
+      waitForReviewExport: async () => outcome.promise,
+    },
+  });
+  await flush();
+  assert.equal(app.debug.getState().review.status, "applied");
+  await root.dispatchAction("apply-review");
+  await flush();
+  let state = app.debug.getState();
+  assert.equal(state.ui.inlineNotice, t("review.exportInProgress", { locale: "en" }));
+  assert.equal(state.review.status, "running");
+  assert.equal(state.review.exportTask.taskId, "t9");
+  assert.equal(failureText(state), "");
+  assert.match(root.querySelector("#stagePane").innerHTML, /aria-valuenow="40"/);
+  outcome.resolve({ kept_count: 14 });
+  await flush(); await flush(); await flush();
+  state = app.debug.getState();
+  assert.equal(state.review.status, "applied");
+  assert.equal(state.review.exportTask, null);
+  app.destroy();
+});
+
+// STRATEGY Step 2A job outcomes: a pending layout conflict, an export that may not be published,
+// a refused composited source, and an incomplete chart.
+function conflictJob() {
+  const job = reflowJob();
+  job.status = "error";
+  job.error_code = "LAYOUT_CONFLICT";
+  job.message = "LAYOUT_CONFLICT: sys-002 do not fit the page at 1.5 mm; largest staff size that fits: 1.10 mm";
+  Object.assign(job.result, {
+    reflow_state: "layout_conflict", images: [], pdf: null, preview_images: [],
+    measure_reflow: { requested: true, applied: false, status: "fallback_whole_systems", reason: "NO_FEASIBLE_LINE_BREAKS" },
+  });
+  job.result.reflow.layout_conflict = { requested_staff_gap_mm: 1.5, largest_fitting_staff_gap_mm: 1.1, conflicts: [{ system_id: "sys-002", kind: "too_wide" }] };
+  job.result.reflow.page_plan = { staff_size: { staff_gap_mm: 1.5, staff_gap_mm_requested: 1.5, auto_reduced: false, reason: "BELOW_AUTO_MINIMUM", largest_fitting_staff_gap_mm: 1.1, auto_min_staff_gap_mm: 1.2 } };
+  return job;
+}
+
+for (const locale of ["ko", "en"]) {
+  test(`a job stopped at a layout conflict opens review, explains it, and can be resolved there (${locale})`, async () => {
+    const calls = [];
+    let resolved = false;
+    installBrowserStubs();
+    const root = createRoot();
+    const app = createApp(root, {
+      exposeTestApi: true,
+      storage: null,
+      api: {
+        requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+        getJob: async () => (resolved ? reflowJob({ revision: 2 }) : conflictJob()),
+        reviewExport: async (jobId, payload) => { calls.push(payload); resolved = true; return {}; },
+      },
+    });
+    app.debug.setState((next) => {
+      next.ui.locale = locale;
+      next.source.filePath = "/tmp/source.mp4";
+      next.exportConfig.jobId = "job-r";
+      next.exportConfig.formats = ["pdf"];
+      return next;
+    });
+    await root.dispatchAction("reconnect-job");
+    await flush();
+    let state = app.debug.getState();
+    assert.equal(state.exportConfig.runStatus, "error");
+    assert.equal(state.exportConfig.errorCode, "LAYOUT_CONFLICT");
+    assert.equal(state.exportConfig.error, t("export.failedLayoutConflict", { locale }));
+    assert.equal(state.ui.activeStep, "review");
+    assert.equal(getStepState(state, "review").enabled, true);
+    assert.equal(getStepState(state, "review").complete, false);
+    assert.equal(state.review.reflow.conflictPending, true);
+    assert.equal(state.review.reflow.conflict.sizeReason, "BELOW_AUTO_MINIMUM");
+    const stage = root.querySelector("#stagePane").innerHTML;
+    assert.ok(stage.includes(t("review.conflictPendingTitle", { locale })));
+    assert.ok(stage.includes(t("review.conflictBelowAuto", { locale, replacements: { size: "1.1", min: "1.2" } })));
+    assert.ok(stage.includes(t("review.useSmallerStaff", { locale, replacements: { size: "1.1" } })));
+    // the rebuild button is usable (review export resolves the conflict)
+    assert.doesNotMatch(stage.match(/<button[^>]*data-action="apply-review"[^>]*>/)[0], /disabled/);
+    await root.dispatchAction("review-use-staff-size", { size: "1.1" });
+    await flush();
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].staffGapMm, 1.1);
+    state = app.debug.getState();
+    assert.equal(state.exportConfig.runStatus, "done");
+    assert.equal(state.exportConfig.errorCode, "");
+    assert.equal(state.review.reflow.conflict, null);
+    app.destroy();
+  });
+}
+
+function ledgerFailedJob() {
+  const job = reflowJob();
+  job.status = "error";
+  job.error_code = "LEDGER_VERIFICATION_FAILED";
+  job.message = "LEDGER_VERIFICATION_FAILED: preservation failed";
+  Object.assign(job.result, {
+    reflow_state: "ledger_failed", review_required: true,
+    review_reasons: [{ code: "LEDGER_VERIFICATION_FAILED", text: "보존 검증 실패 / Preservation failed" }],
+    images: [], pdf: null, preview_images: [],
+  });
+  job.result.reflow.review_reasons = ["LEDGER_VERIFICATION_FAILED"];
+  return job;
+}
+
+for (const locale of ["ko", "en"]) {
+  test(`a ledger failure opens review and permits a rebuild without claiming completion (${locale})`, async () => {
+    let resolved = false;
+    let rebuilds = 0;
+    const { app, root } = await openReflowApp({
+      storage: null,
+      getJob: async () => resolved ? reflowJob({ revision: 2 }) : ledgerFailedJob(),
+      reviewExport: async () => { rebuilds += 1; resolved = true; return {}; },
+    });
+    app.debug.setState((next) => { next.ui.locale = locale; return next; });
+    await root.dispatchAction("reconnect-job");
+    await flush();
+    const state = app.debug.getState();
+    assert.equal(state.ui.activeStep, "review");
+    assert.equal(state.exportConfig.runStatus, "error");
+    assert.equal(state.exportConfig.error, t("export.failedLedgerVerification", { locale }));
+    assert.equal(getStepState(state, "review").enabled, true);
+    assert.equal(getStepState(state, "review").complete, false);
+    assert.equal(state.review.reflow.state, "ledger_failed");
+    assert.equal(state.review.reflow.reviewReasons.length, 1);
+    const stage = root.querySelector("#stagePane").innerHTML;
+    assert.ok(stage.includes(t("reflow.issue.LEDGER_VERIFICATION_FAILED", { locale })));
+    assert.match(stage, /aria-label="[^"]+" tabindex="0"/);
+    assert.doesNotMatch(stage.match(/<button[^>]*data-action="apply-review"[^>]*>/)[0], /disabled/);
+    await root.dispatchAction("apply-review");
+    await flush();
+    assert.equal(rebuilds, 1);
+    assert.equal(app.debug.getState().exportConfig.runStatus, "done");
+    assert.equal(app.debug.getState().exportConfig.errorCode, "");
+    app.destroy();
+  });
+
+  test(`a failed review rebuild localizes the ledger error and preserves the draft (${locale})`, async () => {
+    let failed = false;
+    const { app, root } = await openReflowApp({
+      storage: null,
+      getJob: async () => failed ? ledgerFailedJob() : reflowJob(),
+      reviewExport: async () => {
+        failed = true;
+        throw Object.assign(new Error("LEDGER_VERIFICATION_FAILED: preservation failed"), { status: 500, code: "LEDGER_VERIFICATION_FAILED" });
+      },
+    });
+    app.debug.setState((next) => { next.ui.locale = locale; next.review.focusedPageId = "3"; return next; });
+    await root.dispatchAction("review-move-up");
+    root.dispatchInput({ dataset: { action: "toggle-review-page", pageId: "2" }, checked: false });
+    const before = app.debug.getState().review;
+    await root.dispatchAction("apply-review");
+    await flush();
+    const after = app.debug.getState().review;
+    assert.equal(after.status, "error");
+    assert.equal(after.error, t("review.ledgerVerificationFailed", { locale }));
+    assert.deepEqual(after.pages.map(page => page.systemId), before.pages.map(page => page.systemId));
+    assert.deepEqual(after.selectedPageIds, before.selectedPageIds);
+    assert.equal(after.pdfPath, before.pdfPath);
+    assert.equal(after.reflow.state, "ledger_failed");
+    app.destroy();
+  });
+}
+
+test("reconnecting a ledger failure resumes a running review rebuild", async () => {
+  installBrowserStubs();
+  const root = createRoot();
+  const outcome = deferred();
+  let finished = false;
+  let waits = 0;
+  const app = createApp(root, {
+    exposeTestApi: true, storage: null,
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+      getJob: async () => {
+        if (!finished) return ledgerFailedJob();
+        const job = reflowJob({ revision: 2 });
+        job.result.review_export = { kept_count: 4, revision: 2 };
+        return job;
+      },
+      getReviewExportTask: async () => exportTask({ stage: "writing", progress: 0.85 }),
+      waitForReviewExport: async () => { waits += 1; return outcome.promise; },
+    },
+  });
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/source.mp4";
+    next.exportConfig.jobId = "job-r";
+    next.exportConfig.formats = ["pdf"];
+    return next;
+  });
+  await root.dispatchAction("reconnect-job");
+  await flush(); await flush();
+  assert.equal(waits, 1);
+  assert.equal(app.debug.getState().ui.activeStep, "review");
+  assert.equal(app.debug.getState().review.status, "running");
+  assert.equal(app.debug.getState().review.exportTask.taskId, "t1");
+  finished = true;
+  outcome.resolve({ kept_count: 4, revision: 2 });
+  await flush(); await flush(); await flush();
+  assert.equal(app.debug.getState().exportConfig.runStatus, "done");
+  assert.equal(app.debug.getState().review.status, "applied");
+  assert.equal(app.debug.getState().review.exportTask, null);
+  app.destroy();
+});
+
+test("an unrelated job error does not open review", async () => {
+  const job = conflictJob();
+  job.error_code = "PDF_UNREADABLE";
+  job.result.reflow_state = "export_invalid";
+  const { app } = await openReflowApp({ storage: null, getJob: async () => structuredClone(job) });
+  const state = app.debug.getState();
+  assert.notEqual(state.ui.activeStep, "review");
+  assert.equal(getStepState(state, "review").enabled, false);
+  app.destroy();
+});
+
+for (const code of ["INVALID_PLACEMENT_PLAN", "EMPTY_EXPORT", "PAGE_COUNT_MISMATCH", "PDF_UNREADABLE"]) {
+  test(`an export that may not be published (${code}) gets its own message, for the job and for a rebuild`, async () => {
+    const job = reflowJob();
+    job.status = "error";
+    job.error_code = code;
+    job.message = `${code}: detail`;
+    Object.assign(job.result, { reflow_state: "export_invalid", images: [], pdf: null, preview_images: [] });
+    const failed = await openReflowApp({ storage: null, getJob: async () => structuredClone(job) });
+    for (const locale of ["ko", "en"]) {
+      failed.app.debug.setState((next) => { next.ui.locale = locale; return next; });
+      await failed.root.dispatchAction("reconnect-job");
+      await flush();
+      const expected = t("export.failedExportInvalid", { locale, replacements: { reason: t(`export.invalid.${code}`, { locale }) } });
+      assert.equal(failed.app.debug.getState().exportConfig.error, expected);
+      assert.notEqual(expected, t("export.failed", { locale }));
+    }
+    failed.app.destroy();
+
+    // a background review export that fails verification keeps the previous files and says why
+    const rebuild = await openReflowApp({
+      storage: null,
+      getJob: async () => reflowJob(),
+      reviewExport: async () => { throw Object.assign(new Error(`${code}: detail`), { status: 500, code }); },
+    });
+    await rebuild.root.dispatchAction("apply-review");
+    await flush();
+    const review = rebuild.app.debug.getState().review;
+    assert.equal(review.status, "error");
+    assert.equal(review.error, t("review.exportInvalid", { locale: "en", replacements: { reason: t(`export.invalid.${code}`, { locale: "en" }) } }));
+    rebuild.app.destroy();
+  });
+}
+
+test("notation drawn over live video is explained, not reported as a generic failure", async () => {
+  const job = reflowJob();
+  job.status = "error";
+  job.error_code = "UNSUPPORTED_SOURCE";
+  job.message = "UNSUPPORTED_SOURCE: notation composited over live video";
+  Object.assign(job.result, { reflow_state: "unsupported_source", source_class: { class: "composited_live" }, images: [], pdf: null, review_candidates: [] });
+  const { app, root } = await openReflowApp({ storage: null, getJob: async () => structuredClone(job) });
+  for (const locale of ["ko", "en"]) {
+    app.debug.setState((next) => { next.ui.locale = locale; return next; });
+    await root.dispatchAction("reconnect-job");
+    await flush();
+    const state = app.debug.getState();
+    assert.equal(state.exportConfig.error, t("export.failedUnsupportedSource", { locale }));
+    assert.notEqual(state.ui.activeStep, "review");
+  }
+  app.destroy();
+});
+
+test("an incomplete chart opens review labelled incomplete with its unresolved time ranges", async () => {
+  const job = reflowJob();
+  job.result.reflow_state = "incomplete";
+  job.result.coverage = { status: "incomplete", unresolved: [[61.2, 75.8], [130, 142.5]], intervals: [] };
+  for (const locale of ["ko", "en"]) {
+    const { app, root } = await openReflowApp({ storage: null, getJob: async () => structuredClone(job) });
+    app.debug.setState((next) => { next.ui.locale = locale; return next; });
+    const state = app.debug.getState();
+    assert.equal(state.ui.activeStep, "review");
+    assert.equal(state.review.reflow.incomplete, true);
+    assert.deepEqual(state.review.reflow.unresolvedRanges.map(range => range.label), ["1:01–1:16", "2:10–2:23"]);
+    const stage = root.querySelector("#stagePane").innerHTML;
+    assert.ok(stage.includes(t("review.incompleteTitle", { locale })));
+    assert.ok(stage.includes("<li>1:01–1:16</li>") && stage.includes("<li>2:10–2:23</li>"));
+    assert.ok(stage.includes(t("review.incompleteState", { locale })));
+    assert.doesNotMatch(stage, /review-save-state is-saved/);
+    app.destroy();
+  }
 });

@@ -243,3 +243,53 @@ test("preload sends JSON API requests with the session token in a header", async
     delete require.cache[preloadPath];
   }
 });
+
+test("preload honours a caller's own timeout and turns a timeout into a readable Error", async () => {
+  let exposed = null;
+  const signals = [];
+  const previousFetch = globalThis.fetch;
+  const previousTimeout = AbortSignal.timeout;
+  const originalLoad = Module._load;
+  const timeouts = [];
+  AbortSignal.timeout = (ms) => { timeouts.push(ms); return previousTimeout.call(AbortSignal, ms); };
+  let failWith = null;
+  globalThis.fetch = async (url, options = {}) => {
+    signals.push(options.signal);
+    if (failWith) throw failWith;
+    return { ok: true, status: 200, async json() { return {}; } };
+  };
+  Module._load = function patchedLoad(request, parent, isMain) {
+    if (request === "electron") {
+      return {
+        contextBridge: { exposeInMainWorld(name, value) { exposed = { name, value }; } },
+        ipcRenderer: {
+          sendSync(channel) { return channel === "get-app-version" ? "0.1.27" : "token-123"; },
+          invoke() {}, on() {}, removeListener() {},
+        },
+        webUtils: { getPathForFile: () => "" },
+      };
+    }
+    return originalLoad(request, parent, isMain);
+  };
+  delete require.cache[preloadPath];
+  try {
+    require(preloadPath);
+    await exposed.value.requestJson("/jobs/job-1");
+    await exposed.value.requestJson("/jobs/job-1/review-export", { method: "POST", body: "{}", timeoutMs: 20 * 60 * 1000 });
+    assert.deepEqual(timeouts, [30000, 20 * 60 * 1000]);
+
+    // fetch rejects with a DOMException, which contextBridge would hand to the page as {}
+    failWith = new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    await assert.rejects(
+      exposed.value.requestJson("/jobs/job-1/review-export", { method: "POST", body: "{}", timeoutMs: 1000 }),
+      (error) => Object.getPrototypeOf(error) === Error.prototype && /^REQUEST_TIMEOUT: POST \/jobs\/job-1\/review-export/.test(error.message),
+    );
+    failWith = new TypeError("Failed to fetch");
+    await assert.rejects(exposed.value.requestJson("/jobs/job-1"), (error) => error.message === "REQUEST_FAILED: Failed to fetch");
+  } finally {
+    globalThis.fetch = previousFetch;
+    AbortSignal.timeout = previousTimeout;
+    Module._load = originalLoad;
+    delete require.cache[preloadPath];
+  }
+});

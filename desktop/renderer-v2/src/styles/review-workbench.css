@@ -40,6 +40,13 @@
 .screen-review .review-save-state.is-pending { color: var(--warning-text); }
 .screen-review .review-save-state.is-pending::before { background: var(--dot-check); }
 .screen-review .review-save-state.is-saved { color: var(--success); }
+/* A running background rebuild: stage, percent and a thin meter, then Cancel. */
+.screen-review .review-rebuild-progress { display: inline-flex; flex-direction: column; justify-content: center; gap: 4px; min-width: 132px; padding: 0 6px; }
+.screen-review .review-rebuild-text { font-size: 12px; font-weight: 500; color: var(--text-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.screen-review .review-rebuild-meter { display: block; height: 3px; border-radius: 2px; background: var(--progress-track); overflow: hidden; }
+.screen-review .review-rebuild-meter > span { display: block; height: 100%; background: var(--accent); transition: width 240ms ease; }
+@media (prefers-reduced-motion: reduce) { .screen-review .review-rebuild-meter > span { transition: none; } }
+.screen-review .review-output-actions .review-rebuild-cancel[aria-disabled="true"] { color: var(--text-3); opacity: 0.7; cursor: default; }
 .screen-review .review-toolbar-divider { flex: none; width: 1px; height: 20px; margin: 0 2px; background: var(--line-soft); }
 
 /* Icon-only tools: one 18px drawn set, coloured by the button text colour. */
@@ -200,7 +207,54 @@
 .screen-review .review-output-path span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; font-size: 11.5px; color: var(--text-2); }
 .screen-review .review-output-path .button { min-height: 26px; padding: 2px 8px; font-size: 11.5px; }
 .screen-review .review-save-hint { flex: none; margin: 0; padding: 10px 14px; color: var(--text-2); font-size: 11.5px; line-height: 1.5; }
+/* Score layout choice (rearrange by measure), applied on the next rebuild. */
+.screen-review .review-layout-option { display: flex; align-items: flex-start; gap: 8px; padding: 10px 14px 0; font-size: 12.5px; font-weight: 500; line-height: 1.45; color: var(--text-1); cursor: pointer; }
+.screen-review .review-layout-option input { flex: none; width: 15px; height: 15px; margin: 1px 0 0; accent-color: var(--accent); }
+.screen-review .review-layout-option:has(input:disabled) { color: var(--text-2); cursor: default; }
+.screen-review .review-layout-option span { min-width: 0; overflow-wrap: anywhere; }
+.screen-review .review-layout-option small { display: block; margin-top: 1px; font-size: 11.5px; font-weight: 400; color: var(--text-2); }
+.screen-review .review-reflow-code { display: block; margin-top: 2px; font-size: 11px; font-family: var(--mono); opacity: 0.85; }
 .screen-review .review-grid-shell .review-empty { padding: 24px 16px; }
+/* Short transition displays (page curls, brief flashes): one collapsed group under the systems.
+   Main rows and the group scroll together. */
+.app-shell[data-step] .screen-review .review-list-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.app-shell[data-step] .screen-review .review-list-scroll .review-grid { flex: none; overflow: visible; }
+.screen-review .review-fragment-group { border-bottom: 1px solid var(--line-soft); background: var(--surface-recessed); }
+.screen-review .review-fragment-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 8px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+.screen-review .review-fragment-toggle::before {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-right: 2px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform var(--dur-press) var(--ease-out);
+}
+.screen-review .review-fragment-group.is-open .review-fragment-toggle::before { transform: rotate(45deg); }
+.screen-review .review-fragment-toggle:hover { background: var(--surface-control-hover); }
+.screen-review .review-fragment-toggle:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: -2px; }
+.screen-review .review-fragment-title { flex: 1; min-width: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.screen-review .review-fragment-count { flex: none; font-size: 11px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.screen-review .review-fragment-hint { margin: 0; padding: 0 14px 8px; font-size: 11.5px; line-height: 1.5; color: var(--text-2); }
+.screen-review .review-fragment-body[hidden] { display: none; }
 
 /* Canvas: focused capture as paper. */
 .app-shell[data-step] .screen-review .review-viewer {
@@ -382,3 +436,54 @@
 @media (prefers-reduced-motion: reduce) {
   .screen-review * { transition: none; }
 }
+
+/* Clean reflow systems (2026-10-06): order controls, repeat suggestion, composed A4 pages. */
+.screen-review [data-action="review-move-up"] { --review-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'><path d='M12 19V5M6 11l6-6 6 6'/></svg>"); }
+.screen-review [data-action="review-move-down"] { --review-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'><path d='M12 5v14M6 13l6 6 6-6'/></svg>"); }
+.screen-review .review-order { display: inline-flex; gap: 2px; }
+.screen-review .review-inspector .review-remove-duplicate:not(:disabled) { color: var(--warning-text); }
+.screen-review .review-card-time { flex: none; margin-left: auto; font-variant-numeric: tabular-nums; font-size: 11.5px; font-weight: 400; color: var(--text-2); }
+.screen-review .review-viewer-surface.is-pages { flex-direction: column; align-items: center; gap: 8px; }
+.screen-review .review-pages-note { margin: 0; font-size: 12px; color: var(--text-2); }
+.screen-review .review-pages-stack { display: flex; flex-direction: column; align-items: center; gap: 24px; width: 100%; }
+.screen-review .review-page-image { display: block; width: min(100%, 760px); height: auto; background: var(--surface-paper); box-shadow: var(--paper-shadow); }
+
+/* Clean reflow notes above the system list: a layout conflict (with the explicit
+   smaller-size choice), the document staff size, pending "looks similar" work and
+   short displays left out. Bounded height so a long note never hides the list. */
+.screen-review .review-reflow-notes { display: flex; flex-direction: column; gap: 6px; max-height: 38%; overflow-y: auto; padding: 8px 12px; border-bottom: 1px solid var(--line-soft); }
+.screen-review .review-reflow-note { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text-2); overflow-wrap: anywhere; }
+.screen-review div.review-reflow-note { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.screen-review div.review-reflow-note p { margin: 0; }
+.screen-review .review-reflow-note .button { min-height: 28px; padding: 4px 10px; font-size: 12px; }
+.screen-review .review-reflow-note.is-conflict { padding: 8px 10px; border: 1px solid var(--danger-line); border-radius: 8px; background: var(--danger-soft); color: var(--text-1); }
+.screen-review .review-reflow-note.is-conflict strong { display: block; color: var(--danger-text); font-weight: 650; }
+.screen-review .review-reflow-note.is-warning { padding: 8px 10px; border: 1px solid var(--warning-line); border-radius: 8px; background: var(--warning-soft); color: var(--warning-text); }
+.screen-review .review-reflow-note.is-pending { color: var(--text-3); }
+/* incomplete chart: unresolved time ranges, wrapped; a long list scrolls inside the note */
+.screen-review .review-reflow-note.is-incomplete { padding: 8px 10px; border: 1px solid var(--warning-line); border-radius: 8px; background: var(--warning-soft); color: var(--text-1); }
+.screen-review .review-reflow-note.is-incomplete strong { display: block; color: var(--warning-text); font-weight: 650; }
+.screen-review .review-coverage-ranges { display: flex; flex-wrap: wrap; gap: 4px 6px; max-height: 92px; margin: 0; padding: 0; overflow-y: auto; list-style: none; font-variant-numeric: tabular-nums; }
+.screen-review .review-coverage-ranges li { padding: 1px 6px; border: 1px solid var(--warning-line); border-radius: var(--radius-sm); background: var(--surface-control); font-size: 12px; white-space: nowrap; }
+.screen-review .review-coverage-ranges:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 2px; }
+.screen-review .review-save-state.is-incomplete { color: var(--warning-text); font-weight: 600; }
+.screen-review > p.review-reflow-note, .screen-review .review-grid-shell > p.review-reflow-note { margin: 8px 12px; }
+
+/* Items to check (ledger hypotheses of the last built files): source frame and built result of the
+   same region at the same scale, side by side, with the moment, status and reason. */
+.screen-review .review-viewer-surface.is-hypotheses { align-items: flex-start; }
+.screen-review .review-hypotheses { display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: 1240px; margin: 16px auto 24px; }
+.screen-review .review-hypotheses-summary { margin: 0; font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.screen-review .review-hypotheses-state { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin: 24px auto; font-size: 13px; color: var(--text-2); }
+.screen-review .review-hypotheses-state p { margin: 0; }
+.screen-review .review-hypotheses-list { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.screen-review .review-hypothesis { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--surface-control); }
+.screen-review .review-hypothesis.is-fail { border-color: var(--danger-line); }
+.screen-review .review-hypothesis-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.screen-review .review-hypothesis-frame { margin: 0; min-width: 0; }
+.screen-review .review-hypothesis-frame img { display: block; max-width: 100%; height: auto; background: var(--surface-paper); image-rendering: pixelated; }
+.screen-review .review-hypothesis-frame figcaption { margin: 6px 0 0; font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.screen-review .review-hypothesis-missing { display: grid; place-items: center; min-height: 64px; border: 1px dashed var(--line-soft); border-radius: 6px; font-size: 12px; color: var(--text-3); }
+.screen-review .review-hypothesis-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; font-size: 12.5px; color: var(--text-1); }
+.screen-review .review-hypothesis-reason { min-width: 0; overflow-wrap: anywhere; }
+.screen-review .review-hypotheses-more { align-self: center; }

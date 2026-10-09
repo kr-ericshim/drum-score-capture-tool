@@ -72,8 +72,35 @@ export function buildRoiScreenModel(state) {
     statusText = t("roi.status.autoNotFound", { locale });
   }
 
+  // Warning for the applied region only, and only for the region the check
+  // was run on.
+  const clipCheck = state.roi.clipCheck || {};
+  const clipWarning = appliedReady && clipCheck.status === "clipped" && clipCheck.rectKey === rectKey(state.roi.appliedRect)
+    ? {
+      title: t("roi.clip.title", { locale }),
+      detail: t("roi.clip.detail", { locale }),
+      actionLabel: t("roi.clip.useSuggested", { locale }),
+      actionDisabled: !isRectValid(clipCheck.suggestedRect) || rectKey(clipCheck.suggestedRect) === rectKey(state.roi.draftRect),
+    }
+    : null;
+
+  // Optional section-label area (labels drawn outside the score region).
+  const labelMode = state.roi.editTarget === "labels";
+  const labelCheck = state.roi.labelCheck || {};
+  const labelApplied = isRectValid(state.roi.labelAppliedRect);
+  const labelSuggested = appliedReady && labelCheck.status === "suggested" && labelCheck.rectKey === rectKey(state.roi.appliedRect);
+  const labelArea = !hasPreview ? null : {
+    mode: labelMode ? "editing" : labelApplied ? "applied" : labelSuggested ? "suggested" : "none",
+    applyDisabled: !isRectValid(state.roi.labelDraftRect),
+    hasApplied: labelApplied,
+    canAdd: appliedReady,
+  };
+
   return {
     locale,
+    clipWarning,
+    labelArea,
+    labelMode,
     durationSec,
     frameTime: currentTime,
     frameTimeLabel: state.roi.frameTimeLabel || formatSecondsLabel(currentTime),
@@ -90,9 +117,43 @@ export function buildRoiScreenModel(state) {
     previewImage: state.roi.previewImage,
     showApplyAction: hasPreview,
     canvasHelp: getCanvasHelp(locale),
-    canvasLabel: getCanvasLabel(locale),
+    canvasLabel: labelMode ? t("roi.label.canvas", { locale }) : getCanvasLabel(locale),
     placeholderText: t(state.roi.status === "loading" ? "roi.placeholderLoading" : "roi.placeholder", { locale }),
   };
+}
+
+function renderLabelArea(area, locale) {
+  if (!area) return "";
+  const tt = key => escapeHtml(t(`roi.label.${key}`, { locale }));
+  if (area.mode === "editing") {
+    return `
+      <div class="roi-label-area is-editing" role="group" aria-label="${tt("canvas")}">
+        <p class="roi-label-area-text"><strong>${tt("editingTitle")}</strong> ${tt("editingDetail")}</p>
+        <div class="roi-label-area-actions">
+          <button class="button button-primary" data-action="apply-label-roi" ${area.applyDisabled ? "disabled" : ""}>${tt("apply")}</button>
+          ${area.hasApplied ? `<button class="button button-secondary" data-action="remove-label-roi">${tt("remove")}</button>` : ""}
+          <button class="button button-secondary" data-action="edit-score-roi">${tt("back")}</button>
+        </div>
+      </div>`;
+  }
+  if (area.mode === "applied") {
+    return `
+      <div class="roi-label-area is-applied" role="status">
+        <p class="roi-label-area-text">${tt("applied")}</p>
+        <div class="roi-label-area-actions">
+          <button class="button button-secondary" data-action="edit-label-roi">${tt("edit")}</button>
+          <button class="button button-secondary" data-action="remove-label-roi">${tt("remove")}</button>
+        </div>
+      </div>`;
+  }
+  if (area.mode === "suggested") {
+    return `
+      <div class="roi-label-area is-suggested" role="status">
+        <p class="roi-label-area-text"><strong>${tt("foundTitle")}</strong> ${tt("foundDetail")}</p>
+        <button class="button button-secondary" data-action="use-suggested-label-roi">${tt("useSuggested")}</button>
+      </div>`;
+  }
+  return area.canAdd ? `<button class="button button-secondary roi-label-add" data-action="edit-label-roi">${tt("addArea")}</button>` : "";
 }
 
 export function renderRoiScreen(state) {
@@ -134,11 +195,18 @@ export function renderRoiScreen(state) {
           </div>
         ` : ""}
         <div class="roi-stage-footer" data-stitch-region="roi-actions">
-          <div class="roi-capture-options">
+          ${renderLabelArea(model.labelArea, model.locale)}
+          ${model.clipWarning && !model.labelMode ? `
+            <div class="roi-clip-warning" role="status">
+              <p class="roi-clip-warning-text"><strong>${escapeHtml(model.clipWarning.title)}</strong> ${escapeHtml(model.clipWarning.detail)}</p>
+              <button class="button button-secondary roi-clip-warning-action" data-action="use-suggested-roi" ${model.clipWarning.actionDisabled ? "disabled" : ""}>${escapeHtml(model.clipWarning.actionLabel)}</button>
+            </div>
+          ` : ""}
+          <div class="roi-capture-options" ${model.labelMode ? "hidden" : ""}>
             <label class="roi-auto-fit-option"><input type="checkbox" data-action="toggle-roi-auto-fit" ${state.roi.autoFit ? "checked" : ""} /> ${escapeHtml(t("roi.autoFit", { locale: model.locale }))}</label>
             <p class="roi-stage-helper roi-stage-helper-${escapeHtml(model.statusTone)}" aria-live="polite">${state.roi.autoFit ? escapeHtml(t("roi.autoFitHelp", { locale: model.locale })) : escapeHtml(model.statusText)}</p>
           </div>
-          <div class="roi-stage-actions">
+          <div class="roi-stage-actions" ${model.labelMode ? "hidden" : ""}>
             ${model.showApplyAction && ["draft", "ready"].includes(model.statusTone) ? `<span class="roi-apply-state is-${model.statusTone}">${escapeHtml(t(`roi.applyState.${model.statusTone}`, { locale: model.locale }))}</span>` : ""}
             ${model.showApplyAction ? `<button class="button button-primary" data-action="apply-roi" ${model.applyDisabled ? "disabled" : ""}>${escapeHtml(t("roi.apply", { locale: model.locale }))}</button>` : ""}
           </div>

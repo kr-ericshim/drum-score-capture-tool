@@ -512,6 +512,8 @@
   border-radius: 10px;
   box-shadow: var(--float-shadow);
 }
+/* The failure toast sits at the same spot; keep the error text above it, readable. */
+.app-shell[data-step]:has(.status-bar[data-tone="danger"]) .screen > .inline-error { bottom: 160px; }
 /* Bottom-centre canvas toolbar. */
 .app-shell[data-step] .review-viewer-toolbar {
   position: absolute;
@@ -691,6 +693,11 @@
 .screen-roi .roi-candidate.is-active { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
 .screen-roi .roi-candidate.is-active :is(strong, .roi-candidate-kicker) { color: var(--accent); }
 .screen-roi .roi-stage-footer { display: flex; flex-direction: column; gap: 12px; margin-top: auto; padding: 14px 16px 16px; border-top: 1px solid var(--line-soft); background: transparent; }
+/* Clipping warning: amber note with one action; the larger region loads as a draft. */
+.screen-roi .roi-clip-warning { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 10px 12px; border: 1px solid var(--warning-line); border-radius: 8px; background: var(--warning-soft); }
+.screen-roi .roi-clip-warning-text { margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--text-1); overflow-wrap: anywhere; }
+.screen-roi .roi-clip-warning-text strong { display: block; font-weight: 650; color: var(--warning-text); }
+.screen-roi .roi-clip-warning-action { width: auto; min-height: 32px; padding: 6px 12px; }
 .screen-roi .roi-auto-fit-option { display: flex; align-items: center; gap: 8px; font-size: 13px; line-height: 1.5; }
 .screen-roi .roi-auto-fit-option input { width: 16px; height: 16px; margin: 0; }
 /* ROI state line: a coloured dot names draft vs applied without another bordered box. */
@@ -869,9 +876,9 @@
 .screen-export .export-module-quiet .export-profile-row { padding: 2px 0; font-size: 12px; }
 .screen-export .export-module-quiet .export-profile-row + .export-profile-row { border-top: 0; }
 .screen-export .export-module-quiet .path-row { margin-top: 6px; }
-.screen-export .segment:has(.export-format-hint) { align-items: flex-start; }
-.screen-export .segment:has(.export-format-hint) input { margin-top: 1px; }
-.screen-export .export-format-hint { display: block; margin-top: 2px; font-size: 12px; font-weight: 400; line-height: 1.45; color: var(--text-2); }
+.screen-export .segment:has(.export-format-hint, .export-option-hint) { align-items: flex-start; }
+.screen-export .segment:has(.export-format-hint, .export-option-hint) input { margin-top: 1px; }
+.screen-export :is(.export-format-hint, .export-option-hint) { display: block; margin-top: 2px; font-size: 12px; font-weight: 400; line-height: 1.45; color: var(--text-2); }
 .screen-export .panel-note { margin: 8px 0 0; font-size: 12px; color: var(--text-2); }
 .screen-roi .roi-capture-options { width: 100%; }
 .screen-roi .roi-auto-fit-option { justify-content: flex-start; }
@@ -989,3 +996,32 @@
   padding: 14px 20px 16px;
   border-top: 1px solid var(--line-soft);
 }
+/* Region check after Apply (export step): one quiet line while loading, an amber note with one action otherwise. */
+.screen-export .export-clip-note { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.screen-export .export-clip-note.is-clipped { border: 1px solid var(--warning-line); background: var(--warning-soft); }
+.screen-export .export-coverage-ranges { display: flex; flex-wrap: wrap; gap: 4px 6px; max-height: 92px; margin: 0; padding: 0; overflow-y: auto; list-style: none; font-variant-numeric: tabular-nums; }
+.screen-export .export-coverage-ranges li { padding: 1px 6px; border: 1px solid var(--warning-line); border-radius: var(--radius-sm); background: var(--surface-control); font-size: 12px; white-space: nowrap; }
+.screen-export .export-coverage-ranges:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 2px; }
+.screen-export .export-clip-text { margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--text-1); overflow-wrap: anywhere; word-break: keep-all; }
+.screen-export .export-clip-note.is-clipped .export-clip-text strong { display: block; font-weight: 650; color: var(--warning-text); }
+.screen-export .export-clip-note.is-loading .export-clip-text, .screen-export .export-clip-note.is-error .export-clip-text { color: var(--text-2); }
+.screen-export .export-clip-note.is-loading .export-clip-text strong, .screen-export .export-clip-note.is-error .export-clip-text strong { font-weight: 500; }
+.screen-export .export-clip-action { width: auto; min-height: 32px; padding: 6px 12px; }
+
+/* Optional section-label area (labels drawn outside the score region). */
+.screen-roi .roi-label-area { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--bg-panel); }
+.screen-roi .roi-label-area.is-suggested, .screen-roi .roi-label-area.is-editing { border-color: var(--warning-line); background: var(--warning-soft); }
+.screen-roi .roi-label-area-text { margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--text-1); overflow-wrap: anywhere; word-break: keep-all; }
+.screen-roi .roi-label-area-text strong { display: block; font-weight: 650; color: var(--warning-text); }
+.screen-roi .roi-label-area-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.screen-roi .roi-label-area .button, .screen-roi .roi-label-add { width: auto; min-height: 32px; padding: 6px 12px; }
+.screen-export .export-label-note { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.screen-export .export-label-note.is-found { border: 1px solid var(--warning-line); background: var(--warning-soft); }
+.screen-export .export-label-note.is-found .export-clip-text strong { display: block; font-weight: 650; color: var(--warning-text); }
+.screen-export .export-label-note.is-applied .export-clip-text strong { font-weight: 500; color: var(--text-2); }
+.screen-roi :is(.roi-stage-actions, .roi-capture-options)[hidden] { display: none; }
+
+/* Review reasons retain full text; the bounded list stays reachable by keyboard. */
+.reflow-review-reasons { max-height: 132px; overflow-y: auto; overflow-wrap: anywhere; margin: 4px 0 0; padding: 0 0 0 18px; color: var(--text-1); }
+.reflow-review-reasons li { margin: 4px 0; }
+.reflow-review-reasons:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 2px; border-radius: var(--radius-sm); }

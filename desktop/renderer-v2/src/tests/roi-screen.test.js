@@ -199,3 +199,49 @@ test("roi apply action names whether the region is applied beside the button", (
   state.roi.appliedRect = state.roi.draftRect;
   assert.match(renderRoiScreen(state), /<span class="roi-apply-state is-ready">Applied<\/span>/);
 });
+
+test("roi screen warns when the applied region clips notation and offers the larger draft", () => {
+  const applied = [[10, 40], [110, 40], [110, 90], [10, 90]];
+  const suggested = [[5, 20], [115, 20], [115, 100], [5, 100]];
+  for (const [locale, title, action] of [["ko", /악보 위아래가 잘렸습니다/, /추천 영역 불러오기/], ["en", /Notation is clipped/, /Use suggested area/]]) {
+    const state = createInitialSessionState();
+    state.ui.locale = locale;
+    state.source.filePath = "/tmp/video.mp4";
+    state.roi.previewImage = "/tmp/frame.png";
+    state.roi.appliedRect = applied;
+    state.roi.draftRect = applied;
+    state.roi.clipCheck = { status: "clipped", rectKey: JSON.stringify(applied), suggestedRect: suggested };
+
+    const model = buildRoiScreenModel(state);
+    assert.ok(model.clipWarning);
+    assert.match(model.clipWarning.title, title);
+    assert.equal(model.clipWarning.actionDisabled, false);
+    const markup = renderRoiScreen(state);
+    assert.match(markup, /class="roi-clip-warning" role="status"/);
+    assert.match(markup, /data-action="use-suggested-roi"/);
+    assert.match(markup, action);
+  }
+});
+
+test("roi clip warning ignores stale checks and disables the action once the draft holds the suggestion", () => {
+  const applied = [[10, 40], [110, 40], [110, 90], [10, 90]];
+  const suggested = [[5, 20], [115, 20], [115, 100], [5, 100]];
+  const state = createInitialSessionState();
+  state.ui.locale = "en";
+  state.source.filePath = "/tmp/video.mp4";
+  state.roi.previewImage = "/tmp/frame.png";
+  state.roi.appliedRect = applied;
+  state.roi.draftRect = applied;
+  state.roi.clipCheck = { status: "clipped", rectKey: JSON.stringify([[0, 0], [1, 0], [1, 1], [0, 1]]), suggestedRect: suggested };
+  assert.equal(buildRoiScreenModel(state).clipWarning, null);
+  assert.doesNotMatch(renderRoiScreen(state), /roi-clip-warning/);
+
+  state.roi.clipCheck = { status: "loading", rectKey: JSON.stringify(applied), suggestedRect: null };
+  assert.equal(buildRoiScreenModel(state).clipWarning, null);
+
+  state.roi.clipCheck = { status: "clipped", rectKey: JSON.stringify(applied), suggestedRect: suggested };
+  state.roi.draftRect = suggested;
+  const model = buildRoiScreenModel(state);
+  assert.equal(model.clipWarning.actionDisabled, true);
+  assert.equal(model.statusTone, "draft");
+});

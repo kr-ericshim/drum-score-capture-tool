@@ -1,7 +1,7 @@
 import { captureRange } from "./captureRange.js";
 import { isPdfSelected, isRectValid } from "../../app/session/selectors.js";
 import { escapeAttr, escapeHtml } from "../../lib/html.js";
-import { t } from "../../lib/i18n.js";
+import { reflowReviewReasonText, t } from "../../lib/i18n.js";
 import { normalizeAssetPath } from "../../lib/paths.js";
 
 function checked(formats, value) {
@@ -134,9 +134,53 @@ export function buildExportScreenModel(state) {
     && sourceHeight > 0
   );
 
+  // Whole-video clipping check of the applied region (started by Apply). Apply
+  // moves straight here, so its result must be readable and actionable here.
+  const clipCheck = state.roi.clipCheck || {};
+  const appliedKey = hasValidRoi ? JSON.stringify(state.roi.appliedRect) : "";
+  const clipStatus = hasValidRoi && clipCheck.rectKey === appliedKey ? String(clipCheck.status || "idle") : "idle";
+  const clipNote = ["loading", "clipped", "error"].includes(clipStatus) ? {
+    status: clipStatus,
+    heading: t("export.clip.heading", { locale }),
+    title: clipStatus === "loading" ? t("export.clip.loading", { locale })
+      : clipStatus === "clipped" ? t("export.clip.title", { locale }) : t("export.clip.error", { locale }),
+    detail: clipStatus === "clipped" ? t("export.clip.detail", { locale }) : "",
+    action: clipStatus === "clipped" && isRectValid(clipCheck.suggestedRect) ? { id: "use-suggested-roi", label: t("export.clip.useSuggested", { locale }) }
+      : clipStatus === "error" ? { id: "recheck-roi", label: t("export.clip.retry", { locale }) } : null,
+  } : null;
+
+  // Section labels outside the score region: an applied label area, or a found
+  // one the user can load as a draft (never applied automatically).
+  const labelCheck = state.roi.labelCheck || {};
+  const labelApplied = isRectValid(state.roi.labelAppliedRect);
+  const labelFound = hasValidRoi && labelCheck.status === "suggested" && labelCheck.rectKey === appliedKey;
+  const labelNote = labelApplied ? { status: "applied", heading: t("export.label.heading", { locale }), title: t("export.label.applied", { locale }), detail: "", action: { id: "edit-label-roi", label: t("roi.label.edit", { locale }) } }
+    : labelFound ? { status: "found", heading: t("export.label.heading", { locale }), title: t("roi.label.foundTitle", { locale }), detail: t("roi.label.foundDetail", { locale }), action: { id: "use-suggested-label-roi", label: t("export.label.add", { locale }) } }
+      : null;
+
+  // The last run made an incomplete chart (unresolved jump-view ranges): said here too, never as a plain success.
+  const reflowInfo = state.review?.reflow || null;
+  const incompleteNote = !running && state.exportConfig.runStatus === "done" && reflowInfo?.incomplete ? {
+    title: t("export.incompleteTitle", { locale }),
+    detail: t(reflowInfo.unresolvedRanges?.length ? "export.incompleteDetail" : "export.incompleteDetailNoRanges", { locale }),
+    ranges: (reflowInfo.unresolvedRanges || []).map(range => range.label),
+    rangesLabel: t("review.incompleteRangesLabel", { locale, replacements: { count: (reflowInfo.unresolvedRanges || []).length } }),
+  } : null;
+
+  const reviewRequiredNote = !running && state.exportConfig.runStatus === "done" && reflowInfo?.reviewRequired ? {
+    title: t("export.reviewRequiredTitle", { locale }),
+    detail: t("review.reviewRequiredDetail", { locale }),
+    reasons: (reflowInfo.reviewReasons || []).map(reason => reflowReviewReasonText(reason, locale)),
+    reasonsLabel: t("review.reviewReasonsLabel", { locale }),
+  } : null;
+
   return {
     running,
     locale,
+    clipNote,
+    incompleteNote,
+    reviewRequiredNote,
+    labelNote,
     hasFormats,
     formats,
     canRun,
@@ -179,6 +223,10 @@ export function buildExportScreenModel(state) {
       ? t("export.previewCaptionReady", { locale })
       : t("export.previewCaptionEmpty", { locale }),
     profileRows: buildProfileRows(state),
+    // score layout: rearrange by measure (on by default) or keep the video's lines
+    measureReflow: state.exportConfig.measureReflow !== false,
+    measureReflowLabel: t("export.layout.measure", { locale }),
+    measureReflowHint: t("export.layout.measureHint", { locale }),
     metadata: {
       isOpen: Boolean(metadataModal.isOpen),
       showDiscardConfirm: Boolean(metadataModal.showDiscardConfirm),
@@ -261,6 +309,33 @@ export function renderExportScreen(state) {
       </header>
       <div class="export-workbench">
         <div class="export-config-stack" data-stitch-region="export-config">
+          ${model.reviewRequiredNote ? `
+          <section class="panel export-module export-clip-note export-review-required-note is-clipped" aria-labelledby="exportReviewRequiredHeading">
+            <h2 id="exportReviewRequiredHeading" class="visually-hidden">${escapeHtml(model.reviewRequiredNote.title)}</h2>
+            <p class="export-clip-text" role="alert"><strong>${escapeHtml(model.reviewRequiredNote.title)}</strong> ${escapeHtml(model.reviewRequiredNote.detail)}</p>
+            ${model.reviewRequiredNote.reasons.length ? `<ul class="reflow-review-reasons" aria-label="${escapeAttr(model.reviewRequiredNote.reasonsLabel)}" tabindex="0">
+              ${model.reviewRequiredNote.reasons.map(reason => `<li>${escapeHtml(reason)}</li>`).join("")}</ul>` : ""}
+          </section>` : ""}
+          ${model.incompleteNote ? `
+          <section class="panel export-module export-clip-note export-incomplete-note is-clipped" aria-labelledby="exportIncompleteHeading">
+            <h2 id="exportIncompleteHeading" class="visually-hidden">${escapeHtml(model.incompleteNote.title)}</h2>
+            <p class="export-clip-text" role="alert"><strong>${escapeHtml(model.incompleteNote.title)}</strong> ${escapeHtml(model.incompleteNote.detail)}</p>
+            ${model.incompleteNote.ranges.length ? `<ul class="export-coverage-ranges" aria-label="${escapeAttr(model.incompleteNote.rangesLabel)}" ${model.incompleteNote.ranges.length > 4 ? 'tabindex="0"' : ""}>
+              ${model.incompleteNote.ranges.map(label => `<li>${escapeHtml(label)}</li>`).join("")}
+            </ul>` : ""}
+          </section>` : ""}
+          ${model.clipNote ? `
+          <section class="panel export-module export-clip-note is-${escapeAttr(model.clipNote.status)}" aria-labelledby="exportClipHeading">
+            <h2 id="exportClipHeading" class="visually-hidden">${escapeHtml(model.clipNote.heading)}</h2>
+            <p class="export-clip-text" role="${model.clipNote.status === "loading" ? "status" : "alert"}"><strong>${escapeHtml(model.clipNote.title)}</strong>${model.clipNote.detail ? ` ${escapeHtml(model.clipNote.detail)}` : ""}</p>
+            ${model.clipNote.action ? `<button class="button button-secondary export-clip-action" data-action="${escapeAttr(model.clipNote.action.id)}" ${model.running ? "disabled" : ""}>${escapeHtml(model.clipNote.action.label)}</button>` : ""}
+          </section>` : ""}
+          ${model.labelNote ? `
+          <section class="panel export-module export-label-note is-${escapeAttr(model.labelNote.status)}" aria-labelledby="exportLabelHeading">
+            <h2 id="exportLabelHeading" class="visually-hidden">${escapeHtml(model.labelNote.heading)}</h2>
+            <p class="export-clip-text" role="status"><strong>${escapeHtml(model.labelNote.title)}</strong>${model.labelNote.detail ? ` ${escapeHtml(model.labelNote.detail)}` : ""}</p>
+            <button class="button button-secondary export-clip-action" data-action="${escapeAttr(model.labelNote.action.id)}" ${model.running ? "disabled" : ""}>${escapeHtml(model.labelNote.action.label)}</button>
+          </section>` : ""}
           <section class="panel export-module">
             <div class="panel-heading"><h2>${t("export.outputFormat", { locale: model.locale })}</h2></div>
             <div class="segmented-row">
@@ -275,6 +350,15 @@ export function renderExportScreen(state) {
               <label class="segment ${checked(model.formats, "jpg") ? "is-active" : ""}">
                 <input data-action="toggle-format" data-format="jpg" type="checkbox" ${checked(model.formats, "jpg")} ${formatInputsDisabled ? "disabled" : ""} />
                 <span>${t("export.jpgImages", { locale: model.locale })}</span>
+              </label>
+            </div>
+          </section>
+          <section class="panel export-module export-layout-module">
+            <div class="panel-heading"><h2 id="exportLayoutHeading">${t("export.layout.title", { locale: model.locale })}</h2></div>
+            <div class="segmented-row" role="group" aria-labelledby="exportLayoutHeading">
+              <label class="segment ${model.measureReflow ? "is-active" : ""}">
+                <input data-action="toggle-measure-reflow" type="checkbox" ${model.measureReflow ? "checked" : ""} ${formatInputsDisabled ? "disabled" : ""} aria-describedby="exportMeasureReflowHint" />
+                <span><span>${escapeHtml(model.measureReflowLabel)}</span><small id="exportMeasureReflowHint" class="export-option-hint">${escapeHtml(model.measureReflowHint)}</small></span>
               </label>
             </div>
           </section>

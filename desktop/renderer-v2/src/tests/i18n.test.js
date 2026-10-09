@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { detectInitialLocale, persistLocale, t } from "../lib/i18n.js";
+import { describeError, detectInitialLocale, errorDetailText, persistLocale, pickLocalizedText, t } from "../lib/i18n.js";
 
 test("detectInitialLocale prefers saved locale over navigator language", () => {
   const locale = detectInitialLocale({
@@ -66,4 +66,35 @@ test("detectInitialLocale normalizes stored locale tags before applying preceden
   });
 
   assert.equal(locale, "ko");
+});
+
+test("bilingual backend notes show only the UI language", () => {
+  const note = "재생 표시가 남아 있을 수 있습니다 / A playback mark may remain";
+  assert.equal(pickLocalizedText(note, "ko"), "재생 표시가 남아 있을 수 있습니다");
+  assert.equal(pickLocalizedText(note, "en"), "A playback mark may remain");
+  // OVERLAY_COVERS_NOTATION (backend main.REFLOW_ISSUE_REASONS)
+  const chrome = "화면 표시가 음표에 닿아 그대로 두었어요. 확인이 필요해요 / Screen overlay touches notation; kept as is. Please check";
+  assert.equal(pickLocalizedText(chrome, "ko"), "화면 표시가 음표에 닿아 그대로 두었어요. 확인이 필요해요");
+  assert.equal(pickLocalizedText(chrome, "en"), "Screen overlay touches notation; kept as is. Please check");
+  // a slash inside one language's part stays with that part
+  const jump = "양쪽을 / 모두 남겼습니다 / Both sides / are kept";
+  assert.equal(pickLocalizedText(jump, "ko"), "양쪽을 / 모두 남겼습니다");
+  assert.equal(pickLocalizedText(jump, "en"), "Both sides / are kept");
+  assert.equal(pickLocalizedText("A / B in one language", "ko"), "A / B in one language");
+  assert.equal(pickLocalizedText("한 언어 / 그대로", "en"), "한 언어 / 그대로");
+});
+
+test("error objects become readable messages, never [object Object]", () => {
+  assert.equal(errorDetailText({}), "");
+  assert.equal(errorDetailText({ detail: [{ loc: ["body", "formats"], msg: "field required" }, { msg: "bad order" }] }), "field required; bad order");
+  assert.equal(errorDetailText({ message: { detail: "nested" } }), "nested");
+  assert.equal(describeError({}, "ko"), t("error.unknown", { locale: "ko" }));
+  assert.equal(describeError(undefined, "en"), t("error.unknown", { locale: "en" }));
+  assert.equal(describeError(new Error("REQUEST_TIMEOUT: POST /x did not answer within 30 s"), "en"), t("error.requestTimeout", { locale: "en" }));
+  assert.equal(describeError({ name: "TimeoutError" }, "ko"), t("error.requestTimeout", { locale: "ko" }));
+  assert.equal(describeError(new Error("REQUEST_FAILED: Failed to fetch"), "ko"), t("error.requestFailed", { locale: "ko" }));
+  assert.equal(describeError(new Error("저장 실패 / Save failed"), "en"), "Save failed");
+  for (const value of [{}, { a: 1 }, [{}], new Error(""), { message: {} }]) {
+    assert.doesNotMatch(describeError(value, "ko"), /\[object Object\]/);
+  }
 });

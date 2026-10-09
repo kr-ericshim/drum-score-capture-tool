@@ -182,6 +182,8 @@ export function createInitialExportConfig(sourceFilePath = "", today = new Date(
     outputDir: "",
     pageFillMode: "performance",
     layoutHint: "auto",
+    // Score layout: rearrange by measure (on by default) or keep the video's lines.
+    measureReflow: true,
     jobId: "",
     runStatus: "idle",
     progress: 0,
@@ -189,6 +191,8 @@ export function createInitialExportConfig(sourceFilePath = "", today = new Date(
     message: "",
     pdfPath: "",
     error: "",
+    // the job's error code (e.g. LAYOUT_CONFLICT, which review export can still resolve)
+    errorCode: "",
     documentHeader,
     metadataModal: createExportMetadataModalState(sourceFilePath, today, documentHeader, sourceDisplayName),
   };
@@ -313,8 +317,18 @@ export function createInitialSessionState() {
       autoRoiEvidence: "",
       autoRoiDiagnostics: {},
       autoRoiUserEdited: false,
+      // Whole-video check of the applied region (backend ENVELOPE_CLIPPED).
+      // status: idle | loading | clipped | clear | error; rectKey ties the
+      // result to the applied rect it was computed for.
+      clipCheck: { status: "idle", rectKey: "", suggestedRect: null },
       draftRect: null,
       appliedRect: null,
+      // Optional section-label area outside the score region (clean reflow). The
+      // backend suggestion is only loaded as a draft; the user applies it.
+      labelCheck: { status: "idle", rectKey: "", suggestedRect: null },
+      labelDraftRect: null,
+      labelAppliedRect: null,
+      editTarget: "score",
       imageWidth: 0,
       imageHeight: 0,
       status: "idle",
@@ -331,6 +345,16 @@ export function createInitialSessionState() {
       outputDir: "",
       pdfPath: "",
       compare: false,
+      // Clean reflow jobs: composed A4 previews of the last build, and whether the
+      // viewer shows them instead of the focused system.
+      outputPages: [],
+      pagePreview: false,
+      // Clean reflow job facts the review screen reports (deriveReflowInfo).
+      reflow: null,
+      // A running background rebuild: { jobId, taskId, state, stage, progress, cancelRequested }.
+      exportTask: null,
+      // Ledger hypotheses of the last delivered export that need a look (LEDGER_2D_INTERFACE §10).
+      hypotheses: createReviewHypothesesState(),
     },
     archive: {
       isOpen: false,
@@ -396,7 +420,7 @@ export function getStepState(state, step) {
   const roiDirty = hasPendingRoiDraft(state);
   const roiReady = sourceReady && Number.isFinite(state.roi.frameTime) && isRectValid(state.roi.appliedRect) && !roiDirty;
   const exportReady = Boolean(state.exportConfig.jobId) && state.exportConfig.runStatus === "done" && state.review.pages.length > 0;
-  const reviewReady = state.exportConfig.runStatus === "done" && state.review.pages.length > 0;
+  const reviewReady = isReviewableRun(state) && state.review.pages.length > 0;
 
   switch (step) {
     case "source":
@@ -424,7 +448,8 @@ export function getStepState(state, step) {
     case "review":
       return {
         enabled: reviewReady,
-        complete: reviewReady,
+        // a pending layout conflict opens review but has no chart yet
+        complete: reviewReady && state.exportConfig.runStatus === "done",
         blockingReason: reviewReady ? "" : t("selector.blocking.reviewRequired", { locale }),
       };
     default:
@@ -434,6 +459,28 @@ export function getStepState(state, step) {
         blockingReason: "",
       };
   }
+}
+
+/**
+ * A clean reflow job stopped at a layout conflict (status error, error code LAYOUT_CONFLICT,
+ * reflow state "layout_conflict"): no chart files yet, but review export may still resolve it by
+ * leaving a system out or choosing a staff size (STRATEGY Step 2A).
+ */
+export function isLayoutConflictPending(state) {
+  return state?.exportConfig?.runStatus === "error"
+    && String(state.exportConfig.errorCode || "") === "LAYOUT_CONFLICT"
+    && state?.review?.reflow?.state === "layout_conflict";
+}
+
+export function isLedgerFailurePending(state) {
+  return state?.exportConfig?.runStatus === "error"
+    && String(state.exportConfig.errorCode || "") === "LEDGER_VERIFICATION_FAILED"
+    && state?.review?.reflow?.state === "ledger_failed";
+}
+
+/** The current job can be reviewed and exported again: done, layout conflict, or ledger failure. */
+export function isReviewableRun(state) {
+  return state?.exportConfig?.runStatus === "done" || isLayoutConflictPending(state) || isLedgerFailurePending(state);
 }
 
 export function getAccessibleSteps(state) {
@@ -485,7 +532,7 @@ export function getPrimaryAction(state) {
   if (activeStep === "review") {
     const hasFormats = Array.isArray(state.exportConfig.formats) && state.exportConfig.formats.length > 0;
     const reviewLocked = !state.exportConfig.jobId
-      || state.exportConfig.runStatus !== "done"
+      || !isReviewableRun(state)
       || state.review.status === "running"
       || state.review.status === "applied"
       || !hasFormats
@@ -573,8 +620,215 @@ function buildSimilarPairIndex(result = {}) {
   };
 }
 
+function systemNumber(systemId, fallback) {
+  const id = String(systemId || "");
+  const alternate = id.match(/(\d+)-alt\d+$/);
+  if (alternate) return Number(alternate[1]);
+  const match = id.match(/(\d+)$/);
+  return match ? Number(match[1]) : fallback;
+}
+
+/** "other moment" number of a minority-content alternate (``sys-005-alt2`` -> 2), else 0. */
+function alternateNumber(systemId) {
+  const match = String(systemId || "").match(/-alt(\d+)$/);
+  return match ? Number(match[1]) : 0;
+}
+
+function formatClockLabel(value) {
+  const sec = Math.max(0, Math.floor(Number(value) || 0));
+  return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+}
+
+/** Composed A4 page previews of the last built reflow chart (empty for legacy jobs). */
+/** The review screen's hypothesis view: closed and not loaded. */
+export function createReviewHypothesesState() {
+  return { open: false, jobId: "", revision: -1, status: "idle", items: [], counts: null, total: 0, ledgerStatus: "", error: "" };
+}
+
+// The small ledger summary a reflow job result carries (counts only, no crops).
+function deriveLedgerSummary(summary) {
+  if (!summary || typeof summary !== "object") return null;
+  return { status: String(summary.status || ""), reviewHypotheses: Math.max(0, Number(summary.review_hypotheses) || 0) };
+}
+
+export function deriveOutputPages(result = {}) {
+  if (result.output_model !== "clean_reflow_v1") return [];
+  const previews = Array.isArray(result.preview_images) ? result.preview_images : [];
+  return previews.map((path, index) => ({ index: index + 1, path: normalizeAssetPath(path) }));
+}
+
+function finiteOrNull(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+/**
+ * Clean reflow facts for the review screen: excluded/hidden short displays,
+ * "looks similar" suggestion state, a layout conflict and the document staff size.
+ * Returns null for jobs that are not clean reflow jobs.
+ */
+export function deriveReflowInfo(result = {}) {
+  if (result.output_model !== "clean_reflow_v1") return null;
+  const reflow = result.reflow && typeof result.reflow === "object" ? result.reflow : {};
+  const systems = Array.isArray(reflow.systems) ? reflow.systems : [];
+  const exclusions = reflow.exclusions && typeof reflow.exclusions === "object" ? reflow.exclusions : {};
+  const conflict = reflow.layout_conflict && typeof reflow.layout_conflict === "object" ? reflow.layout_conflict : null;
+  const conflictIds = conflict && Array.isArray(conflict.conflicts) ? conflict.conflicts.map(item => String(item?.system_id || "")) : [];
+  const staffGapMm = finiteOrNull(reflow.staff_gap_mm);
+  const defaultMm = finiteOrNull(reflow.staff_gap_mm_default) ?? 1.5;
+  const labels = reflow.labels && typeof reflow.labels === "object" ? reflow.labels : {};
+  return {
+    revision: Number(reflow.revision || 0),
+    state: String(result.reflow_state || ""),
+    suggestionsState: String(reflow.suggestions_state || "done"),
+    listedShort: Array.isArray(exclusions.short_listed_excluded) ? exclusions.short_listed_excluded.length : 0,
+    // systems whose strip leaves out marks shown only for a moment (an "other moment" alternate shows them)
+    minorityLines: systems.filter(system => Array.isArray(system?.issues) && system.issues.includes("MINORITY_CONTENT_DROPPED")).length,
+    hiddenShort: Number(exclusions.hidden || 0),
+    conflict: conflict ? {
+      systemNumbers: conflictIds.map((id, index) => systemNumber(id, index + 1)),
+      requestedMm: finiteOrNull(conflict.requested_staff_gap_mm),
+      offeredMm: finiteOrNull(conflict.largest_fitting_staff_gap_mm),
+      // why the automatic size did not resolve it (plan.staff_size.reason): BELOW_AUTO_MINIMUM,
+      // NO_FITTING_SIZE, AUTO_OFF (a size the user chose), or "" when not recorded
+      ...conflictSizeFacts(reflow.page_plan),
+    } : null,
+    // no chart files yet: the job stopped at this conflict and waits for review export
+    conflictPending: String(result.reflow_state || "") === "layout_conflict",
+    // a jump-view interval stayed unresolved: the chart is labelled incomplete with its time ranges
+    ...deriveCoverage(result),
+    ...deriveReviewRequired(result, reflow, systems),
+    staffGapMm,
+    defaultStaffGapMm: defaultMm,
+    smallerStaff: staffGapMm !== null && staffGapMm < defaultMm - 1e-6,
+    // the delivered-file check: status and how many hypotheses need a look (null before it ran)
+    ledger: deriveLedgerSummary(reflow.ledger_summary),
+    labelsOutsideRoi: String(labels.status || "") === "LABELS_OUTSIDE_ROI",
+    labelsPlaced: Number(labels.placed || 0),
+    systemCount: systems.length,
+    // which layout produced the current files (null for files made before it was recorded)
+    measureReflow: deriveMeasureReflow(result.measure_reflow),
+    // a dense chart laid out by measure at a smaller staff size than chosen (null otherwise)
+    autoStaff: deriveAutoStaff(result.measure_reflow),
+  };
+}
+
+function deriveReviewRequired(result, reflow, systems) {
+  const flags = ["SOURCE_CLIPPED", "UNCERTAIN_MARK_KEPT", "TRANSLUCENT_PLATE_GRAY"];
+  const codes = systems.filter(system => system?.included !== false)
+    .flatMap(system => (Array.isArray(system?.issues) ? system.issues : []).filter(code => flags.includes(code)));
+  const raw = [...(Array.isArray(result.review_reasons) ? result.review_reasons : []),
+    ...(Array.isArray(reflow.review_reasons) ? reflow.review_reasons : []), ...codes];
+  const reasons = raw.map(reason => typeof reason === "string" ? { code: reason, text: reason }
+    : { code: String(reason?.code || reason?.kind || reason?.reason || ""), text: String(reason?.text || reason?.message || reason?.detail || "") });
+  const seen = new Set();
+  return {
+    reviewRequired: Boolean(result.review_required || reflow.review_required || ["review_required", "ledger_failed"].includes(result.reflow_state) || codes.length),
+    reviewReasons: reasons.filter(reason => {
+      const key = reason.code ? `code:${reason.code}` : reason.text ? `text:${reason.text}` : "";
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }),
+  };
+}
+
+function conflictSizeFacts(plan) {
+  const size = plan && typeof plan === "object" && plan.staff_size && typeof plan.staff_size === "object" ? plan.staff_size : {};
+  return {
+    sizeReason: String(size.reason || "").slice(0, 64),
+    autoMinMm: finiteOrNull(size.auto_min_staff_gap_mm) ?? 1.2,
+  };
+}
+
+/** Unresolved ranges of an incomplete jump-view chart (result.coverage, or result.reflow.coverage). */
+function deriveCoverage(result = {}) {
+  const coverage = result.coverage && typeof result.coverage === "object" ? result.coverage
+    : result.reflow?.coverage && typeof result.reflow.coverage === "object" ? result.reflow.coverage : null;
+  const incomplete = String(result.reflow_state || "") === "incomplete" || coverage?.status === "incomplete";
+  if (!incomplete) return { incomplete: false, unresolvedRanges: [] };
+  const spans = Array.isArray(coverage?.unresolved) ? coverage.unresolved : [];
+  const unresolvedRanges = spans.map((span) => {
+    const start = finiteOrNull(Array.isArray(span) ? span[0] : span?.start);
+    const end = finiteOrNull(Array.isArray(span) ? span[1] : span?.end);
+    if (start === null || end === null) return null;
+    return { start, end, label: `${formatClockLabel(start)}–${formatClockLabel(Math.ceil(end))}` };
+  }).filter(Boolean);
+  return { incomplete: true, unresolvedRanges };
+}
+
+/** plan.staff_size reasons for a score wider than the page (whole systems, or measure units without a safe cut). */
+const WIDE_STAFF_REASONS = new Set(["WHOLE_SYSTEMS_DO_NOT_FIT", "UNITS_DO_NOT_FIT"]);
+
+// A smaller staff size the planner chose by itself: a dense chart laid out by measure, or a score
+// wider than the page (whole systems, or measure units without a safe cut).
+function deriveAutoStaff(record) {
+  const size = record && typeof record === "object" ? record.staff_size : null;
+  if (!size || typeof size !== "object" || size.auto_reduced !== true) return null;
+  const reason = String(size.reason || "");
+  // any other automatic reduction of a measure layout is the dense-chart search (DENSE_LINES_NOT_FULL)
+  const kind = WIDE_STAFF_REASONS.has(reason) ? "wide" : record.status === "measure_lines" ? "dense" : "";
+  if (!kind) return null;
+  const usedMm = finiteOrNull(size.staff_gap_mm);
+  const requestedMm = finiteOrNull(size.staff_gap_mm_requested);
+  if (usedMm === null || (requestedMm !== null && usedMm >= requestedMm - 1e-6)) return null;
+  return { usedMm, requestedMm, reason, kind };
+}
+
+function deriveMeasureReflow(record) {
+  if (!record || typeof record !== "object") return null;
+  const status = String(record.status || "");
+  if (!["measure_lines", "fallback_whole_systems", "off"].includes(status)) return null;
+  return {
+    status,
+    applied: status === "measure_lines",
+    fellBack: status === "fallback_whole_systems",
+    reason: status === "fallback_whole_systems" ? String(record.reason || "").slice(0, 64) : "",
+  };
+}
+
+/** Review revision a saved draft belongs to (reflow revision, else review-export revision). */
+export function jobRevision(result = {}) {
+  if (result.output_model === "clean_reflow_v1") return Number(result.reflow?.revision || 0);
+  return Number(result.review_export?.revision || 0);
+}
+
+/** Title for a reflow system at its current list position. */
+export function systemTitle(index, locale = "en") {
+  return t("selector.systemTitle", { locale, replacements: { index } });
+}
+
 export function needsAttention(page) {
   return Boolean(page?.suspicious || page?.autoExcludeCandidate || page?.similarTo);
+}
+
+/** At least this many short transition displays are shown as one collapsed group. */
+export const FRAGMENT_GROUP_MIN = 2;
+
+/**
+ * The review list as shown: the filtered systems, with short transition displays
+ * (clean reflow ``SHORT_DISPLAY``: page curls, fades, brief flashes) gathered into one
+ * collapsible group when there are several. ``navigable`` is what ← → walk through:
+ * the visible rows in screen order (group rows only while the group is open).
+ */
+export function reviewListPages(review = {}) {
+  const pages = Array.isArray(review.pages) ? review.pages : [];
+  const filtered = review.filter === "suspicious" ? pages.filter(needsAttention) : pages;
+  const fragmentList = filtered.filter(page => page.transitionFragment);
+  const alternateList = filtered.filter(page => page.minorityAlternate);
+  const grouped = fragmentList.length >= FRAGMENT_GROUP_MIN;
+  const alternatesGrouped = alternateList.length >= FRAGMENT_GROUP_MIN;
+  const fragments = grouped ? fragmentList : [];
+  const alternates = alternatesGrouped ? alternateList : [];
+  const main = filtered.filter(page => !(grouped && page.transitionFragment) && !(alternatesGrouped && page.minorityAlternate));
+  const expanded = grouped && Boolean(review.fragmentsExpanded);
+  const alternatesExpanded = alternatesGrouped && Boolean(review.alternatesExpanded);
+  return {
+    main, fragments, grouped, expanded,
+    // "other moments" of systems whose strip leaves out marks shown only briefly
+    alternates, alternatesGrouped, alternatesExpanded,
+    navigable: [...main, ...(alternatesExpanded ? alternates : []), ...(expanded ? fragments : [])],
+  };
 }
 
 export function deriveCapturePages(result = {}, locale = "en") {
@@ -586,6 +840,8 @@ export function deriveCapturePages(result = {}, locale = "en") {
   const finalImages = Array.isArray(result.images) ? result.images : [];
   const reviewSelectionMode = String(result.review_export?.selection_mode || "");
   const hasReviewExport = Boolean(result.review_export);
+  // Clean reflow jobs: review items are the cleaned system strips in their current order.
+  const isReflow = result.output_model === "clean_reflow_v1";
   let capturePaths = finalImages;
   let previewKind = "output";
   let selectionMode = "pages";
@@ -595,6 +851,10 @@ export function deriveCapturePages(result = {}, locale = "en") {
     capturePaths = finalImages;
     previewKind = "output";
     selectionMode = "pages";
+  } else if (isReflow && reviewCandidates.length) {
+    capturePaths = reviewCandidates;
+    previewKind = "capture";
+    selectionMode = "captures";
   } else if (reviewCandidates.length) {
     capturePaths = reviewCandidates;
     previewKind = "capture";
@@ -636,11 +896,20 @@ export function deriveCapturePages(result = {}, locale = "en") {
     const autoExcludeCandidate = recommendedAction === "exclude"
       || diagnosticCodes.includes("mostly_blank_page")
       || diagnosticCodes.includes("video_frame_content");
-    const outputPreviewPath = previewImages[index] || finalImages[index] || capturePath;
+    const outputPreviewPath = isReflow ? capturePath : (previewImages[index] || finalImages[index] || capturePath);
+    const startSec = Number(diagnostic?.t_start);
+    const otherMoment = isReflow ? alternateNumber(diagnostic?.system_id) : 0;
+    const titleNumber = isReflow ? systemNumber(diagnostic?.system_id, index + 1) : index + 1;
     return {
       id: `${index + 1}`,
       index: index + 1,
-      title: t("selector.pageTitle", { locale, replacements: { index: index + 1 } }),
+      kind: isReflow ? "system" : "capture",
+      systemId: isReflow ? String(diagnostic?.system_id || "") : "",
+      timeLabel: isReflow && Number.isFinite(startSec) ? formatClockLabel(startSec) : "",
+      // A system keeps its name (video order number) when the list is rearranged.
+      title: otherMoment
+        ? t("selector.alternateTitle", { locale, replacements: { index: titleNumber, moment: otherMoment } })
+        : t(isReflow ? "selector.systemTitle" : "selector.pageTitle", { locale, replacements: { index: titleNumber } }),
       capturePath,
       previewPath: normalizeAssetPath(result.capture_edits?.[capturePath]?.image_path || capturePath),
       cropRect: result.capture_edits?.[capturePath]?.roi || null,
@@ -653,6 +922,10 @@ export function deriveCapturePages(result = {}, locale = "en") {
       diagnosticCodes,
       recommendedAction,
       autoExcludeCandidate,
+      // a short display (flicker, page curl, brief flash) listed unchecked so it can be restored
+      transitionFragment: isReflow && diagnosticCodes.includes("SHORT_DISPLAY"),
+      // another moment of a system, showing marks its strip leaves out (listed unchecked)
+      minorityAlternate: isReflow && diagnosticCodes.includes("MINORITY_ALTERNATE"),
       diagnostics: diagnostic,
       similarTo: null,
     };
@@ -668,7 +941,8 @@ export function deriveCapturePages(result = {}, locale = "en") {
       referenceId: reference?.id || "",
       referenceIndex: reference?.index || 0,
       referencePath: pair.referencePath,
-      reason: pair.reason,
+      // Reflow suggestions are appearance only ("looks similar"); older results said "repeat".
+      reason: isReflow && ["repeat", "looks_similar"].includes(pair.reason) ? "looks_similar" : pair.reason,
       changeBoxes: pair.changeBoxes,
       changeCount: pair.changeBoxes.length,
       frameAspect: pair.frameAspect,
@@ -709,14 +983,22 @@ export function getProcessRailItems(state) {
       summary = state.exportConfig.runStatus === "running"
         ? t("selector.summary.exportRunning", { locale })
         : stepState.complete
-          ? t("selector.summary.exportDone", { locale })
+          ? t(state.review.reflow?.reviewRequired ? "selector.summary.reviewRequired" : "selector.summary.exportDone", { locale })
           : stepState.enabled
             ? t("selector.summary.exportReady", { locale })
             : t("selector.summary.exportBlocked", { locale });
     } else if (step === "review") {
-      summary = stepState.complete
-        ? t("selector.summary.reviewCount", { locale, replacements: { count: state.review.pages.length } })
-        : t("selector.summary.reviewWaiting", { locale });
+      summary = isLayoutConflictPending(state) && stepState.enabled
+        ? t("selector.summary.reviewConflict", { locale })
+        : isLedgerFailurePending(state) && stepState.enabled
+          ? t("selector.summary.reviewLedgerFailed", { locale })
+        : stepState.complete && state.review.reflow?.incomplete
+          ? t("selector.summary.reviewIncomplete", { locale })
+          : stepState.complete && state.review.reflow?.reviewRequired
+            ? t("selector.summary.reviewRequired", { locale })
+          : stepState.complete
+            ? t("selector.summary.reviewCount", { locale, replacements: { count: state.review.pages.length } })
+            : t("selector.summary.reviewWaiting", { locale });
     }
 
     return {

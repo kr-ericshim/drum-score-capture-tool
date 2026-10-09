@@ -113,6 +113,11 @@ export function invalidatePreviewFlow(state, {
   state.roi.autoRoiEvidence = "";
   state.roi.autoRoiDiagnostics = {};
   state.roi.autoRoiUserEdited = false;
+  state.roi.clipCheck = { status: "idle", rectKey: "", suggestedRect: null };
+  state.roi.labelCheck = { status: "idle", rectKey: "", suggestedRect: null };
+  state.roi.labelDraftRect = null;
+  state.roi.labelAppliedRect = null;
+  state.roi.editTarget = "score";
   state.roi.draftRect = null;
   state.roi.appliedRect = null;
   state.roi.imageWidth = 0;
@@ -128,6 +133,7 @@ export function invalidatePreviewFlow(state, {
   state.exportConfig.outputDir = "";
   state.exportConfig.pdfPath = "";
   state.exportConfig.error = "";
+  state.exportConfig.errorCode = "";
 
   state.review.pages = [];
   state.review.selectedPageIds = [];

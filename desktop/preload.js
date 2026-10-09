@@ -34,6 +34,16 @@ async function readJobAsset(assetPath) {
 let updateInstalling = false;
 ipcRenderer.on("release-update-state", (_, state) => { updateInstalling = state?.status === "installing"; });
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
+const MAX_REQUEST_TIMEOUT_MS = 30 * 60 * 1000;
+
+// Requests answer quickly (a PDF rebuild runs as a background task the page polls); a caller may still ask for a longer wait.
+function requestTimeoutMs(value) {
+  const ms = Number(value);
+  if (!Number.isFinite(ms) || ms <= 0) return DEFAULT_REQUEST_TIMEOUT_MS;
+  return Math.min(Math.max(ms, 1000), MAX_REQUEST_TIMEOUT_MS);
+}
+
 async function requestJson(apiPath, options = {}) {
   const url = new URL(String(apiPath || ""), API_BASE);
   const apiOrigin = new URL(API_BASE).origin;
@@ -48,12 +58,23 @@ async function requestJson(apiPath, options = {}) {
   }
   const hasBody = options.body !== undefined && options.body !== null;
   const requestHeaders = hasBody ? { "Content-Type": "application/json" } : {};
-  const response = await fetch(url.toString(), {
-    method,
-    signal: AbortSignal.timeout(30000),
-    headers: authenticatedHeaders(requestHeaders),
-    body: hasBody ? String(options.body) : undefined,
-  });
+  const timeoutMs = requestTimeoutMs(options.timeoutMs);
+  let response;
+  try {
+    response = await fetch(url.toString(), {
+      method,
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: authenticatedHeaders(requestHeaders),
+      body: hasBody ? String(options.body) : undefined,
+    });
+  } catch (error) {
+    // A DOMException (timeout/abort) reaches the page through contextBridge as an empty object,
+    // which used to show as "[object Object]"; throw a plain Error with a recognizable message.
+    if (error?.name === "TimeoutError" || error?.name === "AbortError") {
+      throw new Error(`REQUEST_TIMEOUT: ${method} ${url.pathname} did not answer within ${Math.round(timeoutMs / 1000)} s`);
+    }
+    throw new Error(`REQUEST_FAILED: ${String(error?.message || "the processor did not answer")}`);
+  }
   const data = await response.json().catch(() => ({}));
   return {
     ok: Boolean(response.ok),

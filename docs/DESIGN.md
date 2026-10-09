@@ -72,7 +72,7 @@ The user judged the Light Side-Rail result as generic ("AI-made"): a page title 
 - Status is quiet by default. A floating notice appears only for an inline message or a backend problem that needs recovery.
 - A single blue accent for primary action, selection, focus and the editable region. Text uses a darker blue that keeps 4.5:1 contrast. Warnings stay orange-red. System fonts with tabular/monospace numerals for times and counts.
 - Review list thumbnails follow the captures' shape (see Review refinement, 2026-10-05); cards no longer use square thumbnails.
-- Not yet implemented and tracked as follow-up product work: composed PDF-page preview on the export/review canvas and a change-point scrubber on the ROI screen. Until then the canvas shows the existing crop preview and capture image.
+- Not yet implemented and tracked as follow-up product work: composed page preview on the export canvas and a change-point scrubber on the ROI screen. Review has a composed A4 page view since 2026-10-06 (see the last section).
 
 ## Superseded visual direction: Light Side-Rail Workspace (2026-09-24)
 
@@ -147,3 +147,12 @@ Same system, applied to the other three steps after the review pass.
 - Source: the drop target's capture-frame corners are thinner and lighter at rest (drag-over keeps the accent). Once a video is ready, the panel names it with resolution and length, makes "Next: Score region" the primary action, and demotes opening a file to "Open another video". Empty and loading states keep "Open video" primary.
 - Score region: the editor shades everything outside the region instead of tinting the score inside it, so notation keeps its real colour. A short "Not applied" / "Applied" label (dot plus text) sits beside Apply region; the full explanation stays in the panel.
 - Create files: one heading per module ("Output format", no "File settings" above it). The PDF option carries its own note that title and performer come next, shown only while PDF is selected. Automatic profile values and the output path read as a quiet summary with the qualifier beside the heading. The preview drops a caption that only repeated its title.
+
+## Clean reflow systems on Review (2026-10-06)
+
+Same Floating Dock Canvas system. The output is now the clean reflowed A4 chart (docs/reflow/DECISIONS.md), so Review lists systems instead of screenshots. Minimal changes only:
+
+- The list holds one row per system in output order, named by its video order ("줄 3" / "System 3") with the time it first appears. A rearranged system keeps its name; list position is the output order. The checkbox still means "included".
+- The current-item bar adds Move up / Move down (arrow icons with names) and, for a likely repeat, a "반복?" / "Repeat?" flag, a one-line note naming the earlier system, and one "중복 빼기" / "Remove duplicate" button. Undo covers order and removal. Nothing blocks saving.
+- The bottom canvas tools add "A4 보기" / "Page view": the composed pages of the last build, stacked as paper. A note says edits appear after rebuilding. Crop is disabled for systems in this slice.
+- Export step: the whole-video region check started by Apply shows in the inspector, above Output format: a quiet "checking" line, an amber note with "추천 영역 사용" / "Use suggested area" (loads the larger area as a draft on the region step; applying stays a separate action), or a short failure line with "다시 확인" / "Check again".
