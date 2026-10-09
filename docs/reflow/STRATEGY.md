@@ -212,3 +212,30 @@ Prompt: `PRO_CHECKPOINT_STEP2D_OUTCOMES.md` (attachments `advice_pack_5/`). Acce
 **Holdout entry:** the 9 usable stay usable, the 6 clean do not regress, target ≥ 8 clean / ≥ 9 usable of 12, 01Mr ≤ 180 s over comparable runs, no review flood, scope written down, candidate frozen. **Ship to a few users:** ≥ 5/6 usable, ≥ 4/6 clean, zero silent loss, ≤ 1 honestly reported failure.
 
 **Notes on the reply:** (1) Pro asks for timing on the packaged app; we time the source backend over HTTP (same entry point as the app) and say so; a packaged run is a separate check before shipping. (2) Promotion rule for review codes (≈29/30 confirmed and actionable on grouped issues) is used only if a code is worth showing; we do not start a calibration program.
+
+## Step 2D checkpoint #5: Pro reply weighed (2026-10-10)
+
+Prompt: `PRO_CHECKPOINT_STEP2D_FREEZE.md` (attachments `advice_pack_6/`). Verdict: freeze features now, but do a 1–2 day preparation pass before opening the holdouts. Accepted; every finding below was checked against our outputs first.
+
+**Checked and confirmed:**
+- **Fzc silent loss (Pro: "73 → 81 discontinuity").** Real: measures 77–80 ("Bridge") are missing. The tracker closed the 77–80 display one sample late, so its last observation already showed 81–84; the false-split join (`content_change_same_written_display`) compares only boundary frames and merged ep-0019 + ep-0020 into sys-020; strip cleaning kept 81–84 and dropped 77–80 as minority content (alternate unplaced, review silent). Present since at least step2d1. This was counted "clean" twice.
+- **bF69 duplicated bar 42.** Real: sys-010's preview tail was not cut because ONE 1-px speck at the frame edge was "removed ink not at destination"; the whole tail (start of bar 42) stayed and bar 42 printed twice. → specks ≤ max(2 px, 0.012·gap²) no longer block a verified cut (`PREVIEW_SPECK_GAP2`).
+- **_7gP below the size floor.** Real: two oversize units (two 6/4 measures of 32nds each, the inner barline LOCKED by a crescendo line crossing it) print at 0.92 / 0.82 mm staff gap.
+- Thread window: already bounded (one submission per consumed result; ≤ N outstanding). Windows RAM fallback: real (unknown RAM skipped the cap).
+- Replay and dark-background counterexamples: valid in principle (written A B C … A B C passes every replay test; a recurring gray mark can pass every footage test, and the removal is exempt from the survival check). Not observed on our videos.
+
+**Preparation pass (in progress):**
+1. Replay → candidates by default (`REPLAY_CANDIDATE`, shown first in review: "untick if it is a D.S. replay"); `REFLOW_REPLAY_AUTO_EXCLUDE=1` keeps the old exclusion for development. aOED goes back to 3 pages until the user unticks.
+2. Dark-background removal off by default (`REFLOW_DARK_BG_CLEANUP=1` for development). bF69's gray smear returns (cosmetic).
+3. Frame-edge exception only with verified frame geometry (the `source_clipped` fallback is gone); tests for a crossing on the last pixel row and a thin line just above the edge.
+4. Threads: unknown RAM → 1; 8 GiB → 1, 12 → 2, ≥ 16 → 4 (Windows RAM read with GlobalMemoryStatusEx).
+5. Fzc join fix (worker F) and the size floor (worker L: forced break at crossing-only barline seams, else `LINE_BELOW_MIN_SIZE` flag).
+6. Then: re-run the 12 videos, regrade with Pro's rubric, write the freeze record, packaged-app check on macOS.
+
+**Regrading (Pro's rubric, accepted):** clean = readable at A4, every line ≥ floor, no extra musical fragment, no overlay touching notation; usable with flaws = readable without reconstructing or skipping musical events; unusable = missing / duplicated / reordered music or a line below the floor; unsupported = a source class excluded before testing. Fidelity is a separate verdict (not audited / no loss observed / unresolved / defect). SZwT and SHvfn icons that touch beams → usable with flaws. aOED lyric clipping → usable with source limitation.
+
+**Holdout protocol (accepted):** one first-export run per video, graded before any assisted change; per-video report (identity, setup, outcome, grade, fidelity audit, stage times, peak memory, review items, coverage, assistance); ship bar unchanged (≥ 5/6 usable, ≥ 4/6 clean, zero observed silent loss, ≤ 1 honest failure, refusals count in the denominator). Fidelity audit per video: walk the source timeline and give every new display a destination (≈ 30–45 min), no new verifier.
+
+**Not adopted now:** navigation-sign recognition; the other replay implementation fixes (suffix bypass, non-transitive targets, block time span) wait until automatic exclusion returns; adaptive temporal sampling. Speed next (after the holdouts): fewer decoder restarts/seeks first, reuse for unchanged regions second, with exact-equivalence checks.
+
+**Review of the preparation pass (Codex, two rounds):** fixed — a later endpoint-only join could undo the whole-span rejection; raw member windows accumulated in memory; forced breaks trusted reason codes (now positive stroke geometry per crossing component). Accepted residual risk, not fixed: a beam drawn as disconnected fragments (stems separated by gaps, or stems fainter than gray ~220) can still pass the stroke test, and `reflow_verify_plan` checks the recorded measurements without recomputing them from pixels. Reason: a forced break happens only when the line would otherwise print below 1.2 mm, keeps every pixel, and is listed in review as `FORCED_LINE_BREAK`; a split beam is a readable, disclosed flaw, a 0.8 mm line is not readable. Revisit if a holdout shows it.
