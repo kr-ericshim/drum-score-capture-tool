@@ -1860,6 +1860,10 @@ def _default_reflow_header(job: Job, payload: JobCreate, export_opts: ExportOpti
 
 
 REFLOW_ISSUE_REASONS = (
+    # the review shows the first matching reason: an action the user must take comes first
+    ("REPLAY_CANDIDATE", "앞에서 이미 나온 줄과 똑같습니다. D.S./반복으로 다시 연주하는 부분이면 체크를 해제해 빼세요 / Identical to lines shown earlier; if it is a D.S./repeat replay, untick it to leave it out"),
+    ("FORCED_LINE_BREAK", "줄이 너무 길어 마디선에서 나눴습니다. 마디선을 지나던 선(크레셴도 등)이 다음 줄로 이어집니다 / This line was too long, so it was split at a barline; a line crossing it continues on the next line"),
+    ("LINE_BELOW_MIN_SIZE", "이 줄은 인쇄하기에 작게 축소되었습니다(오선 간격 {mm} mm) / This line is printed below the readable size (staff gap {mm} mm)"),
     ("LEDGER_UNASSESSED", "원본 표시와 PDF의 보존 검증 자료가 없어 확인이 필요해요 / Source-to-PDF evidence is missing. Please review"),
     ("LEDGER_REVIEW_REQUIRED", "원본 표시가 PDF에 보존되었는지 확인이 필요해요 / Source-to-PDF preservation needs review"),
     ("LEDGER_VERIFICATION_FAILED", "PDF 보존 검증에 실패했어요. 선택을 확인하고 다시 만들어 주세요 / PDF preservation verification failed. Check the selection and rebuild"),
@@ -1889,6 +1893,13 @@ REFLOW_ISSUE_REASONS = (
 def _reflow_capture_fields(reflow: Dict[str, Any]) -> Dict[str, Any]:
     """Result fields the review screen reads (strip paths stand in for captures)."""
     systems = reflow.get("systems", [])
+    size_codes = {c for s in systems for c in s.get("issues", [])
+                  if c in ("FORCED_LINE_BREAK", "LINE_BELOW_MIN_SIZE")}
+    reason_text = dict(REFLOW_ISSUE_REASONS)
+    small_gaps = [s["effective_staff_gap_mm"] for s in systems
+                  if "LINE_BELOW_MIN_SIZE" in s.get("issues", []) and s.get("effective_staff_gap_mm") is not None]
+    if small_gaps:
+        reason_text["LINE_BELOW_MIN_SIZE"] = reason_text["LINE_BELOW_MIN_SIZE"].replace("{mm}", f"{min(small_gaps):.3f}")
     path_of = {s["id"]: s["strip_path"] for s in systems}
     conflict_ids = {c.get("system_id") for c in (reflow.get("layout_conflict") or {}).get("conflicts", [])}
     deps = reflow.get("dependencies") or {}
@@ -1906,6 +1917,9 @@ def _reflow_capture_fields(reflow: Dict[str, Any]) -> Dict[str, Any]:
         reasons = [text for code, text in REFLOW_ISSUE_REASONS if code in codes
                    # a content-step state is listed like an "other moment" but is described as another state
                    and not (code == "MINORITY_ALTERNATE" and "CONTENT_STEP_STATE" in codes)]
+        if "LINE_BELOW_MIN_SIZE" in codes:
+            mm = s.get("effective_staff_gap_mm")
+            reasons = [t.replace("{mm}", f"{mm:.3f}" if mm is not None else "?") for t in reasons]
         minority = (s.get("strip") or {}).get("minority_content") or {}
         extra: Dict[str, Any] = {}
         if s.get("alternate_of"):
@@ -1943,13 +1957,14 @@ def _reflow_capture_fields(reflow: Dict[str, Any]) -> Dict[str, Any]:
         "auto_excluded_captures": [s["strip_path"] for s in systems if not s.get("included", True)],
         "capture_diagnostics": diagnostics,
         "similar_capture_pairs": pairs,
-        "review_required": bool(reflow.get("review_required")),
+        "review_required": bool(reflow.get("review_required") or size_codes),
         # The renderer accepts {code, text}; include bilingual fallback copy for
         # new ledger reasons without requiring a renderer release in lockstep.
-        "review_reasons": [{"code": reason, "text": dict(REFLOW_ISSUE_REASONS)[reason]}
+        "review_reasons": [{"code": reason, "text": reason_text[reason]}
                            if reason in ("LEDGER_UNASSESSED", "LEDGER_REVIEW_REQUIRED", "LEDGER_VERIFICATION_FAILED",
-                                         "DELIVERED_PDF_UNASSESSED", "OVERLAY_UNRECOVERED", "OVERLAY_COVERS_NOTATION")
-                           else reason for reason in (reflow.get("review_reasons") or [])],
+                                         "DELIVERED_PDF_UNASSESSED", "OVERLAY_UNRECOVERED", "OVERLAY_COVERS_NOTATION",
+                                         "FORCED_LINE_BREAK", "LINE_BELOW_MIN_SIZE")
+                           else reason for reason in list(dict.fromkeys((reflow.get("review_reasons") or []) + sorted(size_codes)))],
     }
 
 

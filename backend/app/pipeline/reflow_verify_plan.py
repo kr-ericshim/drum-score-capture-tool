@@ -29,7 +29,7 @@ def plan_records(plan: dict, ledger_sink: dict) -> dict:
     Producer audit/validation assertions and in-memory page images are excluded.
     """
     measure = plan.get("measure_reflow", {})
-    return {"page_px": plan.get("page_px"), "dpi": plan.get("dpi"),
+    payload = {"page_px": plan.get("page_px"), "dpi": plan.get("dpi"),
             "staff_gap_mm": plan.get("staff_gap_mm"), "staff_gap_px": plan.get("staff_gap_px"),
             "margins_px": plan.get("margins_px"), "header_band_px": plan.get("header_band_px", 0),
             "pages": plan.get("pages", []),
@@ -38,6 +38,46 @@ def plan_records(plan: dict, ledger_sink: dict) -> dict:
             "generated_origins": ledger_sink.get("generated_origins", ledger_sink.get("generated", [])),
             "boundaries": measure.get("boundaries", []), "units": measure.get("units", []),
             "lines": [{"id": r["id"], "atom_ids": r.get("atom_ids", [])} for r in measure.get("lines", [])]}
+    if measure.get("forced_breaks"):
+        payload["forced_breaks"] = measure["forced_breaks"]
+    return payload
+
+
+def _authorized_floor_break(boundary: dict, records: list) -> bool:
+    # Independently check the explicit product exception; preserve the ordinary SAFE rule.
+    reasons = set(boundary.get("reason_codes") or [])
+    allowed = {"TIE_SLUR_OR_LINE_CROSSES", "TEXT_GROUP_CROSSES",
+               "LINE_ENDPOINT_NEAR_SEAM", "POSSIBLE_BROKEN_STROKE"}
+    evidence = boundary.get("floor_break_evidence") or {}
+    if (evidence.get("version") != "floor-strokes-1" or evidence.get("verified") is not True
+            or evidence.get("seam_x") != boundary.get("seam_x") or not evidence.get("components")
+            or not all(c.get("thin_stroke") is True and c.get("checks")
+                       and all(v is True for v in c["checks"].values()) for c in evidence["components"])):
+        return False
+    # Independently enforce the recorded measurements as well as the flags;
+    # an edited 'verified' bit or a relaxed producer threshold is insufficient.
+    try:
+        gap = float(evidence["staff_gap_px"])
+        if not np.isfinite(gap) or gap < 8:
+            return False
+        for component in evidence["components"]:
+            x0, y0, x1, y1 = component["box"]
+            width, height = x1 - x0, y1 - y0
+            local = component["local_extent_px"]
+            vertical = component["max_vertical_run_px"]
+            fill = component["max_blob_fill"]
+            if (not np.isfinite([width, height, local, vertical, fill]).all()
+                    or not (0 < height <= 1.5 * gap and width >= max(2 * gap, 4 * height)
+                            and 0 <= local <= .35 * gap and 0 < vertical <= .35 * gap
+                            and 0 < fill < .60)):
+                return False
+    except (KeyError, TypeError, ValueError):
+        return False
+    return (boundary.get("class") in ("LOCKED", "UNKNOWN") and bool(reasons) and reasons <= allowed
+            and any(r.get("boundary_id") == boundary.get("id")
+                    and r.get("system_id") == boundary.get("system_id")
+                    and set(r.get("reasons") or []) == reasons
+                    and r.get("evidence") == evidence for r in records))
 
 
 def _matrix(value: Any) -> np.ndarray:
@@ -259,7 +299,9 @@ def verify_plan(cert_as: dict[str, dict], plan: dict, ledger_sink: dict,
             bid = u.get(f"{side}_boundary_id")
             if bid:
                 boundary = bounds.get(bid, {})
-                if (boundary.get("class") != "SAFE" or boundary.get("is_cut") is not True
+                if ((boundary.get("class") != "SAFE"
+                     and not _authorized_floor_break(boundary, payload.get("forced_breaks", [])))
+                        or boundary.get("is_cut") is not True
                         or boundary.get("system_id") != u["system_id"] or boundary.get("seam_x") != u["box"][pos]):
                     invalid("unit cut is not at a recorded SAFE boundary", sid=u["system_id"], box=u["box"], boundary_id=bid)
             elif u["system_id"] in strip_pngs:

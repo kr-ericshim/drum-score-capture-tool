@@ -331,13 +331,19 @@ def analyse_source(
             [s for s in occ["systems"] if s.get("included", True) and not s.get("alternate_of")],
             {sid: rec["path"] for sid, rec in by_id.items()}, logger=logger, label_by=label_by,
         )
+        # Candidates only by default (Pro checkpoint #5): a genuinely written A B C ... A B C passage passes
+        # every test, so the user confirms by unticking. REFLOW_REPLAY_AUTO_EXCLUDE=1 excludes them (development).
+        auto_exclude = os.environ.get("REFLOW_REPLAY_AUTO_EXCLUDE") == "1"
         occ.setdefault("exclusions", {})["replay_blocks"] = replay_blocks
+        occ["exclusions"]["replay_mode"] = "auto_exclude" if auto_exclude else "candidate"
         replay_of = {entry["system_id"]: entry["replay_of"] for entry in replay_blocks}
+        code = "REPLAY_COLLAPSED" if auto_exclude else "REPLAY_CANDIDATE"
         for s in occ["systems"]:
             if s["id"] in replay_of:
-                s["included"] = False
-                if "REPLAY_COLLAPSED" not in s["issues"]:
-                    s["issues"].append("REPLAY_COLLAPSED")
+                if auto_exclude:
+                    s["included"] = False
+                if code not in s["issues"]:
+                    s["issues"].append(code)
                 s["replay_of"] = replay_of[s["id"]]
         _dump(occ, workspace / "occurrences.json")
     systems = []
@@ -1769,6 +1775,11 @@ def compose_systems(systems: Sequence[Dict[str, Any]], *, header: Optional[Dict[
     grid, never below 1.2 mm (``_compose_whole_systems``). Off (a size the user chose explicitly) the
     size is never changed. ``plan["staff_size"]`` records the size used and why."""
     report_progress("planning")
+    # These findings describe this export, and must clear when selection/size changes.
+    for s in all_systems or systems:
+        if any(c in ("FORCED_LINE_BREAK", "LINE_BELOW_MIN_SIZE") for c in s.get("issues", [])):
+            s["issues"] = [c for c in s["issues"] if c not in ("FORCED_LINE_BREAK", "LINE_BELOW_MIN_SIZE")]
+            s.pop("effective_staff_gap_mm", None)
     decided, report = resolve_dependencies(systems, all_systems, workspace=workspace)
     if not decided:
         raise NoSystemsError("no systems selected")
@@ -1795,6 +1806,7 @@ def compose_systems(systems: Sequence[Dict[str, Any]], *, header: Optional[Dict[
             plan["measure_reflow"]["status"] = "measure_lines"
             plan["measure_reflow"]["registration_context"] = bool(ctx)
             plan["dependencies"] = report
+            _line_review_issues(plan, all_systems or systems)
             if ledger_sink is not None:
                 measured = plan["measure_reflow"]
                 for source, dest in (("ledger_placements", "placements"), ("ledger_removed", "removed"), ("generated_origins", "generated")):
@@ -1844,6 +1856,9 @@ def compose_systems(systems: Sequence[Dict[str, Any]], *, header: Optional[Dict[
     plan["dependencies"] = report
     if fallback is not None:
         plan["measure_reflow"] = fallback
+    from app.pipeline import reflow_measure as rmeas
+    rmeas.flag_line_sizes(plan, systems=systems)
+    _line_review_issues(plan, all_systems or systems)
     if ledger_sink is not None:
         ledger_sink["placements"] = rr.whole_system_ledger_placements(plan, {sid: im.shape[:2] for sid, im in images.items()},
             offsets={sid: u["strip_offset"] for sid, u in units.items()})
@@ -1857,6 +1872,22 @@ def compose_systems(systems: Sequence[Dict[str, Any]], *, header: Optional[Dict[
         _whole_label_origins(plan, images, units, decided, generated)
         ledger_sink["plan"] = json_safe(plan)
     return json_safe(plan), pages
+
+
+def _line_review_issues(plan: dict, systems: Sequence[Dict[str, Any]]) -> None:
+    by = {s["id"]: s for s in systems}
+    for page in plan.get("pages", []):
+        for pl in page["placements"]:
+            codes = [c for c in pl.get("issues", []) if c in ("FORCED_LINE_BREAK", "LINE_BELOW_MIN_SIZE")]
+            if not codes:
+                continue
+            for sid in pl.get("system_ids", [pl["system_id"]]):
+                if sid in by:
+                    s = by[sid]
+                    s["issues"] = list(dict.fromkeys(s.get("issues", []) + codes))
+                    if "LINE_BELOW_MIN_SIZE" in codes:
+                        mm = pl["effective_staff_gap_mm"]
+                        s["effective_staff_gap_mm"] = min(mm, s.get("effective_staff_gap_mm", mm))
 
 
 def _compose_whole_systems(records: Sequence[Dict[str, Any]], images: Dict[str, np.ndarray], *,

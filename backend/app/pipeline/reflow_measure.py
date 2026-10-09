@@ -4,7 +4,8 @@ Runs after dependency resolution (``reflow_pipeline.resolve_dependencies``) and 
 placement and page layout:
 
 1. every placed system's cleaned strip (the variant the dependencies chose) is analysed and split
-   only at SAFE boundaries (``reflow_units.build_document``: measure / locked-group / whole-system
+   at SAFE boundaries, or explicitly recorded crossing-only barlines to meet the printed size floor
+   (``reflow_units.build_document``: measure / locked-group / whole-system
    units, native pixel ledger with exact split-and-reassemble);
 2. units become line atoms in placed order, at the output scale (one isotropic resampling per
    strip to the document staff gap); paper margins outside the staff and ink are trimmed;
@@ -505,12 +506,15 @@ def _unit_rows(ink_rows: np.ndarray, nonstaff_out: np.ndarray, staff_rows: np.nd
 
 def build_atoms(decided: Sequence[Dict[str, Any]], *, target_gap_px: float, context: Optional[Dict[str, Any]],
                 locks: Iterable[Dict[str, Any]] = (), job_id: str = "job", revision: int = 0,
-                line_width: Optional[int] = None, doc_cache: Optional[Dict[Any, Any]] = None) -> Dict[str, Any]:
+                line_width: Optional[int] = None, doc_cache: Optional[Dict[Any, Any]] = None,
+                floor_break_ids: Sequence[str] = ()) -> Dict[str, Any]:
     """Units of the placed systems (``decided`` from resolve_dependencies) as line atoms at the output scale.
 
     ``line_width`` (the printable line): in a jump-view panorama strip, a unit that does not fit it even
     fully contracted (a measure wider than the page line) gets a line of its own at a smaller scale
-    (``OVERSIZE_FILL`` of the line, recorded as ``oversize``); nothing is cut or dropped. Page strips keep
+    (``OVERSIZE_FILL`` of the line, recorded as ``oversize``). If that would fall below the staff-size
+    floor, eligible crossing-only barlines split it with exact pixel accounting; remaining small
+    output gets a review finding. Page strips keep
     the layout-conflict rule (the user chooses a staff size or excludes the system).
 
     ``doc_cache`` (the staff-size search in ``compose``): the units document does not depend on the
@@ -537,11 +541,14 @@ def build_atoms(decided: Sequence[Dict[str, Any]], *, target_gap_px: float, cont
                         "observations": obs, "layout": s.get("layout"), "strip_path": str(d["strip_path"])})
     locks = list(locks)
     key = (job_id, revision, tuple(x["system_id"] for x in systems))
+    if floor_break_ids:
+        key += (tuple(sorted(floor_break_ids)),)
     if doc_cache is not None and key in doc_cache:
         doc, analyses = doc_cache[key]
     else:
         doc, analyses = ru.build_document(job_id=job_id, revision=revision, systems=systems, locks=locks,
-                                          analysis_cache=doc_cache.setdefault("analyses", {}) if doc_cache is not None else None)
+                                          analysis_cache=doc_cache.setdefault("analyses", {}) if doc_cache is not None else None,
+                                          floor_break_ids=floor_break_ids)
         if doc_cache is not None:
             doc_cache[key] = (doc, analyses)
     units_by: Dict[str, List[Dict[str, Any]]] = {}
@@ -782,7 +789,68 @@ def build_atoms(decided: Sequence[Dict[str, Any]], *, target_gap_px: float, cont
                     a["carried_number"] = num
             atoms.append(a)
         prev_an = an
-    return {"atoms": atoms, "strips": strips, "doc": doc, "trims": trims, "join_refusals": refusals}
+    built = {"atoms": atoms, "strips": strips, "doc": doc, "trims": trims, "join_refusals": refusals,
+             "analyses": analyses}
+    if line_width and not floor_break_ids:
+        forced = _floor_breaks(built, target_gap_px / rl.MM, line_width, locks)
+        if forced:
+            return build_atoms(decided, target_gap_px=target_gap_px, context=context, locks=locks,
+                               job_id=job_id, revision=revision, line_width=line_width, doc_cache=doc_cache,
+                               floor_break_ids=forced)
+    return built
+
+
+def _floor_breaks(built: Dict[str, Any], mm: float, line_width: int,
+                  locks: Sequence[Dict[str, Any]]) -> List[str]:
+    """Fewest crossing-only cuts that meet the floor; prefer pieces fitting at full size.
+
+    If no complete solution exists, minimize the native span still below the floor before
+    minimizing cuts. This also improves a partly splittable unit without hiding its remainder.
+    """
+    doc, strips = built["doc"], built["strips"]
+    units = doc["measure_units"]
+    order = {u["id"]: i for i, u in enumerate(units)}
+    kept = set()
+    for lk in locks:
+        targets = lk.get("targets") or []
+        if lk.get("active", True) and lk.get("type") == "keep_together" and len(targets) == 2 \
+                and all(t in order for t in targets):
+            kept.update(u["id"] for u in units[order[targets[0]]:order[targets[1]] + 1])
+    chosen = []
+    for a in built["atoms"]:
+        if not a.get("oversize") or a["unit_id"] in kept:
+            continue
+        st = strips[a["system_id"]]
+        factor = strips[_sk(a)]["scale"] / st["scale"]
+        if mm * factor >= AUTO_MIN_STAFF_GAP_MM - 1e-9:
+            continue
+        # A continuation must have the same verified prefix support as an ordinary SAFE cut.
+        rep = st.get("replica")
+        bare = st["prefix_free"] or bool((st["record"].get("jump") or {}).get("no_clef_copy"))
+        if rep is None and not bare:
+            continue
+        lo, hi = a["oversize"]["native_cols"]
+        candidates = sorted((b for b in doc["boundaries"] if b["system_id"] == a["system_id"]
+                             and lo < b["seam_x"] < hi
+                             and ru.floor_break_eligible(b, built.get("analyses", {}).get(a["system_id"]))),
+                            key=lambda b: b["seam_x"])
+        points = [lo] + [b["seam_x"] for b in candidates] + [hi]
+        # cost: unfixable native width, number of cuts, number of scaled pieces.
+        best = {0: ((0, 0, 0), [])}
+        for j in range(1, len(points)):
+            options = []
+            for i in range(j):
+                rep_w = int(rep["width"]) if rep is not None and (i > 0 or a["break_before"] != "system_start") else 0
+                width = int(round(points[j] * st["scale"])) - int(round(points[i] * st["scale"])) + rep_w
+                fits = width <= line_width
+                eff = mm if fits else mm * OVERSIZE_FILL * line_width / max(1, width)
+                bad = points[j] - points[i] if eff < AUTO_MIN_STAFF_GAP_MM - 1e-9 else 0
+                cost, path = best[i]
+                options.append(((cost[0] + bad, cost[1] + (j < len(points) - 1),
+                                 cost[2] + (not fits)), path + ([candidates[j - 1]["id"]] if j < len(points) - 1 else [])))
+            best[j] = min(options, key=lambda item: item[0])
+        chosen.extend(best[len(points) - 1][1])
+    return chosen
 
 
 def _sk(a: Dict[str, Any]) -> str:
@@ -1396,7 +1464,9 @@ def _plan_at(decided: Sequence[Dict[str, Any]], staff_gap_mm: float, *, context:
     doc = built["doc"]
     if doc["audit"]["validation"]["status"] != "valid":
         raise MeasurePlanUnavailable("UNITS_INVALID", {"errors": doc["audit"]["validation"]["errors"][:10]})
-    lines_plan = rlines.plan_document(built["atoms"], content_w, locks=locks)
+    forced = [{"type": "forced_line_break", "targets": [b["id"]], "id": f"floor/{b['id']}"}
+              for b in doc["boundaries"] if b.get("floor_forced_break")]
+    lines_plan = rlines.plan_document(built["atoms"], content_w, locks=list(locks) + forced)
     if not lines_plan["valid"]:
         raise MeasurePlanUnavailable("NO_FEASIBLE_LINE_BREAKS", {"conflicts": lines_plan["conflicts"]})
     return built, lines_plan
@@ -1673,7 +1743,65 @@ def _render(built: Dict[str, Any], lines_plan: Dict[str, Any], *,
     # why a source system could not continue mid-line (its line start is then forced)
     plan["measure_reflow"]["audit"]["join_refusals"] = built.get("join_refusals", [])
     plan["measure_reflow"]["justified_edge"] = edge
+    forced = [{"boundary_id": b["id"], "system_id": b["system_id"], "reasons": list(b["reason_codes"]),
+               "evidence": b["floor_break_evidence"]}
+              for b in doc["boundaries"] if b.get("floor_forced_break")]
+    if forced:
+        plan["measure_reflow"]["forced_breaks"] = forced
+    flag_line_sizes(plan, atoms=atoms, strips=strips)
     return plan, pages
+
+
+def flag_line_sizes(plan: Dict[str, Any], *, atoms: Sequence[Dict[str, Any]] = (),
+                    strips: Optional[Dict[str, Dict[str, Any]]] = None,
+                    systems: Sequence[Dict[str, Any]] = ()) -> None:
+    """Attach review findings after rendering, so retained small output stays exportable.
+
+    No keys are added for ordinary documents. Use actual resampling scales, not rounded
+    oversize factors. Whole-system/fallback output is checked against its source gap.
+    """
+    by_atom = {a["id"]: a for a in atoms}
+    by_system = {s["id"]: s for s in systems}
+    measured = plan.get("measure_reflow") or {}
+    forced = measured.get("forced_breaks") or []
+    findings = []
+    for page in plan.get("pages", []):
+        for pl in page["placements"]:
+            if atoms:
+                placed = [by_atom[uid] for uid in pl.get("unit_ids", [])]
+                mm = min((strips[_sk(a)]["gap_src"] * strips[_sk(a)]["scale"] / rl.MM
+                          for a in placed), default=float(plan["staff_gap_mm"])) * float(pl["scale"])
+                sids = list(pl.get("system_ids", []))
+            else:
+                sids = [pl["system_id"]]
+                source = by_system.get(pl["system_id"])
+                mm = (float(source["strip"]["staff_gap_px"]) * float(pl["scale"]) / rl.MM
+                      if source else float(plan["staff_gap_mm"]))
+            codes = []
+            if any(f["system_id"] in sids for f in forced):
+                codes.append("FORCED_LINE_BREAK")
+            if mm < AUTO_MIN_STAFF_GAP_MM - 1e-9:
+                codes.append("LINE_BELOW_MIN_SIZE")
+                findings.append({"code": "LINE_BELOW_MIN_SIZE", "line_id": pl["system_id"],
+                                 "system_ids": sids, "effective_staff_gap_mm": round(mm, 6),
+                                 "minimum_staff_gap_mm": AUTO_MIN_STAFF_GAP_MM})
+            if codes:
+                pl["effective_staff_gap_mm"] = round(mm, 6)
+                pl["issues"] = list(dict.fromkeys(pl.get("issues", []) + codes))
+                for sid in sids:
+                    if sid in by_system:
+                        s = by_system[sid]
+                        s["issues"] = list(dict.fromkeys(s.get("issues", []) + codes))
+                        if "LINE_BELOW_MIN_SIZE" in codes:
+                            s["effective_staff_gap_mm"] = min(mm, s.get("effective_staff_gap_mm", mm))
+    if findings:
+        validation = plan["validation"]
+        validation.setdefault("issues", []).extend(findings)
+        validation["review_required"] = True
+        if measured.get("audit"):
+            v = measured["audit"]["validation"]
+            v.setdefault("issues", []).extend(findings)
+            v["review_required"] = True
 
 
 def _justification_summary(lines: Sequence[Dict[str, Any]], slots: Sequence[Dict[str, Any]],
@@ -1773,7 +1901,9 @@ def report(doc: Dict[str, Any], atoms: Sequence[Dict[str, Any]], lines_plan: Dic
                                       "right_boundary_id", "internal_boundary_ids", "flags")} for u in doc["measure_units"]
                   if u["kind"] in ("measure", "locked_group", "system")],
         "boundaries": [{"id": b["id"], "system_id": b["system_id"], "seam_x": b["seam_x"], "class": b["class"],
-                        "reason_codes": b["reason_codes"], "is_cut": b.get("is_cut")} for b in doc["boundaries"] if b["kind"] == "barline"],
+                        "reason_codes": b["reason_codes"], "is_cut": b.get("is_cut"),
+                        **({"floor_break_evidence": b["floor_break_evidence"]} if "floor_break_evidence" in b else {})}
+                       for b in doc["boundaries"] if b["kind"] == "barline"],
         "boundary_counts": doc["stats"]["boundaries"],
         "lines": lines,
         "justification_slots": slots,

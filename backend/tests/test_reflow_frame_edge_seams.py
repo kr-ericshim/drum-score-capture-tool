@@ -122,12 +122,26 @@ class EdgeVetoTests(unittest.TestCase):
         self.assertEqual(result["class"], rb.UNKNOWN, result)
         self.assertIn("INSUFFICIENT_CLEARANCE", result["unknown_reasons"])
 
-    def test_page_source_clipped_diagnostic_fallback(self):
+    def test_source_clipped_diagnostic_alone_keeps_the_veto(self):
+        # without verified frame geometry the page's clipping diagnosis does not waive the veto
         image, rec, seam = self.fixture()
         rec["source_clipped"] = {"sides": ["bottom"], "columns": [0, image.shape[1]]}
-        self.assertEqual(self.classify(image, rec, seam)["class"], rb.SAFE)
-        rec["jump"] = {"owners": []}
-        self.assertEqual(self.classify(image, rec, seam)["class"], rb.UNKNOWN)
+        result = self.classify(image, rec, seam)
+        self.assertEqual(result["class"], rb.UNKNOWN)
+        self.assertIn("CONTENT_AT_STRIP_EDGE", result["unknown_reasons"])
+
+    def test_crossing_on_the_last_pixel_row_is_not_safe(self):
+        image, rec, seam = self.fixture()
+        image[image.shape[0] - 1, seam - 25:seam + 25] = INK  # a beam visible only on the last row
+        rec["frame_edges"] = {"bottom": True}
+        self.assertNotEqual(self.classify(image, rec, seam)["class"], rb.SAFE)
+
+    def test_thin_line_crossing_just_above_the_edge_is_not_safe(self):
+        image, rec, seam = self.fixture()
+        h = image.shape[0]
+        cv2.line(image, (seam - 60, h - 6), (seam + 60, h - 3), INK, 1)  # a hairpin leg running off the frame
+        rec["frame_edges"] = {"bottom": True}
+        self.assertNotEqual(self.classify(image, rec, seam)["class"], rb.SAFE)
 
     def test_no_audit_skip_when_no_edge_veto_was_needed(self):
         image, rec = make_strip()

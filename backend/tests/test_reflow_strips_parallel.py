@@ -217,6 +217,10 @@ class WorkerLifecycleTest(unittest.TestCase):
     def test_default_and_invalid_overrides(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(rs.os, "cpu_count", return_value=None):
             self.assertEqual(rs._strip_threads(), 1)
+        for ram, cpus, expected in ((None, 8, 1), (8.0, 8, 1), (12.0, 8, 2), (16.0, 8, 4), (64.0, 3, 2), (64.0, 16, 4)):
+            with patch.dict(os.environ, {}, clear=True), patch.object(rs.os, "cpu_count", return_value=cpus), \
+                 patch.object(rs, "_physical_ram_gib", return_value=ram):
+                self.assertEqual(rs._strip_threads(), expected, (ram, cpus))
         for value in ("0", "-1", "garbage", "1.5"):
             with patch.dict(os.environ, REFLOW_STRIP_THREADS=value), self.assertRaises(ValueError):
                 rs._strip_threads()

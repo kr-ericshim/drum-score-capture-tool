@@ -242,6 +242,10 @@ def verify_preview_destination(crop: np.ndarray, region: Dict[str, Any], preview
 
 PREVIEW_COMPONENT_MIN = 0.9  # share of each removed ink component the destination must draw
 REFINE_PX = 2  # registration refinement of the removed pixels around the band offset
+# A removed component this small (px, x staff_gap^2, at least 2 px) is a compression speck, not notation: the
+# smallest mark (a dot) is ~20 px at a 14-px gap. bF69 sys-010: one 1-px speck at the frame edge kept a whole
+# preview tail, which printed the next system's first bar twice.
+PREVIEW_SPECK_GAP2 = 0.012
 
 
 def _colored(img: np.ndarray) -> np.ndarray:
@@ -280,7 +284,7 @@ def verify_removed_pixels(removed: np.ndarray, origin: Tuple[int, int], region: 
     ``removed``: the composited strip pixels that the cut would remove (every row of the
     strip box, columns ``cut_x`` .. box right end), ``origin`` their top-left crop
     coordinate. They are cleaned, staff lines removed, colored overlay columns skipped;
-    every remaining ink component (any size) must have >= ``PREVIEW_COMPONENT_MIN`` of its
+    every remaining ink component larger than a speck (``PREVIEW_SPECK_GAP2``) must have >= ``PREVIEW_COMPONENT_MIN`` of its
     pixels drawn by the destination crop at the registration of ``band_check``
     (``verify_preview_destination``) refined by up to ``REFINE_PX``, and all of them together
     >= ``PREVIEW_MIN_COVER``. Pixels that map outside the destination crop count as not drawn,
@@ -303,6 +307,7 @@ def verify_removed_pixels(removed: np.ndarray, origin: Tuple[int, int], region: 
     dest_clean[_colored(dest_clean)] = 255  # a playhead over the destination draws nothing
     H, W = dest_clean.shape[:2]
     area = np.bincount(lab.ravel(), minlength=n).astype(np.float64)
+    speck = area <= max(2.0, PREVIEW_SPECK_GAP2 * g * g)
     best = None
     # one registration for all removed pixels: the band's offset refined by up to REFINE_PX
     # (the band was matched with a dilated mask; slivers and beams need the exact offset)
@@ -323,12 +328,13 @@ def verify_removed_pixels(removed: np.ndarray, origin: Tuple[int, int], region: 
             cover = _cover_mask(win, g) & inside
             drawn = np.bincount(lab[cover].ravel(), minlength=n).astype(np.float64)
             frac = drawn / np.maximum(area, 1.0)
-            n_bad = int((frac[1:] < PREVIEW_COMPONENT_MIN).sum())
+            n_bad = int(((frac[1:] < PREVIEW_COMPONENT_MIN) & ~speck[1:]).sum())
             key = (-n_bad, float(drawn[1:].sum()), -abs(rx) - abs(ry))
             if best is None or key > best[0]:
                 best = (key, frac, drawn, X0, Y0, rx, ry)
     _key, frac, drawn, X0, Y0, rx, ry = best
-    bad = [i for i in range(1, n) if frac[i] < PREVIEW_COMPONENT_MIN]
+    bad = [i for i in range(1, n) if frac[i] < PREVIEW_COMPONENT_MIN and not speck[i]]
+    specks = [i for i in range(1, n) if frac[i] < PREVIEW_COMPONENT_MIN and speck[i]]
     total = float(drawn[1:].sum()) / max(1.0, float(area[1:].sum()))
     ys, xs = np.nonzero(f)
     out = {"verified": not bad and total >= PREVIEW_MIN_COVER, "removed_components": int(n - 1), "removed_ink_px": int(area[1:].sum()),
@@ -337,6 +343,8 @@ def verify_removed_pixels(removed: np.ndarray, origin: Tuple[int, int], region: 
            # within the edge tolerance is drawn by the destination's edge column)
            "dest_ink_box_crop": [max(0, int(xs.min()) + X0), max(0, int(ys.min()) + Y0),
                                  min(W, int(xs.max()) + 1 + X0), min(H, int(ys.max()) + 1 + Y0)]}
+    if specks:
+        out["ignored_specks"] = {"count": len(specks), "px": int(sum(area[i] for i in specks))}
     if bad:
         i = min(bad, key=lambda k: frac[k])
         x, y, ww, hh, a = (int(v) for v in stats[i])
@@ -2720,19 +2728,40 @@ class _SystemWindowCache(dict):
                     super().__delitem__(key)
 
 
+def _physical_ram_gib() -> Optional[float]:
+    """Installed RAM in GiB, or None when it cannot be read."""
+    try:
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 2 ** 30
+    except (AttributeError, ValueError, OSError):  # Windows has no sysconf
+        pass
+    try:
+        import ctypes
+
+        class _MemoryStatusEx(ctypes.Structure):
+            _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                        ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                        ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                        ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                        ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+
+        status = _MemoryStatusEx()
+        status.dwLength = ctypes.sizeof(_MemoryStatusEx)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return status.ullTotalPhys / 2 ** 30
+    except (AttributeError, OSError, ValueError):
+        pass
+    return None
+
+
 def _strip_threads() -> int:
     value = os.environ.get("REFLOW_STRIP_THREADS")
     if value is None:
         # 01Mr strips: 1 thread 76 s / 2.1 GiB, 2: 41 s / 2.7, 4: 29 s / 3.8, 10: 22 s / 4.8.
-        # Four is the knee; each thread adds ~0.5 GiB, so small-memory machines get fewer.
+        # Four is the knee; each thread adds ~0.5 GiB. Keep ~4 GiB for the system and the app and
+        # ~3 GiB per extra thread: 8 GiB -> 1, 12 -> 2, 16 or more -> 4. Unknown RAM -> 1.
         count = min(4, max(1, (os.cpu_count() or 2) - 1))
-        try:
-            ram_gib = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 2 ** 30
-        except (AttributeError, ValueError, OSError):  # Windows has no sysconf
-            ram_gib = None
-        if ram_gib:
-            count = min(count, max(1, int(ram_gib // 4)))
-        return count
+        ram_gib = _physical_ram_gib()
+        return min(count, max(1, int((ram_gib - 4) // 3))) if ram_gib else 1
     try:
         count = int(value)
     except ValueError:
@@ -2757,7 +2786,11 @@ def build_strips(occurrences: Dict[str, Any], manifest: Dict[str, Any], load_ima
     if chrome is not None:
         logger(f"strips: screen-fixed chrome {chrome_info.get('chrome_px')} px in {chrome_info.get('box')} "
                f"({chrome_info.get('displays')} distinct displays sampled)")
-    dark_background = job_dark_background(occurrences, manifest, load_image, checkpoint=checkpoint)
+    # Off by default (Pro checkpoint #5): a recurring legitimate gray mark (a dynamic, a gray clef) can pass
+    # every test of the static-footage evidence, and the removal is exempt from the survival check.
+    # REFLOW_DARK_BG_CLEANUP=1 turns it on for development.
+    dark_background = (job_dark_background(occurrences, manifest, load_image, checkpoint=checkpoint)
+                       if os.environ.get("REFLOW_DARK_BG_CLEANUP") == "1" else None)
     workers = _strip_threads()
     foreground = _SystemWindowCache()
     # Keep members shared with adjacent systems even if the loader LRU evicts

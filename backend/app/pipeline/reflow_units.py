@@ -377,16 +377,138 @@ def _possible_multirest(an: rb.StripAnalysis, x0: int, x1: int) -> bool:
     return False
 
 
+CROSSING_BREAK_REASONS = frozenset({"TIE_SLUR_OR_LINE_CROSSES", "TEXT_GROUP_CROSSES",
+                                    "LINE_ENDPOINT_NEAR_SEAM", "POSSIBLE_BROKEN_STROKE"})
+
+
+def _floor_break_reason_filter(b: Dict[str, Any]) -> bool:
+    reasons = set(b.get("reason_codes") or [])
+    return (b.get("kind") == "barline" and b.get("class") in (rb.LOCKED, rb.UNKNOWN)
+            and bool(reasons) and reasons <= CROSSING_BREAK_REASONS)
+
+
+def floor_break_evidence(an: rb.StripAnalysis, seam: int) -> Dict[str, Any]:
+    """Positive, native-pixel proof for the size-floor exception only.
+
+    Do not use classifier names as shape evidence: a sparse beam plus stems can
+    have the same crossing reason as a slur. Inspect WHOLE connected components,
+    including the original components of horizontally grouped text. Staff scaffold
+    alone is excluded; attached notation is never removed as 'barline' ink.
+    """
+    ev: Dict[str, Any] = {"version": "floor-strokes-1", "coords": "native_strip",
+                          "seam_x": int(seam), "verified": False}
+    if an.staff is None or an.comps is None or an.gap < rb.CONFIG["min_gap_px"]:
+        return dict(ev, rejection="NO_USABLE_GEOMETRY")
+    h, w = an.nonstaff.shape
+    if not 0 < seam < w:
+        return dict(ev, rejection="OUTSIDE_STRIP")
+    g = an.gap
+    # 0.35g accommodates antialiasing of thin strokes (4 px at g=18.5),
+    # while 1.5g total height rejects stems/beamed groups (normally >=2.5g).
+    # A 0.5g-square at >=60% ink rejects notehead-sized filled blobs even on
+    # a long sparse component. 2g width and 4:1 aspect reject individual letters,
+    # dots and small rests. Every column's vertical run is checked, not averaged.
+    limits = {"local_extent_gaps": 0.35, "height_gaps": 1.5, "vertical_run_gaps": 0.35,
+              "blob_window_gaps": 0.5, "blob_fill": 0.60, "min_width_gaps": 2.0, "min_aspect": 4.0}
+    c = max(1, int(np.ceil(rb.CONFIG["clearance_gaps"] * g)))
+    r = max(2, int(round(rb.CONFIG["bridge_gaps"] * g)))
+    a, z = max(0, seam - c - r), min(w, seam + c + r)
+    ids = set()
+    for k in np.unique(an.comps[:, a:z]):
+        if not k:
+            continue
+        x, _y, ww, _hh, _area = map(int, an.comp_stats[k])
+        # Inspect actual crossings, not unrelated notes next to a valid seam.
+        if x < seam < x + ww and rb._spans(an.comps[:, x:x + ww] == k, seam - x):
+            ids.add(int(k))
+    bar_ids = set()
+    for bar in an.bars:
+        for k in rb._group_labels(an, bar):
+            x, y, ww, hh, _area = map(int, an.comp_stats[k])
+            # Exempt only the barline stroke itself, never its entire label when
+            # connected ink extends sideways (e.g. a stem/notehead attached to it).
+            if (x >= bar['x0'] - 2 and x + ww <= bar['x1'] + 3
+                    and y >= an.staff['lines'][0] - 2 and y + hh <= an.staff['lines'][4] + 3):
+                bar_ids.add(k)
+    ids.difference_update(bar_ids)
+    if not ids:
+        # Match the classifier's broken-stroke reach, but include only pairs
+        # aligned within that reach. Every original member must still pass;
+        # nearby notation on one side alone is never crossing evidence.
+        left = an.comps[:, a:max(0, seam - c)]
+        right = an.comps[:, min(w, seam + c):z]
+        for lk in set(map(int, np.unique(left))) - {0} - bar_ids:
+            rows = (left == lk).any(axis=1).astype(np.uint8)[:, None]
+            aligned = cv2.dilate(rows, np.ones((2 * r + 1, 1), np.uint8))[:, 0] > 0
+            for rk in set(map(int, np.unique(right))) - {0} - bar_ids:
+                if (aligned & (right == rk).any(axis=1)).any():
+                    ids.update((lk, rk))
+    tg = max(1, int(round(rb.CONFIG["text_group_gaps"] * g)))
+    ta, tz = max(0, seam - 6 * tg), min(w, seam + 6 * tg)
+    lab = an.comps[:, ta:tz]
+    text_ids = [int(k) for k in np.unique(lab) if k and rb._is_text_like(an, int(k))]
+    text = np.isin(lab, text_ids)
+    groups = []
+    if text.any():
+        dil = cv2.dilate(text.astype(np.uint8), np.ones((1, 2 * tg + 1), np.uint8))
+        n, labels = cv2.connectedComponents(dil, connectivity=8)
+        for k in range(1, n):
+            orig = (labels == k) & text
+            if orig[:, :seam - ta].any() and orig[:, seam - ta:].any():
+                members = sorted(int(v) for v in np.unique(lab[orig]) if v)
+                groups.append(members)
+                ids.update(members)
+    components = []
+    for k in sorted(ids):
+        x, y, ww, hh, area = map(int, an.comp_stats[k])
+        mask = an.comps[y:y + hh, x:x + ww] == k
+        ca, cz = max(x, seam - c), min(x + ww, seam + c)
+        local = mask[:, ca - x:cz - x] if ca < cz else mask[:, :0]
+        extent = max((int(rows[-1] - rows[0] + 1) for col in local.T
+                      if len(rows := np.flatnonzero(col))), default=0)
+        runs = np.diff(np.pad(mask, ((1, 1), (0, 0))).T.ravel().astype(np.int8))
+        starts, ends = np.flatnonzero(runs == 1), np.flatnonzero(runs == -1)
+        vertical = int(np.max(ends - starts)) if len(starts) else 0
+        size = max(2, int(np.ceil(limits["blob_window_gaps"] * g)))
+        fill = float(cv2.boxFilter(mask.astype(np.float32), -1, (size, size),
+                                   normalize=True, borderType=cv2.BORDER_CONSTANT).max())
+        checks = {"thin_at_seam": extent <= limits["local_extent_gaps"] * g,
+                  "low_height": hh <= limits["height_gaps"] * g,
+                  "no_stem": vertical <= limits["vertical_run_gaps"] * g,
+                  "no_filled_blob": fill < limits["blob_fill"],
+                  "long_stroke": ww >= limits["min_width_gaps"] * g and ww >= limits["min_aspect"] * hh}
+        components.append({"component_id": k, "box": [x, y, x + ww, y + hh], "ink_px": area,
+                           "local_extent_px": extent, "max_vertical_run_px": vertical,
+                           "max_blob_fill": fill, "checks": checks, "thin_stroke": all(checks.values())})
+    # At least one real stroke and ALL components/grouped letters must pass.
+    ev.update(staff_gap_px=g, window_cols=[a, z], limits=limits, components=components,
+              excluded_barline_component_ids=sorted(bar_ids),
+              text_groups=groups, nonstaff_mask_sha256=rb.mask_sha256(an.nonstaff),
+              verified=bool(components) and all(v["thin_stroke"] for v in components))
+    if not ev["verified"]:
+        ev["rejection"] = "NON_STROKE_COMPONENT" if components else "NO_POSITIVE_STROKE_EVIDENCE"
+    return ev
+
+
+def floor_break_eligible(b: Dict[str, Any], an: Optional[rb.StripAnalysis] = None) -> bool:
+    """Whitelist first; require positive pixel evidence before authorizing a cut."""
+    if not _floor_break_reason_filter(b):
+        return False
+    if an is not None:
+        b["floor_break_evidence"] = floor_break_evidence(an, int(b["seam_x"]))
+    ev = b.get("floor_break_evidence") or {}
+    return (ev.get("version") == "floor-strokes-1" and ev.get("verified") is True
+            and ev.get("seam_x") == b.get("seam_x") and bool(ev.get("components"))
+            and all(c.get("thin_stroke") is True for c in ev["components"]))
+
+
 def _is_cut(b: Dict[str, Any]) -> bool:
-    """Only SAFE boundaries are cuts. A boundary that a line, slur, hairpin or text crosses (LOCKED) or that
-    could not be verified (UNKNOWN) is never cut and never a line break (the jump-only OVERSIZE_SPAN forced
-    cut was reverted in STRATEGY Step 2A; a span wider than the page line becomes an oversize unit)."""
-    return b["class"] == rb.SAFE
+    return b["class"] == rb.SAFE or (bool(b.get("floor_forced_break")) and floor_break_eligible(b))
 
 
 def system_units(an: rb.StripAnalysis, boundaries: List[Dict[str, Any]], *, occurrence_id: str,
                  asset: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Split one strip at its SAFE boundaries; fills each boundary's unit adjacency in place."""
+    """Partition at SAFE cuts and explicit size-floor exceptions; fill unit adjacency in place."""
     h, w = an.image.shape[:2]
     cuts = sorted(b["seam_x"] for b in boundaries if _is_cut(b))
     edges = [0] + cuts + [w]
@@ -512,7 +634,8 @@ def lock_conflicts(locks: Sequence[Dict[str, Any]], boundaries: Sequence[Dict[st
 
 def build_document(*, job_id: str, revision: int, systems: Sequence[Dict[str, Any]], locks: Iterable[Dict[str, Any]] = (),
                    sources: Optional[Dict[str, Any]] = None, parent_revision: Optional[int] = None,
-                   config: Dict[str, Any] = rb.CONFIG, analysis_cache: Optional[Dict[str, Any]] = None
+                   config: Dict[str, Any] = rb.CONFIG, analysis_cache: Optional[Dict[str, Any]] = None,
+                   floor_break_ids: Sequence[str] = ()
                    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """``reflow_units.json`` for the given systems (video order).
 
@@ -543,6 +666,9 @@ def build_document(*, job_id: str, revision: int, systems: Sequence[Dict[str, An
             if analysis_cache is not None:
                 analysis_cache[sid] = (an, copy.deepcopy(bl))
         analyses[sid] = an
+        for b in bl:
+            if b["id"] in floor_break_ids and floor_break_eligible(b, an):
+                b["floor_forced_break"] = True
         asset = {"role": "strip", "path": s.get("strip_path"), "pixels_sha256": _pixels_sha(img), "size": [img.shape[1], img.shape[0]]}
         strip_hashes[sid] = asset["pixels_sha256"]
         us = system_units(an, bl, occurrence_id=sid, asset=asset)
@@ -666,7 +792,8 @@ def validate_document(doc: Dict[str, Any]) -> List[str]:
             errs.append(f"{b['id']}: adjacent units missing")
             continue
         if b.get("is_cut"):
-            if b["class"] == rb.UNKNOWN or (b["class"] == rb.LOCKED and b["kind"] != "preview_tail"):
+            if (b["class"] == rb.UNKNOWN or (b["class"] == rb.LOCKED and b["kind"] != "preview_tail")) \
+                    and not (b.get("floor_forced_break") and floor_break_eligible(b)):
                 errs.append(f"{b['id']}: cut at a non-SAFE boundary")
             if lu["box"][2] != b["seam_x"] or ru["box"][0] != b["seam_x"]:
                 errs.append(f"{b['id']}: seam is not the unit edge")

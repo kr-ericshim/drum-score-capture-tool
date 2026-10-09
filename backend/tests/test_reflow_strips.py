@@ -189,6 +189,34 @@ class PreviewCutRemovesOnlyVerifiedPixelsTest(unittest.TestCase):
         self.assertTrue(removed["verified"])
         self.assertLessEqual(removed["dest_ink_box_crop"][1], 18)  # the "A" was among the verified pixels
 
+    @staticmethod
+    def _with_dot(frames, x, y, size):
+        out = []
+        for t, im in frames:
+            im = im.copy()
+            im[y:y + size, x:x + size] = 0
+            out.append((t, im))
+        return out
+
+    def test_a_speck_in_the_tail_does_not_keep_the_tail(self):
+        # bF69 sys-010: one 1-px speck the destination does not draw kept a whole verified tail,
+        # so the next system's first bar was printed twice
+        cur, nxt = system_image(7), system_image(8)
+        manifest, load, systems = self._systems(self._with_dot(preview_frames(cur, nxt), 1250, 15, 1) + full_frames(nxt, t0=3.0), 12)
+        _img, rec = rs.build_strip(systems[0], manifest, load, next_systems=systems[1:])
+        tail = rec["preview_tail"]
+        self.assertTrue(tail["cut"], tail)
+        self.assertNotIn("PREVIEW_TAIL_UNVERIFIED", rec["issues"])
+
+    def test_a_dot_sized_mark_in_the_tail_still_keeps_the_tail(self):
+        cur, nxt = system_image(7), system_image(8)
+        manifest, load, systems = self._systems(self._with_dot(preview_frames(cur, nxt), 1250, 12, 4) + full_frames(nxt, t0=3.0), 12)
+        _img, rec = rs.build_strip(systems[0], manifest, load, next_systems=systems[1:])
+        tail = rec["preview_tail"]
+        self.assertFalse(tail["cut"], tail)
+        self.assertEqual(tail["checks"][0]["removed_pixels"]["reason"], "removed_ink_not_at_destination")
+        self.assertEqual(rec["issues"], ["PREVIEW_TAIL_UNVERIFIED"])
+
     def test_excluded_destination_does_not_permit_a_cut(self):
         cur, nxt = system_image(7), system_image(8)
         manifest, load, systems = self._systems(preview_frames(cur, nxt) + full_frames(nxt, t0=3.0), 12, dest_included=False)

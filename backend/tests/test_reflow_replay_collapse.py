@@ -305,7 +305,7 @@ class ReplayBlockTests(ReplayFixture):
 
 class ReplayPipelineTests(ReplayFixture):
     def analyse(self, *, revisit=1, with_alternates=False, excluded=False,
-                occurrence_alternate=False, labels=()):
+                occurrence_alternate=False, labels=(), auto_exclude=True):
         systems, paths = self.sequence([(f"A{i}", i) for i in range(1, 6)] +
                                        [("B1", 2), ("B2", 3), ("B3", 4)])
         if excluded:
@@ -351,7 +351,8 @@ class ReplayPipelineTests(ReplayFixture):
                     "label_roi": [[0, 0], [20, 0], [20, 10], [0, 10]], "version": "test"}
 
         with ExitStack() as stack:
-            stack.enter_context(patch.dict(os.environ, {"REFLOW_DEV_LEDGER": "0"}))
+            stack.enter_context(patch.dict(os.environ, {"REFLOW_DEV_LEDGER": "0",
+                                                        "REFLOW_REPLAY_AUTO_EXCLUDE": "1" if auto_exclude else "0"}))
             stack.enter_context(patch.object(rp, "classify_source_class", return_value={"class": sc.CLASS_LIGHT_PAPER}))
             stack.enter_context(patch.object(rp.ob, "build_manifest", return_value=manifest))
             stack.enter_context(patch.object(rp.stk, "manifest_image_loader", return_value=lambda _o: None))
@@ -390,6 +391,25 @@ class ReplayPipelineTests(ReplayFixture):
         self.assertTrue(all(not s["auto_included"] for s in record["systems"] if s["id"].startswith("B")))
         self.assertTrue(all(s["included"] for s in record["systems"] if s["id"].startswith("A")))
         self.assertTrue(any("comparisons" in line and "s)" in line for line in log))
+
+    def test_default_mode_marks_candidates_and_excludes_nothing(self):
+        # Pro checkpoint #5: a written-out A B C ... A B C passage passes every test, so by default
+        # the replay is only proposed (unticking it is the user's confirmation)
+        record, collapse, _log = self.analyse(auto_exclude=False)
+        collapse.assert_called_once()
+        self.assertEqual(record["exclusions"]["replay_mode"], "candidate")
+        by_id = {s["id"]: s for s in record["systems"]}
+        for i in range(1, 4):
+            s = by_id[f"B{i}"]
+            self.assertTrue(s["included"] and s["auto_included"])
+            self.assertEqual(s["replay_of"], f"A{i + 1}")
+            self.assertIn("REPLAY_CANDIDATE", s["issues"])
+            self.assertNotIn("REPLAY_COLLAPSED", s["issues"])
+        fields = main._reflow_capture_fields(record)
+        self.assertEqual(fields["auto_excluded_captures"], [])
+        diagnostics = fields["capture_diagnostics"][by_id["B1"]["strip_path"]]
+        self.assertIn(dict(main.REFLOW_ISSUE_REASONS)["REPLAY_CANDIDATE"], diagnostics["warning_reasons"])
+        self.assertEqual(len(fields["similar_capture_pairs"]), 3)
 
     def test_zero_revisits_skip_the_comparison(self):
         record, collapse, _log = self.analyse(revisit=0)

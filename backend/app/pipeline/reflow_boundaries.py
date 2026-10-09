@@ -777,12 +777,8 @@ def _clipped_near(an: StripAnalysis, seam: int, config: Dict[str, Any], *,
     h, w = an.protected.shape
     nb = config["neighbourhood_gaps"] * g
     a, z = max(0, int(seam - nb)), min(w, int(seam + nb))
-    edges = an.record.get("frame_edges")
-    if edges is None:
-        # Page producers already positively diagnose source clipping. Jump
-        # diagnostics aggregate owners and cannot prove the whole edge coincides.
-        sides = (an.record.get("source_clipped") or {}).get("sides") or []
-        edges = {side: side in sides and not an.record.get("jump") for side in ("top", "bottom")}
+    # Only verified frame geometry waives the veto (Pro checkpoint #5): a missing mapping keeps it.
+    edges = an.record.get("frame_edges") or {}
     veto = False
     skipped = []
     for side, row in (("top", 0), ("bottom", h - 1)):
