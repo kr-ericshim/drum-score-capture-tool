@@ -65,6 +65,7 @@ Coordinates: crop pixels of the observation manifest; boxes are half-open.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 import inspect
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -369,14 +370,18 @@ def _overlay_cols_of(img: np.ndarray, gap: float, key: Optional[Any], memo: Opti
     return memo[k].copy()
 
 
-def _overlay_mask2d(img: np.ndarray, gap: float) -> np.ndarray:
+def _overlay_mask2d(img: np.ndarray, gap: float, *, normalized: Optional[Tuple[np.ndarray, np.ndarray]] = None) -> np.ndarray:
     """2-D mask of a playback overlay in one crop: colored overlays (overlay_composite.overlay_mask_2d:
     bands as their rows, translucent boxes as their box) plus page_diff's overlay mask (gray
     playheads, tinted highlight boxes), dilated by about 0.15 gap. Pixels to recover from other
-    members, never pixels to erase."""
+    members, never pixels to erase. ``normalized``: (normalize_polarity(img)[0], its gray) when
+    the caller already has them for exactly these pixels."""
     mask = oc.overlay_mask_2d(img)
-    norm, _ = sd.normalize_polarity(img)
-    gray = cv2.cvtColor(norm, cv2.COLOR_BGR2GRAY)
+    if normalized is None:
+        norm, _ = sd.normalize_polarity(img)
+        gray = cv2.cvtColor(norm, cv2.COLOR_BGR2GRAY)
+    else:
+        norm, gray = normalized
     ink = page_diff._ink_mask(gray)
     no_staff = page_diff._remove_staff_lines(ink, gap=gap)
     pmask, _cursor = page_diff._overlay_mask(norm, no_staff, gap=gap)
@@ -403,20 +408,29 @@ def _without_chrome(img: np.ndarray, chrome: Optional[np.ndarray]) -> np.ndarray
 
 
 def _overlay_mask2d_of(img: np.ndarray, gap: float, key: Optional[Any], memo: Optional[Dict[Any, np.ndarray]],
-                       chrome: Optional[np.ndarray] = None, *, over_chrome: bool = False) -> np.ndarray:
+                       chrome: Optional[np.ndarray] = None, *, over_chrome: bool = False,
+                       normalized: Optional[Tuple[np.ndarray, np.ndarray]] = None) -> np.ndarray:
     """``_overlay_mask2d`` of ``img`` without its chrome, remembered in ``memo`` (kept apart from the
     column masks of ``_overlay_cols_of``). The result never covers a chrome pixel unless
-    ``over_chrome`` (where a transient overlay passes over the chrome)."""
+    ``over_chrome`` (where a transient overlay passes over the chrome). ``normalized``: the
+    polarity-normalized ``img`` and its gray, used only without chrome (the same pixels)."""
     ck = None if chrome is None else (int(chrome.sum()), chrome.shape)
+    nz = normalized if chrome is None else None
     if memo is None or key is None:
-        m = _overlay_mask2d(_without_chrome(img, chrome), gap)
+        m = _overlay_mask2d(_without_chrome(img, chrome), gap, normalized=nz)
     else:
         k = ("mask2d", key, float(gap), ck)
         if k not in memo:
-            memo[k] = _overlay_mask2d(_without_chrome(img, chrome), gap)
+            memo[k] = _overlay_mask2d(_without_chrome(img, chrome), gap, normalized=nz)
         m = memo[k]
     return m & ~chrome if chrome is not None and not over_chrome else m
 
+
+# Registration prediction in check_minority_content (an unambiguous prediction skips one full-resolution
+# phase correlation; anything else is registered exactly).
+PREDICT_MIN_RESPONSE = 0.8        # both phase correlations must respond at least this strongly
+PREDICT_GEOMETRY_PX = 1.0         # predicted vertical shift vs the member's staff rows (track geometry)
+PREDICT_MAX_SHIFT_FRACTION = 0.5  # predicted shift below this share of _MAX_SHIFT_PX
 
 FADE_PAPER_DROP = 10.0  # a member whose paper is this much darker than the display's median is a fade/transition frame
 
@@ -487,12 +501,14 @@ def compose_members(images: List[np.ndarray], gap: float, *, keys: Optional[Sequ
     usable = [ref_i]
     shifts = []
     phase_shifts = {ref_i: [0.0, 0.0]}
+    phase_responses = {ref_i: float(_r)}
     for i, im in enumerate(images):
         if i == ref_i or (faded[i] and not ledger_members):
             continue
         shift, _resp = cv2.phaseCorrelate(ref_gray.copy(), _alignment_gray(im), window)
         rel = (shift[0] - base[0], shift[1] - base[1])
         phase_shifts[i] = [float(v) for v in rel]
+        phase_responses[i] = float(_resp)
         if faded[i]:
             continue
         shifts.append(round(float(np.hypot(*rel)), 3))
@@ -536,7 +552,8 @@ def compose_members(images: List[np.ndarray], gap: float, *, keys: Optional[Sequ
                             "member_indices": [usable[j] for j in restored["members"]]}
     if ledger_members:
         info["_ledger_members"] = [{"index": i, "key": keys[i] if keys is not None else None,
-            "phase_shift": phase_shifts[i], "faded": faded[i], "used": i in usable,
+            "phase_shift": phase_shifts[i], "phase_response": phase_responses.get(i),
+            "faded": faded[i], "used": i in usable,
             "overlay_mask": masks[i], "chrome_mask": chrome} for i in range(n)]
     return out, info
 
@@ -1335,13 +1352,16 @@ def _finish_strip(comp: np.ndarray, *, members: Optional[Sequence[np.ndarray]] =
 
 def inventory_before_crop(system: Dict[str, Any], box: Sequence[int], obs_by: Dict[str, Dict[str, Any]],
                           load_image: ImageLoader, gap: float, *,
-                          expected_size: Optional[Tuple[int, int]] = None) -> Dict[str, Any]:
+                          expected_size: Optional[Tuple[int, int]] = None,
+                          frame_foreground: Optional[Dict[str, np.ndarray]] = None) -> Dict[str, Any]:
     """Inventory every full ROI before sampling or the proposed envelope crop.
 
     Every component in this row's allocation is inventoried; its outside-crop
     support is bundled. Components crossing a neighbouring row's allocation
     boundary are retained whole with unresolved ownership. The primary crop is
     unchanged; outside hypotheses go into the same system review bundle.
+    ``frame_foreground``: observation id -> its full frame's foreground (a function of the
+    frame alone), shared by the systems of one screen; filled here.
     """
     members = sorted(system.get("observations") or [], key=lambda m: float(obs_by[m["obs_id"]]["t_sec"]))
     result = {"members": len(members), "checked_members": 0, "foreground_px": 0,
@@ -1349,9 +1369,13 @@ def inventory_before_crop(system: Dict[str, Any], box: Sequence[int], obs_by: Di
     for i, member in enumerate(members):
         obs = obs_by[member["obs_id"]]
         raw = load_image(obs)
-        norm, _ = sd.normalize_polarity(raw)
-        gray = cv2.cvtColor(norm, cv2.COLOR_BGR2GRAY)
-        foreground = gray <= float(np.percentile(gray, 75)) - FAINT_PAPER_DROP
+        foreground = None if frame_foreground is None else frame_foreground.get(member["obs_id"])
+        if foreground is None:
+            norm, _ = sd.normalize_polarity(raw)
+            gray = cv2.cvtColor(norm, cv2.COLOR_BGR2GRAY)
+            foreground = gray <= float(np.percentile(gray, 75)) - FAINT_PAPER_DROP
+            if frame_foreground is not None:
+                frame_foreground[member["obs_id"]] = foreground
         region = _region(obs, member["region_id"])
         top, bottom = float(region["staff_y"][0]), float(region["staff_y"][-1])
         others = [r for r in obs.get("system_regions", []) if r["region_id"] != member["region_id"]]
@@ -1400,10 +1424,35 @@ def inventory_before_crop(system: Dict[str, Any], box: Sequence[int], obs_by: Di
     return result
 
 
+class _LazyMasks(Mapping):
+    """Read-only mapping whose values are computed on first access, in insertion order of keys."""
+
+    def __init__(self) -> None:
+        self._make: Dict[Any, Callable[[], np.ndarray]] = {}
+        self._done: Dict[Any, np.ndarray] = {}
+
+    def add(self, key: Any, make: Callable[[], np.ndarray]) -> None:
+        self._make[key] = make
+        self._done.pop(key, None)
+
+    def __getitem__(self, key: Any) -> np.ndarray:
+        if key not in self._done:
+            self._done[key] = self._make[key]()
+        return self._done[key]
+
+    def __iter__(self):
+        return iter(self._make)
+
+    def __len__(self) -> int:
+        return len(self._make)
+
+
 def check_minority_content(system: Dict[str, Any], comp: np.ndarray, box: Sequence[int], obs_by: Dict[str, Dict[str, Any]],
                            load_image: ImageLoader, gap: float, *, memo: Optional[Dict[Any, np.ndarray]] = None,
                            chrome: Optional[np.ndarray] = None, native_scale: float = 1.0,
-                           member_shifts: Optional[Dict[str, Sequence[float]]] = None) -> Dict[str, Any]:
+                           member_shifts: Optional[Dict[str, Sequence[float]]] = None,
+                           registration_responses: Optional[Dict[str, Optional[float]]] = None,
+                           registration_reference: Optional[str] = None) -> Dict[str, Any]:
     """Credible neutral ink in any clear registered member that the composite
     ``comp`` (crop box ``box``) does not draw and no overlay explains (minority_content.py).
 
@@ -1412,8 +1461,12 @@ def check_minority_content(system: Dict[str, Any], comp: np.ndarray, box: Sequen
     Returns the events with crop boxes, times,
     observation ids and member runs (indices into the time-ordered members).
     ``member_shifts``: common-reference work-pixel shifts keyed by observation id;
-    absent entries use this audit's measurement against the composite."""
-    from app.pipeline.system_tracking import clean_content
+    absent entries use this audit's measurement against the composite.
+    ``registration_responses`` / ``registration_reference``: the phase-correlation responses
+    of ``member_shifts`` and the observation they are measured against. With both, a
+    member's shift against the composite may be taken from its full-resolution shift against
+    that reference (see ``predicted_rel``); without them every member is registered here."""
+    from app.pipeline.system_tracking import clean_content, clean_normalized
     members = sorted(system.get("observations") or [], key=lambda m: float(obs_by[m["obs_id"]]["t_sec"]))
     n = len(members)
     out: Dict[str, Any] = {"observation_order": [m["obs_id"] for m in members], "members": n, "checked_members": 0, "skipped_members": 0, "events": [],
@@ -1432,15 +1485,35 @@ def check_minority_content(system: Dict[str, Any], comp: np.ndarray, box: Sequen
     cache: Dict[int, Optional[np.ndarray]] = {}
     rejected_masks: Dict[int, np.ndarray] = {}
     rejected_by: Dict[int, Dict[str, Any]] = {}
-    eligible_masks: Dict[int, np.ndarray] = {}
+    # Eligibility masks (not overlay, not playhead columns) of the checked members. They are
+    # read only to count the eligible witnesses of an uncertain event (and passed on), so each
+    # is computed when first read: a system without events never needs them.
+    eligible_masks = _LazyMasks()
+
+    def _member_overlay(crop, key, normalized):
+        done: List[np.ndarray] = []
+
+        def get() -> np.ndarray:
+            if not done:
+                done.append(_overlay_mask2d_of(crop, gap, key, memo, chrome, normalized=normalized))
+            return done[0]
+        return get
     background = [0]
     raw_grays = {}
     cursor_shifts = {}
     transition_by = {}
     levels = []
-    for m in members:
-        im = load_image(obs_by[m["obs_id"]])[box[1]:box[3], box[0]:box[2]]
-        levels.append(paper_levels([im])[0] if im.shape[:2] == (H, W) else 0.0)
+    # Every member crop is normalized once (polarity, gray, paper level) and reused by
+    # every step below: the same pixels give the same products (paper_levels, clean_content).
+    all_crops = [load_image(obs_by[m["obs_id"]])[box[1]:box[3], box[0]:box[2]] for m in members]
+    norms: Dict[int, np.ndarray] = {}
+    for i, im in enumerate(all_crops):
+        if im.shape[:2] != (H, W):
+            levels.append(0.0)
+            continue
+        norms[i], _ = sd.normalize_polarity(im)
+        raw_grays[i] = cv2.cvtColor(norms[i], cv2.COLOR_BGR2GRAY)
+        levels.append(float(np.percentile(raw_grays[i], 75)))  # paper_levels([im])[0]
     paper = float(np.median(levels))
     ref_gray = _alignment_gray(comp)
     window = cv2.createHanningWindow((W, H), cv2.CV_32F)
@@ -1455,7 +1528,6 @@ def check_minority_content(system: Dict[str, Any], comp: np.ndarray, box: Sequen
     opaque = not comp_inverted or halftone <= PLATE_HALFTONE_MAX
     out["paper_opaque"] = opaque
     # Detection only changes evidence eligibility, never the canonical strip pixels.
-    all_crops = [load_image(obs_by[m["obs_id"]])[box[1]:box[3], box[0]:box[2]] for m in members]
     valid_indices = [i for i, crop in enumerate(all_crops) if crop.shape[:2] == (H, W)]
     valid_crops = [all_crops[i] for i in valid_indices]
     positions = mc.cursor_positions(valid_crops, gap, reference=comp_gray, allow_tinted_boxes=opaque)
@@ -1468,17 +1540,17 @@ def check_minority_content(system: Dict[str, Any], comp: np.ndarray, box: Sequen
     for i, crop in enumerate(all_crops):
         if crop.shape[:2] != (H, W):
             continue
-        norm, _ = sd.normalize_polarity(crop)
-        gray = cv2.cvtColor(norm, cv2.COLOR_BGR2GRAY)
-        raw_grays[i] = gray
+        gray = raw_grays[i]
         supplied = (member_shifts or {}).get(members[i]["obs_id"])
         if supplied is not None:
             cursor_shifts[i] = tuple(float(v) for v in supplied)
         if levels[i] >= paper - FADE_PAPER_DROP and float(np.mean(np.abs(gray.astype(float)-comp_gray))) < 8:
             stable.append(i)
     if opaque and len(stable) >= 3:
+        transition_ref = comp_gray.astype(np.uint8)
+        prepared = mc.transition_reference(transition_ref, gap)
         for i, gray in raw_grays.items():
-            evidence = mc.transition_evidence(gray, comp_gray.astype(np.uint8), gap)
+            evidence = mc.transition_evidence(gray, transition_ref, gap, prepared=prepared)
             if evidence:
                 transition_by[i] = dict(evidence, stable_witness_members=stable,
                                         obs_id=members[i]["obs_id"], t_sec=float(obs_by[members[i]["obs_id"]]["t_sec"]))
@@ -1491,6 +1563,47 @@ def check_minority_content(system: Dict[str, Any], comp: np.ndarray, box: Sequen
                         stable_witness_obs_ids=[members[j]["obs_id"] for j in evidence["stable_witness_members"]],
                         raw_png_base64=base64.b64encode(encoded.tobytes()).decode('ascii'))
     out["ineligible_observations"] = list(transition_by.values())
+
+    # Registration against the composite, predicted from the strip registration.
+    # The registration below only decides whether a member is misregistered (shift >= _MAX_SHIFT_PX);
+    # a registered member's shift is not used further (its cursor shift is the supplied one).
+    # Shifts compose: (composite -> member) = (composite -> reference) + (reference -> member),
+    # where (reference -> member) is the full-resolution strip registration and (composite ->
+    # reference) is measured here once. The prediction is used only when it is unambiguous: both
+    # registrations respond strongly (>= PREDICT_MIN_RESPONSE), the member's staff rows moved as
+    # the predicted vertical shift says (within PREDICT_GEOMETRY_PX), and the predicted shift is
+    # at most half the rejection threshold. Every other member - and every faded member, whose
+    # exact shift feeds its rejected-foreground audit - is registered exactly as before.
+    # Measured on S1nl and 01Mr (2,204 members): |predicted - exact| <= 0.01 px, 25x below the
+    # remaining margin. A member the old check could reject (exact shift >= _MAX_SHIFT_PX) is
+    # therefore registered exactly; a wrongly accepted one would still be checked in full.
+    exact_rel: Dict[int, np.ndarray] = {}
+    predict_from = None
+    if member_shifts and registration_responses is not None and registration_reference is not None:
+        ref_idx = next((i for i, m in enumerate(members)
+                        if m["obs_id"] == registration_reference and i in raw_grays), None)
+        if ref_idx is not None:
+            shift, response = cv2.phaseCorrelate(ref_gray.copy(), _alignment_gray(all_crops[ref_idx]), window)
+            exact_rel[ref_idx] = np.array(shift) - np.array(base)
+            ref_region = _region(obs_by[members[ref_idx]["obs_id"]], members[ref_idx]["region_id"])
+            if (float(response) >= PREDICT_MIN_RESPONSE and np.isfinite(exact_rel[ref_idx]).all()
+                    and ref_region.get("staff_y")):
+                predict_from = (exact_rel[ref_idx], float(np.mean(ref_region["staff_y"])))
+
+    def predicted_rel(i: int, region: Dict[str, Any]) -> Optional[np.ndarray]:
+        if predict_from is None or i in exact_rel:
+            return None
+        oid = members[i]["obs_id"]
+        supplied, response = (member_shifts or {}).get(oid), registration_responses.get(oid)
+        if supplied is None or response is None or response < PREDICT_MIN_RESPONSE or not region.get("staff_y"):
+            return None
+        supplied = np.asarray(supplied, float)
+        if supplied.shape != (2,) or not np.isfinite(supplied).all():
+            return None
+        if abs(float(supplied[1]) - (float(np.mean(region["staff_y"])) - predict_from[1])) > PREDICT_GEOMETRY_PX:
+            return None
+        rel = predict_from[0] + supplied
+        return rel if float(np.hypot(*rel)) < PREDICT_MAX_SHIFT_FRACTION * _MAX_SHIFT_PX else None
 
     def unexplained_of(i: int) -> Optional[np.ndarray]:
         if i in cache:
@@ -1506,11 +1619,16 @@ def check_minority_content(system: Dict[str, Any], comp: np.ndarray, box: Sequen
         if i in transition_by:
             cache[i] = None
             return None
-        shift, _ = cv2.phaseCorrelate(ref_gray.copy(), _alignment_gray(crop), window)
-        rel = np.array(shift) - np.array(base)
+        faded = opaque and levels[i] < paper - FADE_PAPER_DROP
+        rel = None if faded else predicted_rel(i, region)
+        if rel is None:
+            if i in exact_rel:
+                rel = exact_rel[i]
+            else:
+                shift, _ = cv2.phaseCorrelate(ref_gray.copy(), _alignment_gray(crop), window)
+                rel = np.array(shift) - np.array(base)
         if i not in cursor_shifts:
             cursor_shifts[i] = tuple(float(v) for v in rel)
-        faded = opaque and levels[i] < paper - FADE_PAPER_DROP
         misregistered = not np.isfinite(rel).all() or np.linalg.norm(rel) >= _MAX_SHIFT_PX
         if faded or misregistered:
             residual, proof = mc.rejected_foreground(raw_grays[i], comp_gray.astype(np.uint8), levels[i], rel, gap)
@@ -1524,10 +1642,10 @@ def check_minority_content(system: Dict[str, Any], comp: np.ndarray, box: Sequen
             out["speckle_dropped"] += proof["speckle_dropped"]
             cache[i] = None
             return None
-        clean = clean_content(crop)
+        clean = clean_normalized(norms[i], raw_grays[i])  # clean_content(crop)
         cols = mc.playhead_columns(W, region, gap, x_offset=int(box[0]))
-        ov = _overlay_mask2d_of(crop, gap, (m["obs_id"], tuple(int(v) for v in box)), memo, chrome)
-        eligible_masks[i] = ~ov & ~cols[None, :]
+        overlay_of = _member_overlay(crop, (m["obs_id"], tuple(int(v) for v in box)), (norms[i], raw_grays[i]))
+        eligible_masks.add(i, lambda overlay_of=overlay_of, cols=cols: ~overlay_of() & ~cols[None, :])
         neutral = mc.neutral_ink(clean, dark_max)
         colored = mc.colored_mask(clean) & mc.ink_mask(clean)
         if colored.any():
@@ -1538,13 +1656,16 @@ def check_minority_content(system: Dict[str, Any], comp: np.ndarray, box: Sequen
         if u.any():
             # only a member with unexplained ink needs the video-background test (the same result:
             # removing components cannot add unexplained ink, so an empty result stays empty)
-            neutral, dropped = mc.drop_on_video_background(neutral, mc.background_texture(sd.normalize_polarity(crop)[0], gap))
+            neutral, dropped = mc.drop_on_video_background(neutral, mc.background_texture(norms[i], gap))
             background[0] += dropped
             if dropped:
                 u, (dx, _dy) = mc.unexplained(neutral, ref_ink, cols, gap, reference_dilated=ref_d)
         if u.any():
             # the member's own 2-D overlay mask (bands as their rows, boxes as boxes, gray playheads;
-            # chrome left out; computed above) explains the pixels it covers
+            # chrome left out) explains the pixels it covers. It is computed here, only for a
+            # member with unexplained ink: with u empty the old step left u empty whatever the
+            # mask (u & ~ov of an empty u), so every member it could change still gets its mask.
+            ov = overlay_of()
             if ov.any():
                 if dx or _dy:
                     ov = mc._shift(ov, dx, _dy)
@@ -1586,7 +1707,7 @@ def check_minority_content(system: Dict[str, Any], comp: np.ndarray, box: Sequen
     accepted = {}
     cursor_proofs = {}
     cursor_records = []
-    cursor_colors = {i:sd.normalize_polarity(all_crops[i])[0] for i in masks}
+    cursor_colors = {i:norms[i] for i in masks}
     partial_kw = {"allow_partial": True} if "allow_partial" in inspect.signature(mc.recovered_cursor_event).parameters else {}
     parameters = inspect.signature(mc.recovered_cursor_event).parameters
     has_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values())
@@ -1805,8 +1926,10 @@ def _reference_member(system: Dict[str, Any], obs_by: Dict[str, Dict[str, Any]])
 
 
 def _strip_registration(system: Dict[str, Any], obs_by: Dict[str, Dict[str, Any]], load_image: ImageLoader,
-                        box: Sequence[int], crops: Sequence[np.ndarray], cinfo: Dict[str, Any]) -> Dict[str, Sequence[float]]:
-    """Registration used by minority preservation and Stage A, without raw obligations."""
+                        box: Sequence[int], crops: Sequence[np.ndarray], cinfo: Dict[str, Any], *,
+                        responses: Optional[Dict[str, Optional[float]]] = None) -> Dict[str, Sequence[float]]:
+    """Registration used by minority preservation and Stage A, without raw obligations.
+    ``responses`` (filled when given): each registered member's phase-correlation response."""
     offered = cinfo.pop("_ledger_members")
     offered_by = {entry["key"][0]: entry for entry in offered}
     ref_gray = _alignment_gray(crops[int(cinfo["reference_index"])])
@@ -1822,13 +1945,16 @@ def _strip_registration(system: Dict[str, Any], obs_by: Dict[str, Dict[str, Any]
             if image.shape[:2] != shape:
                 registration.append({"obs_id": oid, "residual_shift_px": None, "registration_uncertainty": None})
                 continue
-            shift, _ = cv2.phaseCorrelate(ref_gray.copy(), _alignment_gray(image), window)
+            shift, response = cv2.phaseCorrelate(ref_gray.copy(), _alignment_gray(image), window)
             rel = [float(shift[k] - base[k]) for k in (0, 1)]
         else:
             rel = entry["phase_shift"]
+            response = entry.get("phase_response")
         uncertainty = float(np.hypot(*rel)) if np.isfinite(rel).all() else None
         registration.append({"obs_id": oid, "residual_shift_px": uncertainty, "registration_uncertainty": uncertainty})
         shifts[oid] = rel
+        if responses is not None:
+            responses[oid] = None if response is None else float(response)
     cinfo["member_registration"] = registration
     return shifts
 
@@ -1987,7 +2113,8 @@ def build_strip(system: Dict[str, Any], manifest: Dict[str, Any], load_image: Im
                 obs_by: Optional[Dict[str, Dict[str, Any]]] = None,
                 next_systems: Sequence[Dict[str, Any]] = (),
                 chrome: Any = None, chrome_appearance: Optional[np.ndarray] = None,
-                evidence_dir: Optional[Path] = None, ledger: bool = False) -> Tuple[np.ndarray, Dict[str, Any]]:
+                evidence_dir: Optional[Path] = None, ledger: bool = False,
+                frame_foreground: Optional[Dict[str, np.ndarray]] = None) -> Tuple[np.ndarray, Dict[str, Any]]:
     """Cleaned strip image (BGR, dark on light) and its provenance record.
 
     ``chrome``: the job's screen-fixed chrome mask in crop coordinates (``job_screen_chrome``);
@@ -2067,7 +2194,8 @@ def build_strip(system: Dict[str, Any], manifest: Dict[str, Any], load_image: Im
 
     # Run on every member's full ROI before loading any envelope-cropped member.
     # The inventory is independent of sampling and composition eligibility.
-    inventory = inventory_before_crop(system, box, obs_by, load_image, g, expected_size=(h, w))
+    inventory = inventory_before_crop(system, box, obs_by, load_image, g, expected_size=(h, w),
+                                      frame_foreground=frame_foreground)
     bkey = tuple(int(v) for v in box)
     pairs = [((m["obs_id"], bkey), load_image(obs_by[m["obs_id"]])[box[1]:box[3], box[0]:box[2]]) for m in picked]
     pairs = [(k_, c) for k_, c in pairs if c.shape[:2] == (box[3] - box[1], box[2] - box[0])]
@@ -2081,7 +2209,8 @@ def build_strip(system: Dict[str, Any], manifest: Dict[str, Any], load_image: Im
         ledger_shifts = cinfo.pop("_ledger_shifts")
     else:
         fragment = None
-        ledger_shifts = _strip_registration(system, obs_by, load_image, box, crops, cinfo)
+        ledger_responses: Dict[str, Optional[float]] = {}
+        ledger_shifts = _strip_registration(system, obs_by, load_image, box, crops, cinfo, responses=ledger_responses)
     unrec_mask = cinfo.pop("_unrecovered_mask", None)
     if crops:
         cinfo["pixel_reference_obs_id"] = pairs[int(cinfo["reference_index"])][0][0]
@@ -2106,7 +2235,9 @@ def build_strip(system: Dict[str, Any], manifest: Dict[str, Any], load_image: Im
     chrome_issue = OVERLAY_COVERS_NOTATION if chrome_info["touched_box_crop"] else None
     comp_box = list(box)
     minority = check_minority_content(system, comp, comp_box, obs_by, load_image, g, memo=ov_memo, chrome=chrome_box,
-        native_scale=float((manifest.get("work_scale") or {}).get("scale", 1.0)), member_shifts=ledger_shifts)
+        native_scale=float((manifest.get("work_scale") or {}).get("scale", 1.0)), member_shifts=ledger_shifts,
+        **({} if ledger or not crops else {"registration_responses": ledger_responses,
+                                           "registration_reference": cinfo.get("pixel_reference_obs_id")}))
     if ledger:
         _cursor_ledger_dispositions(fragment, minority, obs_by=obs_by, load_image=load_image, box=comp_box)
     minority["full_roi_inventory"] = {k:v for k,v in inventory.items() if k != "events"}
@@ -2117,6 +2248,8 @@ def build_strip(system: Dict[str, Any], manifest: Dict[str, Any], load_image: Im
     full_palette = None
     if inventory["events"] and chrome is not None:
         full_palette = chrome_palette([load_image(obs_by[m["obs_id"]]) for m in picked], chrome)
+    gray_of_obs: Dict[str, np.ndarray] = {}   # per observation: its full frame's normalized gray
+    paper_of_obs: Dict[str, np.ndarray] = {}  # per observation: its paper color outside the chrome
     for event in inventory["events"]:
         oid = event["obs_ids"][0]
         raw = load_image(obs_by[oid])
@@ -2126,9 +2259,10 @@ def build_strip(system: Dict[str, Any], manifest: Dict[str, Any], load_image: Im
         if oid in rejected:
             event["eligibility"] = [rejected[oid]["classification"]]
         owner = event["foreground_support"][0]
-        norm = sd.normalize_polarity(raw)[0]
-        gray = cv2.cvtColor(norm, cv2.COLOR_BGR2GRAY)
         if not minority["paper_opaque"]:
+            if oid not in gray_of_obs:
+                gray_of_obs[oid] = cv2.cvtColor(sd.normalize_polarity(raw)[0], cv2.COLOR_BGR2GRAY)
+            gray = gray_of_obs[oid]
             event["ink_like_foreground_support"] = mc.ink_like_support([owner],
                 lambda _owner:(gray,(0,0)), minority["ink_dark_max"])
             event["ink_like"] = bool(event["ink_like_foreground_support"])
@@ -2137,7 +2271,9 @@ def build_strip(system: Dict[str, Any], manifest: Dict[str, Any], load_image: Im
             sel = np.zeros(raw.shape[:2], bool)
             for y,a,b in owner["spans_crop"]:
                 sel[y,a:b] = True
-            positive = chrome_explained(raw, sel & chrome, full_palette, _paper_color(raw, ~chrome))
+            if oid not in paper_of_obs:
+                paper_of_obs[oid] = _paper_color(raw, ~chrome)
+            positive = chrome_explained(raw, sel & chrome, full_palette, paper_of_obs[oid])
             explained = bool((positive & sel).sum() == sel.sum())
         if explained:
             import base64
@@ -2415,9 +2551,25 @@ def build_strips(occurrences: Dict[str, Any], manifest: Dict[str, Any], load_ima
     if chrome is not None:
         logger(f"strips: screen-fixed chrome {chrome_info.get('chrome_px')} px in {chrome_info.get('box')} "
                f"({chrome_info.get('displays')} distinct displays sampled)")
+    held: Dict[str, np.ndarray] = {}
+    foreground: Dict[str, np.ndarray] = {}  # full-frame foreground per observation (inventory_before_crop)
     for i, s in enumerate(systems):
         checkpoint()
-        strip, rec = build_strip(s, manifest, load_image, obs_by=obs_by, next_systems=systems[i + 1:],
+        # Each member frame is decoded once per system (strip cleaning walks the members several
+        # times) and frames shared with the previous system (several rows on one screen) are
+        # kept for it; frames this system does not use are let go. The same decoded pixels.
+        uses = {m["obs_id"] for key in ("observations", "ledger_observations") for m in (s.get(key) or [])}
+        held = {k: v for k, v in held.items() if k in uses}
+        foreground = {k: v for k, v in foreground.items() if k in uses}
+
+        def load_held(obs: Dict[str, Any], uses=uses, held=held) -> np.ndarray:
+            img = held.get(obs["id"])
+            if img is None:
+                img = load_image(obs)
+                if obs["id"] in uses:
+                    held[obs["id"]] = img
+            return img
+        strip, rec = build_strip(s, manifest, load_held, obs_by=obs_by, next_systems=systems[i + 1:], frame_foreground=foreground,
                                  chrome=chrome if chrome is not None else False,
                                  chrome_appearance=chrome_info.get("_appearance"), ledger=ledger, evidence_dir=out_dir.parent / "ledger_evidence" if ledger else None)
         uncut = rec.pop("_uncut_image", None)

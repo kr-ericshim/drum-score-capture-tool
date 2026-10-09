@@ -106,9 +106,11 @@ def clean_content(img: np.ndarray) -> np.ndarray:
     return clean_normalized(norm)
 
 
-def clean_normalized(norm: np.ndarray) -> np.ndarray:
-    """``clean_content`` of an image already passed through ``normalize_polarity``."""
-    gray = cv2.cvtColor(norm, cv2.COLOR_BGR2GRAY)
+def clean_normalized(norm: np.ndarray, gray: Optional[np.ndarray] = None) -> np.ndarray:
+    """``clean_content`` of an image already passed through ``normalize_polarity``.
+    ``gray``: ``cvtColor(norm, COLOR_BGR2GRAY)`` when the caller already has it."""
+    if gray is None:
+        gray = cv2.cvtColor(norm, cv2.COLOR_BGR2GRAY)
     paper = system_detect.percentile_u8(gray, 75)
     ink = gray < min(CLEAN_INK_MAX, paper - 60)
     if norm.dtype == np.uint8 and norm.ndim == 3 and norm.shape[2] == 3:

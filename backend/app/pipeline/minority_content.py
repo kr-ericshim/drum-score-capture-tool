@@ -468,21 +468,47 @@ def support_runs(mask: np.ndarray, origin=(0, 0)) -> List[List[int]]:
     return out
 
 
-def transition_evidence(gray: np.ndarray, reference: np.ndarray, gap: float) -> Optional[Dict[str, Any]]:
+def transition_reference(reference: np.ndarray, gap: float) -> Dict[str, Any]:
+    """The reference-only products of ``transition_evidence`` (paper level, dilated
+    reference ink, horizontal scaffold), computed once for many members compared
+    against the same reference and gap."""
+    w = reference.shape[1]
+    paper = float(np.percentile(reference, 75))
+    dark = reference < paper - 60
+    scaffold = cv2.morphologyEx(dark.astype(np.uint8), cv2.MORPH_OPEN,
+        np.ones((1, max(3, int(max(4*gap, .12*w)))), np.uint8)) > 0
+    return {"shape": reference.shape, "gap": float(gap), "reference_i16": reference.astype(np.int16),
+            "paper": paper, "reference_ink": _dilate(dark, 1), "scaffold": scaffold,
+            "scaffold_px": int(scaffold.sum()), "reference_light": reference > paper - 12}
+
+
+def transition_evidence(gray: np.ndarray, reference: np.ndarray, gap: float, *,
+                        prepared: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     """Positive page geometry: long tilted staff segments or a diagonal shadow edge.
 
     A small local mark, timing at a hand-over, or a registration failure alone
     is insufficient. Callers additionally require stable same-occurrence witnesses.
     Inputs are polarity-normalized, in the same observation coordinates.
+    ``prepared``: ``transition_reference(reference, gap)``, shared by callers that
+    compare many members against one reference (same result).
     """
     h, w = gray.shape
-    if float((np.abs(gray.astype(np.int16)-reference.astype(np.int16)) > 20).mean()) < .005:
+    if prepared is None or prepared["shape"] != reference.shape or prepared["gap"] != float(gap):
+        prepared = transition_reference(reference, gap)
+    if float((np.abs(gray.astype(np.int16)-prepared["reference_i16"]) > 20).mean()) < .005:
         return None
-    paper = float(np.percentile(reference, 75))
+    paper = prepared["paper"]
     ink = gray < paper - 60
-    reference_ink = _dilate(reference < paper - 60, 1)
+    reference_ink = prepared["reference_ink"]
+    # New long beams cannot make an intact horizontal staff a warped page.
+    scaffold = prepared["scaffold"]
+    scaffold_px = prepared["scaffold_px"]
+    lost_scaffold=int((scaffold & (gray >= paper-60)).sum())
+    geometry_changed=scaffold_px>0 and lost_scaffold>=.1*scaffold_px
+    # The tilted segments only matter with displaced scaffold: the line search runs
+    # only then (the same result as searching first).
     lines = cv2.HoughLinesP(ink.astype(np.uint8), 1, np.pi / 720, threshold=max(20, int(2 * gap)),
-                            minLineLength=max(4 * gap, .12 * w), maxLineGap=gap)
+                            minLineLength=max(4 * gap, .12 * w), maxLineGap=gap) if geometry_changed else None
     tilted = []
     for x0, y0, x1, y1 in (lines[:, 0] if lines is not None else []):
         dx, dy = int(x1 - x0), int(y1 - y0)
@@ -494,19 +520,13 @@ def transition_evidence(gray: np.ndarray, reference: np.ndarray, gap: float) -> 
             if (valid.any() and float(reference_ink[yy[valid],xx[valid]].mean()) < .6
                     and float((~ink[yy[valid]-r,xx[valid]] & ~ink[yy[valid]+r,xx[valid]]).mean()) > .7):
                 tilted.append([int(x0), int(y0), int(x1), int(y1)])
-    # New long beams cannot make an intact horizontal staff a warped page.
-    scaffold = cv2.morphologyEx((reference < paper-60).astype(np.uint8),cv2.MORPH_OPEN,
-        np.ones((1,max(3,int(max(4*gap,.12*w)))),np.uint8)) > 0
-    scaffold_px=int(scaffold.sum())
-    lost_scaffold=int((scaffold & (gray >= paper-60)).sum())
-    geometry_changed=scaffold_px>0 and lost_scaffold>=.1*scaffold_px
     # At least three long, similarly sloping lines plus displaced reference scaffold.
     if geometry_changed and len(tilted) >= 3 and np.ptp([(p[1]+p[3])/2 for p in tilted]) >= 2 * gap:
         slopes = [(p[3] - p[1]) / (p[2] - p[0]) for p in tilted]
         if abs(float(np.median(slopes))) > .008 and float(np.std(slopes)) < .04:
             return {"kind": "warped_staff_geometry", "tilted_segments": tilted[:20],
                     "reference_scaffold_px":scaffold_px,"displaced_scaffold_px":lost_scaffold}
-    shadow = (reference > paper - 12) & (gray < paper - 12) & (gray > paper - 145)
+    shadow = prepared["reference_light"] & (gray < paper - 12) & (gray > paper - 145)
     # Broad smooth paper change plus a long diagonal edge is curl/shadow evidence.
     broad = cv2.morphologyEx(shadow.astype(np.uint8), cv2.MORPH_OPEN,
                             np.ones((max(3, int(gap)), max(3, int(gap))), np.uint8))
@@ -550,13 +570,25 @@ def cursor_positions(images: Sequence[np.ndarray], gap: float, *, reference: Opt
         grays = [255-g if float(np.median(g))<110 else g for g in grays]
         reference = np.median(np.stack(grays),axis=0).astype(np.int16)
     best = None
+    # per image, computed once and only when needed (the same values for both saturations)
+    norm_grays: Dict[int, np.ndarray] = {}
+    tinted: Dict[int, list] = {}
+
+    def norm_gray(i: int) -> np.ndarray:
+        if i not in norm_grays:
+            gray=_gray(images[i])
+            norm_grays[i]=(255-gray if float(np.median(gray))<110 else gray).astype(np.int16)
+        return norm_grays[i]
     for saturation in (80,30):
         colored=[(hsv[...,1]>=saturation)&(hsv[...,2]>60) for hsv in hsvs]
-        static=np.mean(np.stack(colored),axis=0)>=.8
+        # np.mean(np.stack(colored),axis=0): an exact integer count over the images, then the same division
+        count=np.zeros(colored[0].shape,np.int64)
+        for col in colored:
+            count+=col
+        static=count/len(colored)>=.8
         candidates=[]
         for i,col in enumerate(colored):
             n,lab,stats,cent=cv2.connectedComponentsWithStats((col & ~static).astype(np.uint8),connectivity=8)
-            gray=_gray(images[i]);gray=(255-gray if float(np.median(gray))<110 else gray).astype(np.int16)
             for k in range(1,n):
                 x,y,w,h,area=map(int,stats[k])
                 if area<3 or w>max(4,2.5*gap):
@@ -564,8 +596,9 @@ def cursor_positions(images: Sequence[np.ndarray], gap: float, *, reference: Opt
                 effective_height=h
                 if h<.7*gap or h<.45*w:
                     xc=int(round(cent[k,0]));radius=max(4,int(.4*gap))
-                    if not radius<=xc<gray.shape[1]-radius:
+                    if not radius<=xc<images[i].shape[1]-radius:
                         continue
+                    gray=norm_gray(i)
                     core=(np.abs(gray[:,max(0,xc-1):xc+2]-reference[:,max(0,xc-1):xc+2])>30).any(axis=1)
                     sides=(np.abs(gray[:,xc-radius]-reference[:,xc-radius])>30)&(np.abs(gray[:,xc+radius]-reference[:,xc+radius])>30)
                     thin=core & ~sides
@@ -575,7 +608,7 @@ def cursor_positions(images: Sequence[np.ndarray], gap: float, *, reference: Opt
                     effective_height=max(st[1:,cv2.CC_STAT_HEIGHT],default=0)
                     if effective_height<3*gap:
                         continue
-                hue=float(np.median(hsvs[i][lab==k,0]))
+                hue=float(np.median(hsvs[i][y:y+h,x:x+w][lab[y:y+h,x:x+w]==k,0]))  # the component's pixels
                 candidates.append((i,float(cent[k,0]),effective_height,hue,
                                    max(float(cent[k,0])-x,x+w-1-float(cent[k,0]))))
         if allow_tinted_boxes:
@@ -584,7 +617,9 @@ def cursor_positions(images: Sequence[np.ndarray], gap: float, *, reference: Opt
             # background-video column. Conditional plates use narrow markers.
             from app.pipeline.page_diff import _tinted_highlight_boxes
             for i,hsv in enumerate(hsvs):
-                for x,y,w,h in _tinted_highlight_boxes(hsv,gap=gap):
+                if i not in tinted:
+                    tinted[i]=_tinted_highlight_boxes(hsv,gap=gap)
+                for x,y,w,h in tinted[i]:
                     region=hsv[y:y+h,x:x+w]
                     paper_sat=float(np.median(hsv[...,1]))
                     valid=(region[...,1]>=paper_sat+18)&(region[...,1]<=130)&(region[...,2]>=110)
