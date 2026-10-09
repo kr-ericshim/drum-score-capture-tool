@@ -501,6 +501,12 @@ class ReviewAccessTest(unittest.TestCase):
             _, beyond = self.request("/jobs/review/review-hypotheses?offset=999")
             self.assertEqual(beyond["offset"], 4)
             self.assertEqual(beyond["hypotheses"], [])
+            # the app asks only for the codes it shows
+            _, shown = self.request("/jobs/review/review-hypotheses?codes=TEST_REVIEW,TEST_UNRESOLVED")
+            self.assertEqual([e["code"] for e in shown["hypotheses"]], ["TEST_REVIEW", "TEST_UNRESOLVED"])
+            self.assertEqual(shown["total"], 2)
+            _, none = self.request("/jobs/review/review-hypotheses?codes=")
+            self.assertEqual((none["total"], none["hypotheses"]), (0, []))
         for entry in full["hypotheses"]:
             raw_path = Path(entry["raw_crop"])
             self.assertTrue(raw_path.is_absolute() and raw_path.is_file())

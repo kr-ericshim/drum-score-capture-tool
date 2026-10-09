@@ -451,8 +451,9 @@ export function normalizeReviewHypotheses(data = {}) {
   };
 }
 
-export async function getReviewHypotheses(jobId, { offset = 0, limit = 100 } = {}) {
+export async function getReviewHypotheses(jobId, { offset = 0, limit = 100, codes = null } = {}) {
   const query = new URLSearchParams({ offset: String(count(offset)), limit: String(count(limit) || 100) });
+  if (Array.isArray(codes)) query.set("codes", codes.join(","));
   const data = await requestApiJson(`/jobs/${jobId}/review-hypotheses?${query}`, {}, "확인 항목을 불러오지 못했습니다.");
   return normalizeReviewHypotheses(data);
 }

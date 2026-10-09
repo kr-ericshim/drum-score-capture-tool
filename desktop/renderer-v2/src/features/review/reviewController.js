@@ -1,4 +1,4 @@
-import { reviewListPages } from "../../app/session/selectors.js";
+import { APP_REVIEW_CODES, reviewListPages } from "../../app/session/selectors.js";
 import { normalizeAssetPath } from "../../lib/paths.js";
 import { describeError } from "../../lib/i18n.js";
 
@@ -83,7 +83,7 @@ export function createReviewController({ getState, setState, api, mountEditor, r
     setState(next => { next.review.hypotheses.status = "loading"; next.review.hypotheses.error = ""; return next; });
     try {
       if (typeof api.getReviewHypotheses !== "function") throw new Error("");
-      const page = await api.getReviewHypotheses(key.jobId, { offset, limit: HYPOTHESIS_PAGE });
+      const page = await api.getReviewHypotheses(key.jobId, { offset, limit: HYPOTHESIS_PAGE, codes: [...APP_REVIEW_CODES] });
       const now = getState();
       if (now.exportConfig.jobId !== key.jobId || now.review.jobRevision !== key.revision) return;
       setState(next => {

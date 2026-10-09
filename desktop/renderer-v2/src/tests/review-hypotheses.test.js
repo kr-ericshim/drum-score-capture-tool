@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { normalizeReviewHypotheses } from "../lib/api.js";
-import { createInitialSessionState, deriveReflowInfo } from "../app/session/selectors.js";
+import { APP_REVIEW_CODES, createInitialSessionState, deriveLedgerSummary, deriveReflowInfo } from "../app/session/selectors.js";
 import { createReviewController } from "../features/review/reviewController.js";
 import { renderReviewScreen } from "../features/review/ReviewScreen.js";
 
@@ -35,6 +35,8 @@ function reviewState(locale = "ko") {
   state.review.focusedPageId = "a";
   state.review.reflow = deriveReflowInfo({ output_model: "clean_reflow_v1", reflow: { revision: 2,
     ledger_summary: { status: "review_required", review_hypotheses: 3 } } });
+  // as if the job's codes were ones the app shows
+  state.review.reflow.ledger = { status: "review_required", reviewHypotheses: 3 };
   return state;
 }
 
@@ -62,9 +64,15 @@ test("hypothesis responses are normalized with counts, statuses and same-scale c
   assert.match(renderReviewScreen(state), /No image/);
 });
 
-test("the ledger summary of a job result becomes the toolbar count", () => {
+test("the toolbar counts only the review codes the app shows", () => {
   const info = deriveReflowInfo({ output_model: "clean_reflow_v1", reflow: { ledger_summary: { status: "pass", review_hypotheses: 0 } } });
   assert.deepEqual(info.ledger, { status: "pass", reviewHypotheses: 0 });
+  const summary = { status: "review_required", review_hypotheses: 1286,
+    issue_counts: { OUTPUT_FIDELITY: 612, REMOVED_FEATURE: 308, DISPLAY_UNRESOLVED: 2 } };
+  // no code has passed a spot check yet: a job with hundreds of unvalidated items shows none
+  assert.deepEqual(APP_REVIEW_CODES, []);
+  assert.equal(deriveLedgerSummary(summary).reviewHypotheses, 0);
+  assert.equal(deriveLedgerSummary(summary, ["DISPLAY_UNRESOLVED"]).reviewHypotheses, 2);
   assert.equal(deriveReflowInfo({ output_model: "clean_reflow_v1", reflow: {} }).ledger, null);
   const markup = renderReviewScreen(reviewState("en"));
   assert.match(markup, /data-action="review-hypotheses"[^>]*aria-pressed="false"[^>]*>Items to check 3</);
@@ -78,6 +86,7 @@ test("opening items to check loads one page, shows raw and result side by side, 
   const calls = [];
   const api = { async getReviewHypotheses(jobId, options) {
     calls.push([jobId, options.offset]);
+    assert.deepEqual(options.codes, [...APP_REVIEW_CODES]);
     const data = options.offset ? { ...RESPONSE, offset: 2, hypotheses: [{ ...RESPONSE.hypotheses[1], id: "i3", item_id: "i3" }] } : RESPONSE;
     return normalizeReviewHypotheses(data);
   } };

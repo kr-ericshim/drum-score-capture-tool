@@ -916,7 +916,7 @@ def get_job_files(job_id: str) -> JobFileResponse:
 
 
 @app.get("/jobs/{job_id}/review-hypotheses", response_model=JobReviewHypothesesResponse)
-def get_review_hypotheses(job_id: str, offset: int = 0, limit: int = 100) -> JobReviewHypothesesResponse:
+def get_review_hypotheses(job_id: str, offset: int = 0, limit: int = 100, codes: Optional[str] = None) -> JobReviewHypothesesResponse:
     with maintenance_lock:
         lock = review_locks.setdefault(job_id, RLock())
     with lock:
@@ -940,6 +940,10 @@ def get_review_hypotheses(job_id: str, offset: int = 0, limit: int = 100) -> Job
         if not isinstance(hypotheses, list):
             # a damaged review file must not turn the finished export into an error
             return JobReviewHypothesesResponse(job_id=job_id, offset=0, limit=limit)
+        if codes is not None:
+            # the app asks only for the codes it shows; the full list stays for developer tools
+            wanted = {c for c in codes.split(",") if c}
+            hypotheses = [h for h in hypotheses if isinstance(h, dict) and h.get("code") in wanted]
         offset = min(len(hypotheses), max(0, offset))
         entries = []
         for entry in hypotheses[offset:offset+limit]:

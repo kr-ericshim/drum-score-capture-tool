@@ -639,16 +639,22 @@ function formatClockLabel(value) {
   return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
 }
 
-/** Composed A4 page previews of the last built reflow chart (empty for legacy jobs). */
 /** The review screen's hypothesis view: closed and not loaded. */
 export function createReviewHypothesesState() {
   return { open: false, jobId: "", revision: -1, status: "idle", items: [], counts: null, total: 0, ledgerStatus: "", error: "" };
 }
 
-// The small ledger summary a reflow job result carries (counts only, no crops).
-function deriveLedgerSummary(summary) {
+// Review codes shown to users. A code is added only after a spot check finds its items real and
+// actionable; every other code stays in the developer report (export/review_hypotheses.json).
+export const APP_REVIEW_CODES = Object.freeze([]);
+
+// The small ledger summary a reflow job result carries (counts only, no crops). The toolbar count
+// covers only the codes the app shows.
+export function deriveLedgerSummary(summary, shownCodes = APP_REVIEW_CODES) {
   if (!summary || typeof summary !== "object") return null;
-  return { status: String(summary.status || ""), reviewHypotheses: Math.max(0, Number(summary.review_hypotheses) || 0) };
+  const byCode = summary.issue_counts && typeof summary.issue_counts === "object" ? summary.issue_counts : {};
+  const shown = shownCodes.reduce((total, code) => total + Math.max(0, Number(byCode[code]) || 0), 0);
+  return { status: String(summary.status || ""), reviewHypotheses: shown };
 }
 
 export function deriveOutputPages(result = {}) {
