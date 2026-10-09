@@ -21,6 +21,9 @@ State of the clean-reflow work for a new session. Read this first, then [DECISIO
 - Times after the speed fix (battery, otherwise idle): S1 125 s (was 153), 01Mr 342 s (was 479). The strips stage is still the problem: S1 58 s vs 19 s on Oct 7, 01Mr 199 s vs 22 s. Other stages match Oct 7, so this is the strips code, not the battery.
 - Visual count (all pages viewed; the dashboard's strict `usable` is 0/12 and not useful): clean 6/12 (S1, 01Mr, w7mK, Fzc, Q8X, SZwT with tiny blue overlay icons at line ends); usable with flaws 3 (aOED repeats bars 13–44 after D.S. al Coda — also on Oct 7; bF69 gray smudges over every line + black blob at Bridge; Z4eb leftover "#75 鼓组" UI text and odd short lines); not usable 2 (_7gP 68 gaps, SHvfn 18 gaps); GTOc unsupported by design. Sheet: `eval_v1/step2d1_dashboard/compare_1007_vs_1009.jpg`.
 - Suggested next: strips speed regression first, then D.S. repeat duplication and overlay remnants (bF69/Z4eb/SZwT).
+- Committed (5 commits, not pushed): pipeline, app, tools, docs, then a speed/robustness commit. Pre-commit review by 4 Opus-medium readers; fixes applied.
+- Strip cleaning profile (01Mr): frame cache thrash fixed (LRU 768 MB) → cleaning 199 → 132 s, job 342 → 277 s, S1 119 s; output pixel-identical. Remaining cost is the per-member minority check (phaseCorrelate 31 s, percentile 19 s, PNG decode 25 s).
+- Waiting on Pro: `PRO_CHECKPOINT_STEP2D_OUTCOMES.md` with `~/Documents/drum-score-corpus/advice_pack_5/`. Weigh the reply before choosing the next work.
 
 **In flight (2026-10-09 morning):**
 - Dashboard v3 run into `~/Documents/drum-score-corpus/eval_v1/step2d1_dashboard` (12 videos; log in the session scratchpad `logs/dash_2d1.log`). If it was interrupted, rerun the missing ids with `--only`.
