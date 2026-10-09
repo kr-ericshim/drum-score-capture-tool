@@ -1,0 +1,321 @@
+[codex] Starting Codex task thread.
+[codex] Thread ready (01a10ea7-9721-71d2-b280-cbd0ffdaaaf0).
+[codex] Turn started (01a10ea7-99e1-7bb2-9710-b9185fa141a4).
+[codex] Assistant message captured: 현재 코드·결정 문서·코퍼스 구조를 읽어 구현 지시서의 근거를 확인하겠습니다. 두 선행 차단점은 해결됐다고 가정하고, 이번 brief는 경계 안전성·픽셀 보존·편집 계...
+[codex] Running command: /bin/zsh -lc "rg -n 'reflow|measure-aware|barline|reflow-v1' /Users/ericshim/.codex/memories/...
+[codex] Command completed: /bin/zsh -lc "rg -n 'reflow|measure-aware|barline|reflow-v1' /Users/ericshim/.codex/memories/... (exit 0)
+[codex] Running command: /bin/zsh -lc 'cat /Users/ericshim/.codex/skills/pdf/SKILL.md'
+[codex] Command completed: /bin/zsh -lc 'cat /Users/ericshim/.codex/skills/pdf/SKILL.md' (exit 0)
+[codex] Reasoning summary captured: **Reading batches**
+[codex] Assistant message captured: PDF 참고 자료 확인에는 `pdf` 스킬을 적용하겠습니다. 읽기 전용 제약에 따라 파일을 생성하거나 테스트를 실행하지 않고, 확인한 근거와 구현자가 실행할 검증 명령...
+[codex] Running command: /bin/zsh -lc 'nl -ba docs/reflow/DECISIONS.md'
+[codex] Running command: /bin/zsh -lc "git status --short --branch rg --files -g '*AGENTS.md' -g '*reflow*' -g '*DECIS...
+[codex] Running command: /bin/zsh -lc "sed -n '6247,6275p' /Users/ericshim/.codex/memories/MEMORY.md cat /Users/ericsh...
+[codex] Running command: /bin/zsh -lc "rg --files /Users/ericshim/Documents/drum-score-corpus | rg 'S1nlqQdnUks|aOED5z...
+[codex] Running command: /bin/zsh -lc "rg -n '"'^class |''^def |reflow|revision|undo'"' backend/app/pipeline/reflow_*....
+[codex] Command failed: /bin/zsh -lc "rg -n '"'^class |''^def |reflow|revision|undo'"' backend/app/pipeline/reflow_*.... (exit 1)
+[codex] Command completed: /bin/zsh -lc 'nl -ba docs/reflow/DECISIONS.md' (exit 0)
+[codex] Command completed: /bin/zsh -lc "sed -n '6247,6275p' /Users/ericshim/.codex/memories/MEMORY.md cat /Users/ericsh... (exit 0)
+[codex] Command completed: /bin/zsh -lc "rg --files /Users/ericshim/Documents/drum-score-corpus | rg 'S1nlqQdnUks|aOED5z... (exit 0)
+[codex] Command completed: /bin/zsh -lc "git status --short --branch rg --files -g '*AGENTS.md' -g '*reflow*' -g '*DECIS... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n '"'^class |''^def |revision|barline|units.json'"' backend/app/pipeline/re...
+[codex] Running command: /bin/zsh -lc "rg -n 'reflow|revision|undo|review' backend/app/schemas.py backend/app/main.py ...
+[codex] Running command: /bin/zsh -lc 'cat .codex/AGENTS.md nl -ba docs/DESIGN.md | head -180 nl -ba backend/app/pipel...
+[codex] Running command: /bin/zsh -lc 'nl -ba backend/app/pipeline/reflow_layout.py | head -310 nl -ba backend/app/pip...
+[codex] Command completed: /bin/zsh -lc 'nl -ba backend/app/pipeline/reflow_layout.py | head -310 nl -ba backend/app/pip... (exit 0)
+[codex] Command completed: /bin/zsh -lc "rg -n '"'^class |''^def |revision|barline|units.json'"' backend/app/pipeline/re... (exit 0)
+[codex] Command completed: /bin/zsh -lc "rg -n 'reflow|revision|undo|review' backend/app/schemas.py backend/app/main.py ... (exit 0)
+[codex] Command completed: /bin/zsh -lc 'cat .codex/AGENTS.md nl -ba docs/DESIGN.md | head -180 nl -ba backend/app/pipel... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n '"'^class |''^def |revision|units.json'"' backend/app/pipeline/reflow_*.p...
+[codex] Command completed: /bin/zsh -lc "rg -n '"'^class |''^def |revision|units.json'"' backend/app/pipeline/reflow_*.p... (exit 0)
+[codex] Running command: /bin/zsh -lc "cat .codex/AGENTS.md rg -n 'reflow|revision|undo' desktop/renderer-v2/src/lib/a...
+[codex] Command completed: /bin/zsh -lc "cat .codex/AGENTS.md rg -n 'reflow|revision|undo' desktop/renderer-v2/src/lib/a... (exit 0)
+[codex] Reasoning summary captured: **Reading grouped source outputs**
+[codex] Running command: /bin/zsh -lc "nl -ba backend/app/pipeline/reflow_pipeline.py | sed -n '58,151p;195,319p'"
+[codex] Running command: /bin/zsh -lc "nl -ba backend/app/schemas.py | sed -n '181,230p' nl -ba backend/app/main.py | ...
+[codex] Running command: /bin/zsh -lc "nl -ba backend/app/pipeline/reflow_strips.py | sed -n '568,631p;657,712p' nl -b...
+[codex] Running command: /bin/zsh -lc "nl -ba desktop/renderer-v2/src/features/review/reviewController.js | sed -n '1,...
+[codex] Command completed: /bin/zsh -lc "nl -ba backend/app/pipeline/reflow_pipeline.py | sed -n '58,151p;195,319p'" (exit 0)
+[codex] Command completed: /bin/zsh -lc "nl -ba backend/app/pipeline/reflow_strips.py | sed -n '568,631p;657,712p' nl -b... (exit 0)
+[codex] Command completed: /bin/zsh -lc "nl -ba backend/app/schemas.py | sed -n '181,230p' nl -ba backend/app/main.py | ... (exit 0)
+[codex] Command completed: /bin/zsh -lc "nl -ba desktop/renderer-v2/src/features/review/reviewController.js | sed -n '1,... (exit 0)
+[codex] Assistant message captured: 현재 구성은 정리된 시스템 스트립 하나를 한 줄로 배치하며, 기존 검증도 단위 ID의 누락·중복을 확인하는 수준입니다. 마디 단계에는 별도의 픽셀 소유권 검증이 필요합...
+[codex] Running command: /bin/zsh -lc "nl -ba backend/app/schemas.py | sed -n '188,223p' nl -ba backend/app/pipeline/r...
+[codex] Command completed: /bin/zsh -lc "nl -ba backend/app/schemas.py | sed -n '188,223p' nl -ba backend/app/pipeline/r... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg --files /Users/ericshim/Documents/drum-score-corpus/reflow | rg 'manifest|RE...
+[codex] Command completed: /bin/zsh -lc "rg --files /Users/ericshim/Documents/drum-score-corpus/reflow | rg 'manifest|RE... (exit 0)
+[codex] Reasoning summary captured: **Preparing PDF inspection**
+[codex] Running command: /bin/zsh -lc "backend/.venv/bin/python -B - <<'PY' import importlib.util from pathlib import ...
+[codex] Command failed: /bin/zsh -lc "backend/.venv/bin/python -B - <<'PY' import importlib.util from pathlib import ... (exit 1)
+[codex] Running command: /bin/zsh -lc "rg -n 'reflow|jobRevision|restoredDraftKey' desktop/renderer-v2/src/app/session...
+[codex] Command completed: /bin/zsh -lc "rg -n 'reflow|jobRevision|restoredDraftKey' desktop/renderer-v2/src/app/session... (exit 0)
+[codex] Reasoning summary captured: **Checking PDF with Python**
+[codex] Running command: /bin/zsh -lc "backend/.venv/bin/python -B -c 'import importlib.util; from pathlib import Path...
+[codex] Command completed: /bin/zsh -lc "backend/.venv/bin/python -B -c 'import importlib.util; from pathlib import Path... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba /Users/ericshim/Documents/drum-score-corpus/reflow/e2e/Q8XtphO6Xz0/manif...
+[codex] Command completed: /bin/zsh -lc "nl -ba /Users/ericshim/Documents/drum-score-corpus/reflow/e2e/Q8XtphO6Xz0/manif... (exit 0)
+[codex] Reasoning summary captured: **Preparing PDF conversion**
+[codex] Running command: /bin/zsh -lc 'command -v pdftoppm command -v pdfinfo command -v pdftotext'
+[codex] Command completed: /bin/zsh -lc 'command -v pdftoppm command -v pdfinfo command -v pdftotext' (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n 'Boundary|measure|safe|whitespace' docs/reflow/DESIGN_astra.md | head -35...
+[codex] Command completed: /bin/zsh -lc "rg -n 'Boundary|measure|safe|whitespace' docs/reflow/DESIGN_astra.md | head -35... (exit 0)
+[codex] Reasoning summary captured: **Preparing PDF image output**
+[codex] Running command: /bin/zsh -lc "pdftoppm -f 1 -l 1 -singlefile -scale-to 1100 -png '/Users/ericshim/Downloads/뉴...
+[codex] Command completed: /bin/zsh -lc "pdftoppm -f 1 -l 1 -singlefile -scale-to 1100 -png '/Users/ericshim/Downloads/뉴... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba docs/reflow/DESIGN_astra.md | sed -n '271,355p'"
+[codex] Command completed: /bin/zsh -lc "nl -ba docs/reflow/DESIGN_astra.md | sed -n '271,355p'" (exit 0)
+[codex] Reasoning summary captured: **Reading section 2 PDF**
+[codex] Running command: /bin/zsh -lc "pdftoppm -f 2 -l 2 -singlefile -scale-to 1050 -png '/Users/ericshim/Downloads/뉴...
+[codex] Command completed: /bin/zsh -lc "pdftoppm -f 2 -l 2 -singlefile -scale-to 1050 -png '/Users/ericshim/Downloads/뉴... (exit 0)
+[codex] Running command: /bin/zsh -lc "pdfinfo '/Users/ericshim/Downloads/뉴진스-GODS.pdf.pdf' | head -22 nl -ba backend/...
+[codex] Command completed: /bin/zsh -lc "pdfinfo '/Users/ericshim/Downloads/뉴진스-GODS.pdf.pdf' | head -22 nl -ba backend/... (exit 0)
+[codex] Reasoning summary captured: **Planning the evaluation split**
+[codex] Assistant message captured: 다섯 영상의 원본 MP4와 관측 manifest를 모두 확인했고, 교사 PDF의 두 페이지도 파일 생성 없이 확인했습니다. `Br`은 실제로 줄 중간에 있으며, PDF...
+[codex] Reasoning summary captured: **Counting expansion slots**
+[codex] Assistant message captured: ## Preconditions **Implement conservative measure/group reflow, with intact cleaned systems a...
+[codex] Turn completed.
+## Preconditions
+
+**Implement conservative measure/group reflow, with intact cleaned systems as the fallback.** This brief is a read-only inspection of the dirty `feature/clean-reflow` worktree; no files were changed and no tests were run. Recheck cited locations after the parallel fixes land.
+
+- **Assume minority-frame preservation is fixed.** Regression: a unique dot, lyric fragment, or tie visible in only a minority of observations survives tracking and strip composition.
+- **Assume missing-uncut fail-closed behavior is fixed.** Regression: invalidating a preview-tail dependency with its uncut asset missing rejects composition and preserves the previous export.
+- Preserve video occurrence order, all score text, 1.5 mm default staff gap, centred title/right-aligned credits, bottom-left numbering from page 2, and no footer. Horizontal scrolling remains unsupported. Four measures/line and eight systems/page are preferences, never reasons to shrink or discard content. [DECISIONS.md:7–28](/Users/ericshim/Documents/myproject/score_capture_program/docs/reflow/DECISIONS.md:7)
+- Current composition consumes whole strips. Insert measure analysis **after dependency resolution and before label placement/layout**. [reflow_pipeline.py:272–307](/Users/ericshim/Documents/myproject/score_capture_program/backend/app/pipeline/reflow_pipeline.py:272)
+
+All thresholds and new contracts below are **proposals**, not demonstrated accuracy.
+
+## Disagreements/risks up front
+
+- **Measure reflow is worthwhile only if conservative coverage is useful.** Keep the existing cleaned-system layout when evidence is insufficient; this remains clean reflow, not a raw-stitch alternative.
+- **Staff-only safety analysis is insufficient.** Slurs, voltas and lyrics occupy other rows. Restrict barline/spacing evidence to staff bands, but require a separate full-height veto.
+- **Literal raster-pixel conservation conflicts with resampling, clef replication and staff-space contraction.** Define content accounting before resampling, with explicit treatment of staff scaffold and replicas below.
+- **200 candidates cannot establish rare-error safety.** Confidence depends on accepted cuts, source diversity and dependence between examples.
+- **8%/3% are conservative starting caps, not validated aesthetic optima.** Dense lyrics may make even these unusable.
+- The teacher PDF’s two pages were visually checked: eight systems/page and mid-line `Br` are real; its copyright footer is not part of the product target. The ≈1.6 mm measurement is taken from the recorded decision, not newly measured here.
+
+## Boundary classifier spec
+
+A boundary record describes an **exact proposed seam and ownership plan**, not merely a barline centre.
+
+Existing detection supplies staff coverage, stem/glyph rejection and grouped strokes; it does not certify safe separation. Reuse it as candidate generation. [system_detect.py:155–186](/Users/ericshim/Documents/myproject/score_capture_program/backend/app/pipeline/system_detect.py:155)
+
+| Class | Required interpretation |
+|---|---|
+| `UNKNOWN` — default | Missing, contradictory, clipped, low-resolution or unsupported evidence; unresolved object ownership; uncertain prefix or crossing. No cut or spacing change. |
+| `LOCKED` | Positive evidence that the proposed separation divides an indivisible object/span, or an explicit user prohibition. Preserve its internal geometry. |
+| `SAFE` | **Every** check below passes for this exact seam; no positive veto or unresolved evidence remains. |
+
+**SAFE requires:**
+
+1. Five-line geometry and a genuine complete barline group, with stem/clef rejection; location agrees within `0.25g` across ≥3 usable registered source observations. Insufficient observations remain UNKNOWN in this slice.
+2. Complete neighborhood, including original pixels under staff suppression; no unresolved overlay, clipping or unexplained tail content.
+3. Seam outside the complete stroke/dot object, with clearance `max(1 source px, 0.15g)` from protected nonstaff ink.
+4. Every nearby object has one owner; all crossing checks below complete successfully.
+5. Full-height veto and pixel-accounting checks pass. A detector score or absence of connected components alone is insufficient.
+
+Here `g` is source staff gap. Temporal agreement is a quality check, not independent semantic ground truth.
+
+| Crossing/object | Detection on cleaned strip; consequence |
+|---|---|
+| Ties/slurs | Thin curved ridges, skeleton paths and conservatively linked fragments crossing the seam; inspect original and staff-suppressed views, including above/below staff. Bridge small compression gaps only in analysis. Crossing → LOCKED; incomplete arc → UNKNOWN. |
+| Beams/tuplets | Thick horizontal/diagonal runs, stem-linked groups, brackets/numerals; inspect within and outside staff. Crossing group → LOCKED. |
+| Lyrics/text | Group baseline-aligned components with conservative horizontal dilation, initially `0.7g`; include syllables, hyphens and extenders. A word/span crossing the seam → LOCKED. Ambiguous grouping/anchor → UNKNOWN. |
+| Voltas | Long upper horizontal segment plus hook/endpoints and associated label. Lock every internal boundary of the bracket span; uncertain endpoint → UNKNOWN. |
+| Repeat/double/final bars | Group thin/thick strokes and nearby paired dots, retaining tiny components. Never cut between them. Start-repeat belongs right; end-repeat left. This slice locks repeat boundaries unless direction and complete ownership are positively verified; combined/ambiguous repeats stay intact. |
+| D.S./coda/segno/Fine | Protected symbol/text patches with geometric anchors; template/OCR hints may nominate, never prove absence. Preserve sign with its anchored measure; crossing → LOCKED, uncertain anchor → UNKNOWN. Do not expand navigation. |
+| Multi-measure rests | Long rest body, terminals and count form one indivisible unit. Internal candidates LOCKED; `measure_count=null` unless independently verified. |
+| Tempo/section labels | Preserve complete patch and anchor. Spanning tempo text locks affected measures. Section relocation is allowed only with verified ownership and the label contract below. |
+
+Never promote UNKNOWN merely to reach four measures. Uncertain segmentation retains the complete cleaned system; supported locked spans may become contiguous groups.
+
+## Masks
+
+Maintain separate, versioned masks:
+
+- **Staff-analysis mask:** five-line band and staff-relative geometry, explicitly excluding text/lyrics regions. Use for barline evidence and staff-only slack proposals.
+- **Full-strip protection mask:** union of conservative ink thresholds, small-dot retention, curve/beam fragments, text groups and unresolved pixels. Text rows may **veto** safety; they never establish a barline or usable whitespace.
+- **Ownership masks:** assign each lyric/text object to one measure using its anchor and extent. If it spans measures, anchor it once to a locked group without splitting it.
+
+If notation overlaps a presumed text row, protect the union; do not erase that row. Existing envelope components are useful seeds, but their noise filtering cannot certify absence of tiny marks. [notation_envelope.py:398–452](/Users/ericshim/Documents/myproject/score_capture_program/backend/app/pipeline/notation_envelope.py:398)
+
+## Prefix handling
+
+- Extract prefix objects separately: clef, printed meter, opening repeat and tempo. Preserve the complete original first prefix.
+- New line: reuse a **verified clef-only source patch** from compatible staff/context, with source hash, mask and placement provenance. Never synthesize or duplicate a time signature; preserve printed meter changes at their original measure.
+- Clef uncertainty, contaminated patch or unresolved context prohibits the new break.
+- **Initial-slice assumption:** preserve source-system starts as line starts when they contain printed prefixes; do not delete an existing clef to improve packing. Prefix-free systems may join only after endpoint checks.
+
+The existing clef detector is a geometric hint, not verified patch extraction. [system_detect.py:189–199](/Users/ericshim/Documents/myproject/score_capture_program/backend/app/pipeline/system_detect.py:189)
+
+## Line breaking + justification
+
+Build ordered atomic measures/locked groups. UNKNOWN cannot become an internal split. Align staff baselines and normalize isotropically to the document gap; include prefixes, label overhang and full text envelopes in feasibility.
+
+Use deterministic DP over legal contiguous ranges:
+
+```text
+N = natural line width, including required prefix
+E = min(sum(slot expansion caps), 0.08*N)
+C = min(sum(slot contraction caps), 0.03*N)
+
+justify if W in [N-C, N+E]
+otherwise allow recorded ragged line if N <= W
+otherwise reject range
+
+cost = 100*adjustment_fraction²
+     + 3*(known_measure_count-4)²
+     + 40*single-measure orphan
+     + 25*nonfinal ragged line
+```
+
+Omit the count penalty if any count is unknown. User constraints are hard; sections do not automatically force breaks. Unreachable DP states produce a conflict, never clipping or automatic shrink. This extends the existing design’s proposed DP. [DESIGN_astra.md:321–350](/Users/ericshim/Documents/myproject/score_capture_program/docs/reflow/DESIGN_astra.md:321)
+
+**Slots:** initially use inter-measure staff-only corridors, not arbitrary spaces between notes. Full-height protection must also clear each slot.
+
+- Expansion/slot ≤ `min(1.2g, 0.5 × original_width)`.
+- Contraction/slot ≤ `min(0.25 × original_width, original_width − 0.35g)`, floored at zero.
+- Distribute adjustment by bounded water-filling; glyph/text patches translate rigidly.
+- Record requested/achieved width and ragged reasons: `INSUFFICIENT_SLACK`, `LOCKED_SPAN`, `PREFIX_CONSTRAINT`, `FINAL_LINE`.
+- Paginate complete lines using actual envelopes. Eight lines/page remains soft.
+
+## Section labels
+
+Render source-image patches in small outlined boxes above the anchored section-start measure, including mid-line starts. Preserve an existing source box; otherwise add only an outline, never synthesized text.
+
+Remove relocated pixels from their old placement through ownership masks, not destructive source edits. Reserve label height/overhang before DP; collisions cause alternate breaks or conflicts. Revalidate anchors after selection/order changes, reporting sections without included owners.
+
+Current labels are system-attached, and `with_label()` places one patch above a whole strip; measure anchors and mid-line placement are new work. [reflow_labels.py:298–374](/Users/ericshim/Documents/myproject/score_capture_program/backend/app/pipeline/reflow_labels.py:298)
+
+## Locks + persistence
+
+**New lock types:**
+
+- `boundary_lock(boundary_id)`: prohibit separation and relative spacing change.
+- `keep_together(first_unit_id,last_unit_id)`: same line, preserved order.
+- `forced_line_break(boundary_id)`: require break, but never override UNKNOWN/LOCKED safety.
+
+Contradictory locks, stale IDs, oversized groups and unsafe forced breaks return structured conflicts with affected IDs and reasons. No precedence rule silently removes a user choice.
+
+Extend review-export with `base_revision`, `analysis_hash` and complete lock state. Add a read endpoint for unit geometry/evidence. Validate revision before planning and again under a per-job commit lock before installing output; stale requests return `409 REVISION_CONFLICT`. Commit units, locks, plan and exported assets together.
+
+Extend undo snapshots and persisted drafts to include locks; bind to job/revision/hash. Undo after a committed rebuild is a new revisioned operation. Reject mismatched restored drafts without deleting them silently.
+
+Existing undo covers selection/crops/order; draft persistence is revision-bound, but the request schema lacks optimistic-concurrency fields. [reviewController.js:12–32](/Users/ericshim/Documents/myproject/score_capture_program/desktop/renderer-v2/src/features/review/reviewController.js:12), [persistence.js:57–75](/Users/ericshim/Documents/myproject/score_capture_program/desktop/renderer-v2/src/app/session/persistence.js:57), [schemas.py:194–214](/Users/ericshim/Documents/myproject/score_capture_program/backend/app/schemas.py:194)
+
+## Pixel accounting
+
+Current validation counts unit IDs and placement rectangles, not pixels. [reflow_layout.py:173–200](/Users/ericshim/Documents/myproject/score_capture_program/backend/app/pipeline/reflow_layout.py:173)
+
+For each included occurrence, identify source pixels by `(occurrence_id, asset_hash, x, y)`:
+
+- Partition native-resolution pixels into disjoint half-open ownership masks.
+- For every protected content pixel `p`, require `Σ ownership_masks[p] = 1`; destination content may not be clipped, occluded or overwritten.
+- Read halos may overlap for analysis/resampling; **placement masks never overlap**. Shared barlines/dots have one owner. Padding contributes paper only.
+- Split-and-reassemble at native resolution must reproduce all protected source pixel values exactly, including antialias fringes and one-pixel dots.
+- Retain source IDs through layout; separately test final rendering against the approved single isotropic resampling.
+
+**Necessary assumption:** verified staff-only scaffold is regenerable layout material. Its retained/removed/inserted pixels receive an explicit scaffold ledger; glyphs never enter it. Otherwise contraction across continuous staves must be disabled.
+
+Original clef content is placed once; permitted reused clefs receive explicit replica IDs referencing the source. Relocated labels remain originals, not replicas. Excluded occurrences remain recorded outside the included-content denominator.
+
+## Unit JSON contract
+
+**New `reflow_units.json`, versioned and validated; required fields:**
+
+| Record | Fields |
+|---|---|
+| Root | `schema_version`, `job_id`, `revision`, `analysis_hash`, algorithm/config hashes, source/ROI/strip hashes, ordered included/excluded occurrence IDs |
+| `measure_units[]` | Stable `id`, `kind: measure|locked_group|system`, occurrence/system IDs, `measure_count:int|null`, source asset/box/mask refs, staff geometry, prefix/text/label refs |
+| `boundaries[]` | `id`, adjacent IDs, barline stroke/dot boxes, exact seam, `class`, evidence records with source observations/measurements/mask hashes, reason codes, span IDs |
+| `lines[]` | Unit IDs/order, prefix instances, page/position, natural/target/achieved widths, scale, content envelope, measure count, slot IDs |
+| `justification_slots[]` | Source interval, evidence refs, natural width, min/max delta, applied delta, scaffold operation |
+| `locks[]` | ID/type/targets, creation revision, active state |
+| `ragged_exceptions[]` | Line ID, reason, requested/achieved width, unresolved residual |
+| Audit | Ownership-map refs/hashes, replicas, accounting totals, conflicts, validation status, parent revision |
+
+Coordinates are explicitly native-strip or output-page coordinates; source boxes are half-open. Unknown counts stay null. IDs include occurrence identity, so visually identical returns remain distinct.
+
+## Files to add/change
+
+Paths below are relative to `R`; **new** names are proposals.
+
+| Files | Responsibility |
+|---|---|
+| **New** `backend/app/pipeline/reflow_boundaries.py` | Candidates, masks, crossing evidence, tri-state classification |
+| **New** `reflow_units.py`, `reflow_accounting.py` in that directory | Unit contract, ownership, prefixes, pixel ledger |
+| **New** `reflow_lines.py` | DP and bounded slots |
+| Existing `reflow_pipeline.py`, `reflow_layout.py`, `reflow_render.py`, `reflow_labels.py` | Integrate after dependency resolution; line pagination/rendering; measure labels |
+| Existing `reflow_strips.py`, `observations.py` | Expose immutable geometry/provenance as needed |
+| Existing `backend/app/{schemas,main}.py` | Revisioned API and transactional commit |
+| `desktop/renderer-v2/src/features/review/{ReviewScreen,reviewController}.js`, **new** `boundaryEditor.js` | Seam inspection, three lock actions, conflicts |
+| `src/lib/{api,i18n}.js`, `src/app/App.js`, `src/app/session/{selectors,persistence,runtimeSafety}.js` | Transport, bilingual state, undo/restoration |
+| `backend/tests/test_reflow_*.py`, `reflow_fixture.py`; renderer review tests | Crossing, accounting, locks, transaction regressions |
+| **New** `tools/reflow_boundary_review/` | Source-crop adjudicator and frozen evaluation runner |
+
+Do not replace video-order occurrences with `score_assembly` identity merging; production currently calls `reflow_occurrences.build_occurrences()`. [reflow_pipeline.py:81–95](/Users/ericshim/Documents/myproject/score_capture_program/backend/app/pipeline/reflow_pipeline.py:81)
+
+## Order of work — milestones with verify commands
+
+Commands, run from `R`:
+
+```bash
+# B
+PYTHONPATH=backend backend/.venv/bin/python -m unittest discover -s backend/tests -p 'test_*.py'
+# U
+npm --prefix desktop run verify:renderer-v2
+# D
+npm --prefix desktop run test:desktop-node
+```
+
+| Milestone | Deliverable / verification |
+|---|---|
+| 0 | Land preconditions; freeze evaluation protocol, candidates and human labels before tuning. **B** |
+| 1 | Schema, conservative classifier and ownership; native-resolution reconstruction; no new layout yet. **B** |
+| 2 | Prefixes, DP, slots, section anchors and pixel ledger; adversarial rendering fixtures. **B** |
+| 3 | Revisioned API, locks, persisted undo and conflict UI; update `docs/DESIGN.md` before UI changes. **B + U + D** |
+| 4 | Freeze implementation/config; independent held-out scoring; real-video job/review-export inspection. **B + U + D** |
+
+At milestone 3 inspect Korean/English, keyboard focus, loading/error/conflict/long-content states at **1440×960 and 1120×840**. Report packaged macOS/Windows flows separately; source tests do not prove them.
+
+## Evaluation
+
+### Adjudication protocol
+
+Verified corpus inputs exist at `C/videos/{id}.mp4` and `C/reflow/e2e/{id}/manifest.json` for all five requested IDs. Existing manifests provide source hashes, timestamps and transforms, not boundary-safety truth. [observations.py:423–462](/Users/ericshim/Documents/myproject/score_capture_program/backend/app/pipeline/observations.py:423)
+
+1. **Freeze 400 candidates, 80/video**, before classifier tuning: 48 baseline barline proposals, 16 adversarial offsets/locations near symbols, 16 seeded random x positions. Collapse repeated views of the same visual boundary.
+2. Stratify ordinary bars, dense beams, lyrics, repeats, arcs/voltas, prefixes and labels. Record absent strata; synthetic substitutes do not count as real examples.
+3. Proposed split: development `S1nlqQdnUks`, `aOED5zskhGk`; held-out `Q8XtphO6Xz0`, `01MrRtwZgoE`, `bF69tpnUk5w`. Check shared templates before freezing and group them where necessary. Existing project exposure makes this a prospective tuning holdout, not proof of unseen-style generalization.
+4. Freeze manifest with source/frame hashes, actual PTS, crop coordinates, exact seam/ownership proposal, sampling seed, split and protocol version. Candidate freeze first; human-label freeze second; **both before tuning**.
+5. One-person tool: source-frame crop showing adjacent measures and full vertical content; toggle seam overlay, inspect two neighboring clean frames, zoom/full-frame. Keys **S/U/?** for SAFE/UNSAFE/UNSURE, back/undo, automatic resume. Hide algorithm verdict and candidate origin; do not show reflow output as grading evidence.
+6. User supplies every final verdict. UNSURE remains explicit: exclude from adjudicable coverage, report its rate, and require abstention in this pilot; an accepted UNSURE cannot count as verified safe.
+7. A separate model may nominate hard cases, useful frames and suspected spans. Hide its provisional verdict until the human’s first response; it reduces navigation effort, never replaces human labels.
+8. User retains held-out labels. Opus submits frozen predictions/config hashes; the user runs the fixed scorer. Failed holdout tuning requires a fresh test tranche, not reuse as an untouched test.
+
+No correction-time or manual-entry timing studies.
+
+### Metrics, negative controls and gates
+
+Report unsafe accepted cuts/accepted cuts; safe-cut coverage over **all human-SAFE candidates**, including missed proposals; UNKNOWN/UNSURE rates; content loss/duplication; justification residuals; per-slot deltas; measure-per-line distribution, including unknown counts; per-video results.
+
+Inject cuts through **a tie, lyrics and a repeat sign**, including broken/blurred strokes and one-pixel dots. All must be rejected; add positive safe controls to expose an always-UNKNOWN classifier.
+
+| Gate | Acceptance threshold |
+|---|---|
+| Safety | **0 human-UNSAFE accepted cuts**, 0 accepted UNSURE, 100% rejection of injected negatives; ≥100 human-verified accepted held-out cuts, otherwise insufficient evidence |
+| Usefulness | ≥60% safe-cut coverage overall and ≥40% per held-out video; frozen denominators, no post-hoc removal of hard cases |
+| Accounting | 0 lost, duplicated, clipped or occluded protected pixels; exact native reconstruction; 100% replica/scaffold operations logged |
+| Layout | 0 lock violations/overflows; ≤8% expansion, ≤3% contraction; 100% slot-cap compliance; justified-edge residual ≤1 output px; every ragged line recorded |
+| Persistence | 100% pass of stale-revision, conflicting-lock, undo/redo, restart and failed-commit preservation scenarios |
+
+For zero errors in `n` accepted independent cuts, the one-sided 95% upper bound is `1−0.05^(1/n)`: approximately **2.95% at 100**, **1.49% at 200**. Correlated cuts and five videos weaken population claims; do not present this bound as a deployment guarantee.
+
+## Open questions for the user
+
+Nonblocking assumptions for implementation:
+
+- Staff-only scaffold regeneration and explicitly logged source-clef replicas are acceptable exceptions to literal raster conservation; otherwise disable affected justification/new breaks.
+- Preserve printed source prefixes and their line starts initially, accepting reduced packing freedom.
+- Treat 60% safe-cut coverage as the initial usefulness gate. If safety passes but coverage fails, retain system-level clean reflow and reassess scope rather than weakening rejection rules.
+
