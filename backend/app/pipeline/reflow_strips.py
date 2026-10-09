@@ -1003,6 +1003,130 @@ def _member_grays(members: Optional[Sequence[np.ndarray]], shape: Tuple[int, int
     return out
 
 
+# bF69 raw members: the rim's soft interior has median gray ~180 and
+# 3x3 range ~7 (white staff/notes ~245-255, edge range ~239). Candidate
+# maxima measured across all 27 systems stay <=222. Keep >=225 plus a
+# 2-px halo in EVERY member, including rejected/alternate members. The
+# 70 floor limits cleanup to visible gray footage; <=32 is soft texture.
+DARK_BG_NOTATION_MIN = 225
+DARK_BG_VISIBLE_MIN = 70
+DARK_BG_SOFT_RANGE_MAX = 32
+DARK_BG_LEVEL_TOL = 25
+DARK_BG_MEMBER_SHARE = 0.6
+DARK_BG_SYSTEM_SHARE = 0.7
+DARK_BG_MIN_SYSTEMS = 3
+DARK_BG_PROTECT_PX = 2
+DARK_BG_CONTEXT_GAPS = 6.0
+DARK_BG_DIFFERENT_PX = 16
+
+
+def job_dark_background(occurrences: Dict[str, Any], manifest: Dict[str, Any],
+                        load_image: ImageLoader, *,
+                        checkpoint: Callable[[], None] = lambda: None) -> Optional[Dict[str, Any]]:
+    """Independent stationary video-layer evidence, computed before strip threads.
+
+    Occurrence roots vote once (alternates cannot manufacture independence).
+    All raw members, not only composition samples, veto near-white pixels and
+    their antialiasing halo. A stationary, soft gray group also needs three
+    different local notation patterns in its six-gap context. Recurrence alone
+    never authorizes removal. Unknown/mismatched evidence keeps the pixels.
+    """
+    classification = manifest.get("source_class") or {}
+    if isinstance(classification, dict) and classification.get("class") == "opaque_light_paper":
+        return None
+    obs_by = {o["id"]: o for o in manifest.get("observations", [])}
+    # Observations record the actual polarity, avoiding image reads for light jobs.
+    if not any(o.get("inverted") for o in obs_by.values()):
+        return None
+    roots: Dict[str, Dict[str, Any]] = {}
+    for system in occurrences.get("systems", []):
+        root = system.get("occurrence_root") or system.get("alternate_of") or system["id"]
+        entry = roots.setdefault(root, {"ids": set(), "gaps": []})
+        for member in system.get("ledger_observations") or system.get("observations", []):
+            oid = member["obs_id"]
+            obs = obs_by.get(oid)
+            if obs is None or not obs.get("inverted"):
+                continue
+            entry["ids"].add(oid)
+            entry["gaps"].extend(float(r["staff_gap_px"]) for r in obs.get("system_regions", [])
+                                 if r.get("staff_gap_px", 0) > 0)
+    if len(roots) < DARK_BG_MIN_SYSTEMS:
+        return None
+    medians, persistent, soft_ranges, notation = [], [], [], []
+    maximum = None
+    shape = None
+    gaps = []
+    checked_members = 0
+    for root, entry in roots.items():
+        checkpoint()
+        if not entry["ids"]:
+            return None
+        grays = []
+        for oid in sorted(entry["ids"]):
+            checkpoint()
+            raw = load_image(obs_by[oid])
+            gray = cv2.cvtColor(raw, cv2.COLOR_BGR2GRAY) if raw.ndim == 3 else raw
+            if shape is None:
+                shape = gray.shape
+                maximum = np.zeros(shape, np.uint8)
+            if gray.shape != shape:
+                return None
+            maximum = np.maximum(maximum, gray)
+            grays.append(gray)
+        stack = np.stack(grays)
+        median = np.median(stack, axis=0).astype(np.uint8)
+        steady = (np.abs(stack.astype(np.int16) - median.astype(np.int16)) <= DARK_BG_LEVEL_TOL).mean(axis=0)
+        medians.append(median)
+        persistent.append(steady >= DARK_BG_MEMBER_SHARE)
+        kernel = np.ones((3, 3), np.uint8)
+        soft_ranges.append(cv2.dilate(median, kernel) - cv2.erode(median, kernel))
+        notation.append(median >= DARK_BG_NOTATION_MIN)
+        gaps.extend(entry["gaps"])
+        checked_members += len(grays)
+        del stack, grays
+    medians = np.stack(medians)
+    level = np.median(medians, axis=0)
+    votes = ((np.abs(medians.astype(np.int16) - level) <= DARK_BG_LEVEL_TOL)
+             & (medians >= DARK_BG_VISIBLE_MIN) & np.stack(persistent)).sum(axis=0)
+    needed = max(DARK_BG_MIN_SYSTEMS, int(np.ceil(DARK_BG_SYSTEM_SHARE * len(roots))))
+    halo = 2 * DARK_BG_PROTECT_PX + 1
+    protected = cv2.dilate((maximum >= DARK_BG_NOTATION_MIN).astype(np.uint8),
+                           np.ones((halo, halo), np.uint8)) > 0
+    stationary = (votes >= needed) & (level >= DARK_BG_VISIBLE_MIN) & ~protected
+    soft = np.median(np.stack(soft_ranges), axis=0) <= DARK_BG_SOFT_RANGE_MAX
+    mask = stationary & (cv2.dilate((stationary & soft).astype(np.uint8),
+                                    np.ones((halo, halo), np.uint8)) > 0)
+    # A local notation change is evidence of independent layers. Compare actual
+    # binary strokes, never episode count/timestamps or brightness totals alone.
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(mask.astype(np.uint8), connectivity=8)
+    radius = max(1, int(round(DARK_BG_CONTEXT_GAPS * (float(np.median(gaps)) if gaps else _DEFAULT_GAP))))
+    accepted = np.zeros(n, bool)
+    for label in range(1, n):
+        x, y, w, h, area = map(int, stats[label])
+        x0, x1 = max(0, x - radius), min(shape[1], x + w + radius)
+        y0, y1 = max(0, y - radius), min(shape[0], y + h + radius)
+        patterns = []
+        for idx, ink in enumerate(notation):
+            if not np.any((labels[y:y+h, x:x+w] == label) & persistent[idx][y:y+h, x:x+w]):
+                continue
+            local = ink[y0:y1, x0:x1]
+            if all(np.count_nonzero(local ^ other) >= DARK_BG_DIFFERENT_PX for other in patterns):
+                patterns.append(local)
+            if len(patterns) >= DARK_BG_MIN_SYSTEMS:
+                accepted[label] = True
+                break
+    mask &= accepted[labels]
+    mask.flags.writeable = False
+    return {"mask": mask, "info": {"kind": "stationary_soft_video_layer", "systems": len(roots),
+            "members": checked_members, "required_systems": needed, "candidate_px": int(mask.sum()),
+            "max_member_brightness": int(maximum[mask].max()) if mask.any() else None,
+            "notation_min": DARK_BG_NOTATION_MIN, "visible_min": DARK_BG_VISIBLE_MIN,
+            "level_tolerance": DARK_BG_LEVEL_TOL, "soft_range_max": DARK_BG_SOFT_RANGE_MAX,
+            "member_share": DARK_BG_MEMBER_SHARE, "system_share": DARK_BG_SYSTEM_SHARE,
+            "protect_px": DARK_BG_PROTECT_PX, "context_px": radius,
+            "different_notation_px": DARK_BG_DIFFERENT_PX}}
+
+
 def dark_theme_cleanup(norm: np.ndarray, *, members: Optional[Sequence[np.ndarray]] = None, gap: Optional[float] = None,
                        inverted: bool = True, force_opaque: bool = False) -> Tuple[np.ndarray, Dict[str, Any]]:
     """Cleanup of an inverted dark theme (``norm``: dark ink on light paper). Returns (image, info).
@@ -1242,17 +1366,28 @@ COLORED_EXPLAINS_GAPS = 0.5  # colored ink explains neutral ink this close to it
 
 def finish_strip(comp: np.ndarray, *, members: Optional[Sequence[np.ndarray]] = None,
                  gap: Optional[float] = None,
-                 staff: Optional[Tuple[Sequence[float], int, int]] = None) -> Tuple[np.ndarray, bool, bool, Dict[str, Any]]:
+                 staff: Optional[Tuple[Sequence[float], int, int]] = None,
+                 dark_background: Optional[Dict[str, Any]] = None) -> Tuple[np.ndarray, bool, bool, Dict[str, Any]]:
     """Polarity-normalized, dark-theme-cleaned (``dark_theme_cleanup``), paper-flattened strip
     of a composite, with the component survival check after finishing (``finishing_survival``).
     ``members``: the composite's member crops (same box), the persistence evidence of the dark
     theme cleanup. ``staff``: (staff_y, x0, x1) of the row in composite pixels - when the dark
     theme cleanup of a translucent plate would erase the staff itself (notation lighter than the
     video cutoff: a dimmed or fading display), its lighter content is kept as on opaque paper and
-    flagged instead. Returns (image, inverted, paper flattened, info); info ``issues`` lists
+    flagged instead. ``dark_background`` replaces independently witnessed footage only after
+    cleanup and paper flattening, with no changes outside its mask.
+    Returns (image, inverted, paper flattened, info); info ``issues`` lists
     ``LOW_CONTRAST_CONTENT_KEPT`` / ``CONTENT_LOST_IN_FINISHING``."""
     norm, inv = sd.normalize_polarity(comp)
     info: Dict[str, Any] = {"issues": []}
+    # Compute the composite veto before cleanup can erase or soften restored ink.
+    remove = None
+    if inv and dark_background is not None and dark_background["mask"].shape == norm.shape[:2]:
+        gray = cv2.cvtColor(norm, cv2.COLOR_BGR2GRAY)
+        halo = 2 * DARK_BG_PROTECT_PX + 1
+        protected = cv2.dilate((gray <= 255 - DARK_BG_NOTATION_MIN).astype(np.uint8),
+                               np.ones((halo, halo), np.uint8)) > 0
+        remove = dark_background["mask"] & ~protected
     staff_drawn = staff is not None and staff_survives(norm, *staff)
     if inv:
         cleaned, dinfo = dark_theme_cleanup(norm, members=members, gap=gap)
@@ -1274,6 +1409,18 @@ def finish_strip(comp: np.ndarray, *, members: Optional[Sequence[np.ndarray]] = 
         notation = gray < min(DARK_INK_MAX, float(np.percentile(gray, 75)) - FAINT_PAPER_DROP)
     flat = flatten_paper_background(norm)
     out = flat if flat is not None else norm
+    if remove is not None and remove.any():
+        # Run ALL existing cleanup/flattening on the original pixels first: an
+        # early replacement changes neighbouring component and paper decisions.
+        # The only changed output pixels must be inside the independent mask.
+        paper = int(round(float(np.percentile(cv2.cvtColor(out, cv2.COLOR_BGR2GRAY), 75))))
+        changed = remove & np.any(out != paper, axis=2)
+        out = out.copy()
+        out[remove] = paper
+        # Independently witnessed footage is not a notation survival obligation.
+        notation = notation & ~remove
+        info["dark_cleanup"]["static_background"] = dict(
+            dark_background["info"], removed_px=int(changed.sum()), paper=paper)
     surv = finishing_survival(norm, out, notation)
     if staff_drawn:
         surv["staff"] = staff_survives(out, *staff)
@@ -2119,7 +2266,8 @@ def build_strip(system: Dict[str, Any], manifest: Dict[str, Any], load_image: Im
                 chrome: Any = None, chrome_appearance: Optional[np.ndarray] = None,
                 evidence_dir: Optional[Path] = None, ledger: bool = False,
                 frame_foreground: Optional[Dict[str, np.ndarray]] = None,
-                evidence_lock: Any = None) -> Tuple[np.ndarray, Dict[str, Any]]:
+                evidence_lock: Any = None,
+                dark_background: Optional[Dict[str, Any]] = None) -> Tuple[np.ndarray, Dict[str, Any]]:
     """Cleaned strip image (BGR, dark on light) and its provenance record.
 
     ``chrome``: the job's screen-fixed chrome mask in crop coordinates (``job_screen_chrome``);
@@ -2353,7 +2501,12 @@ def build_strip(system: Dict[str, Any], manifest: Dict[str, Any], load_image: Im
 
     staff_c = ([float(y) - comp_box[1] for y in ref_region["staff_y"]],
                int(ref_region["staff_x"][0]) - comp_box[0], min(comp_box[2], int(ref_region["staff_x"][1])) - comp_box[0])
-    full_strip, inv2, flattened, finish_info = finish_strip(comp, members=crops, gap=g, staff=staff_c)
+    background_box = None
+    if dark_background is not None and dark_background["mask"].shape == (h, w):
+        background_box = {"mask": dark_background["mask"][comp_box[1]:comp_box[3], comp_box[0]:comp_box[2]],
+                          "info": dark_background["info"]}
+    full_strip, inv2, flattened, finish_info = finish_strip(comp, members=crops, gap=g, staff=staff_c,
+                                                         dark_background=background_box)
     _finishing_boxes_to_crop(finish_info, comp_box)
     inverted = inverted or inv2
     keep_rows = (max(0, env[1] - box[1]), max(0, min(box[3], env[3]) - box[1]))
@@ -2604,6 +2757,7 @@ def build_strips(occurrences: Dict[str, Any], manifest: Dict[str, Any], load_ima
     if chrome is not None:
         logger(f"strips: screen-fixed chrome {chrome_info.get('chrome_px')} px in {chrome_info.get('box')} "
                f"({chrome_info.get('displays')} distinct displays sampled)")
+    dark_background = job_dark_background(occurrences, manifest, load_image, checkpoint=checkpoint)
     workers = _strip_threads()
     foreground = _SystemWindowCache()
     # Keep members shared with adjacent systems even if the loader LRU evicts
@@ -2629,7 +2783,7 @@ def build_strips(occurrences: Dict[str, Any], manifest: Dict[str, Any], load_ima
                            chrome=chrome if chrome is not None else False,
                            chrome_appearance=chrome_info.get("_appearance"), ledger=ledger,
                            evidence_dir=out_dir.parent / "ledger_evidence" if ledger else None,
-                           evidence_lock=evidence_lock)
+                           evidence_lock=evidence_lock, dark_background=dark_background)
 
     executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="strips") if workers > 1 and systems else None
     pending = {}
