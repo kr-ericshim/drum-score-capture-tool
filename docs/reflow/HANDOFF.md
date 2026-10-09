@@ -11,7 +11,12 @@ State of the clean-reflow work for a new session. Read this first, then [DECISIO
 - Codex adversarial review: threading clean; replay findings (simultaneous rows, labels, alternates, small dots, lazy loading) fixed in the second round; the 1,000-strip memory case judged moot (strips are decoded lazily now).
 - Merged tree: full suite 1287 OK (12 skipped). Final HTTP check after merge: aOED 2 pages (8 collapsed), Q8 4 pages (none collapsed), unchanged otherwise.
 
-**Next:** overlay remnants + packing (_7gP squeezed unit, Z4eb short lines, bF69 smudges), then re-run the 12-video dashboard on one manifest and recount (clean / usable).
+**Later the same night (overlays + short lines):**
+- **bF69 gray smear** above every line = static drum-rim footage behind a white score on live video (source class says `opaque_dark_paper`). `reflow_strips.job_dark_background` (dark jobs only, computed once before the strip threads): pixels steady in ≥ 70 % of independent systems, soft texture, gray < 225 with a 2-px guard around near-white notation, and ≥ 3 different nearby notation patterns → replaced by paper AFTER cleaning, nothing outside the mask changes. ~1,675 px per strip removed; a thin dash and a few dots remain (tolerated). Light-paper videos byte-identical (S1, 01Mr, aOED, Q8). bF69 cleaning 92 → 101 s.
+- **Z4eb one-bar line**: seams vetoed by `CONTENT_AT_STRIP_EDGE` where the VIDEO FRAME itself cuts the bass-drum beams (ROI bottom = frame bottom). `reflow_boundaries` now skips that veto for a strip edge that maps to the source frame edge (±0.5 px; evidence `edge_veto_skipped`); `reflow_boundaries-4`. Z4eb 23 → 22 lines, short lines 2 → 0; _7gP and aOED one boundary each SAFE, no line change; bF69, Q8 unchanged.
+- Full suite 1314 OK (12 skipped). Not done: _7gP squeezed unit (locked by a time signature / hairpin; deliberately left), Z4eb faded "#75 鼓组" label and blue cursor dash, SZwT blue icons (cosmetic). bF69 tracking stage is 180 s of its 389 s job — next speed target.
+
+**Next:** re-run the 12-video dashboard on one manifest and recount (clean / usable); then bF69 tracking speed.
 
 ## Start here (2026-10-09 evening, after Pro checkpoint #4) — superseded
 
