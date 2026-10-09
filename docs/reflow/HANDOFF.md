@@ -16,7 +16,12 @@ State of the clean-reflow work for a new session. Read this first, then [DECISIO
 - **Z4eb one-bar line**: seams vetoed by `CONTENT_AT_STRIP_EDGE` where the VIDEO FRAME itself cuts the bass-drum beams (ROI bottom = frame bottom). `reflow_boundaries` now skips that veto for a strip edge that maps to the source frame edge (±0.5 px; evidence `edge_veto_skipped`); `reflow_boundaries-4`. Z4eb 23 → 22 lines, short lines 2 → 0; _7gP and aOED one boundary each SAFE, no line change; bF69, Q8 unchanged.
 - Full suite 1314 OK (12 skipped). Not done: _7gP squeezed unit (locked by a time signature / hairpin; deliberately left), Z4eb faded "#75 鼓组" label and blue cursor dash, SZwT blue icons (cosmetic). bF69 tracking stage is 180 s of its 389 s job — next speed target.
 
-**Next:** re-run the 12-video dashboard on one manifest and recount (clean / usable); then bF69 tracking speed.
+**12-video dashboard (2026-10-10, AC power, one code manifest): `eval_v1/step2d2_dashboard`.**
+- Visual count (all pages viewed): **clean 8/12** (S1, 01Mr, aOED, Q8, w7mK, Fzc, SZwT with tiny blue icons, SHvfn with small "↵" icons); **usable with flaws 3** (bF69: faint dashes above lines + black blob at Bridge 1 + a "42" preview fragment; Z4eb: one 3-bar line on p1, faded "#75 鼓组" label, blue dash; _7gP: squeezed/ragged lines); **unsupported 1** (GTOc). Pro's holdout-entry target (≥ 8 clean / ≥ 9 usable) is met on this set.
+- Job times (s, old = 10-09 morning dashboard): S1 73 (125), aOED 90 (152), Q8 496 (839), 01Mr 169 (342), bF69 401 (1110), _7gP 322 (506), w7mK 170 (319), SZwT 115 (251), Fzc 131, SHvfn 111 (148), Z4eb 134 (153). Peak RSS 1.9–4.0 GB.
+- The strict dashboard `usable` column stays 0/12 (diagnostic only).
+
+**Next:** Pro checkpoint before freezing and opening the holdouts (STRATEGY Step 2D items 4–5: jump-view diagnosis, freeze). Speed candidates: tracking stage (bF69 180 s, Q8 ~280 s).
 
 ## Start here (2026-10-09 evening, after Pro checkpoint #4) — superseded
 
