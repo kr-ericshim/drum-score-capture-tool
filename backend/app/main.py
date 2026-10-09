@@ -932,8 +932,14 @@ def get_review_hypotheses(job_id: str, offset: int = 0, limit: int = 100) -> Job
         limit = min(500, max(1, limit))
         if not path.is_file() or not (export/"ledger_report.json").is_file():
             return JobReviewHypothesesResponse(job_id=job_id, offset=0, limit=limit)
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        hypotheses = payload.get("hypotheses", [])
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            hypotheses = payload.get("hypotheses", []) if isinstance(payload, dict) else None
+        except (OSError, ValueError):
+            hypotheses = None
+        if not isinstance(hypotheses, list):
+            # a damaged review file must not turn the finished export into an error
+            return JobReviewHypothesesResponse(job_id=job_id, offset=0, limit=limit)
         offset = min(len(hypotheses), max(0, offset))
         entries = []
         for entry in hypotheses[offset:offset+limit]:

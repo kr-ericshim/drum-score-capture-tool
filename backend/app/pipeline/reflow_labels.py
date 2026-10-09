@@ -200,10 +200,6 @@ def suggest_label_region(samples: Sequence[Tuple[float, np.ndarray, np.ndarray]]
         tr["bg_spread"] = float(np.median([p[0] for p in tr["plain"]]))
         tr["stroke_spread"] = float(np.median([p[1] for p in tr["plain"]]))
     labels = [tr for tr in tracks if tr["held_texts"] >= 2 and tr["steady"] and tr["bg_spread"] <= MAX_BG_SPREAD]
-    import os
-    if os.environ.get("LABELS_DEBUG"):
-        for tr in sorted(tracks, key=lambda x: -len(x["seen"]))[:10]:
-            print("track", tr["union"], len(tr["seen"]), tr["held_texts"], tr["changes"], tr["steady"], round(tr["bg_spread"]), round(tr["stroke_spread"]))
     if not labels:
         return {"status": "not_found", "reason": "no_changing_text_outside_the_score_region",
                 "static_text_places": len(tracks)}
@@ -329,6 +325,8 @@ def acquire_labels(
     crops: Dict[float, np.ndarray] = {}
     for target, _pts, frame in ob.iter_frames_at(Path(video_path), times):
         region = frame[max(0, ly0):ly1, max(0, lx0):lx1]
+        if region.size == 0:
+            continue  # label region empty or outside the frame: no patch
         if scale < 1.0:
             region = ob.scale_crop(region, ob.scaled_size((region.shape[1], region.shape[0]), scale))
         crops[round(target, 6)] = region.copy()

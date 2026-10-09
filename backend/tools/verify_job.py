@@ -31,7 +31,7 @@ def read(path):
 
 
 def verify_job(path: Path, *, artifacts: Path | None = None, output: Path | None = None) -> dict:
-    output = output or Path(tempfile.mkdtemp(prefix="verify-job-", dir="/tmp"))
+    output = output or Path(tempfile.mkdtemp(prefix="verify-job-"))
     path = path.resolve()
     output = output.resolve()
     artifact = (artifacts or (path if (path/"sink.json").is_file() else path/"export")).resolve()

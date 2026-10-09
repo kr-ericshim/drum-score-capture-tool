@@ -86,6 +86,8 @@ class ExportTask:
 
     @classmethod
     def from_record(cls, payload: Dict[str, Any]) -> "ExportTask":
+        if not isinstance(payload, dict):
+            raise ValueError("export task record is not an object")
         known = {k: payload[k] for k in cls.__dataclass_fields__ if k in payload}
         known.setdefault("id", payload.get("task_id") or "")
         return cls(**known)

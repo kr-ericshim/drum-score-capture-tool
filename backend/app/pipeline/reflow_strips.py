@@ -1544,8 +1544,7 @@ def check_minority_content(system: Dict[str, Any], comp: np.ndarray, box: Sequen
                 u, (dx, _dy) = mc.unexplained(neutral, ref_ink, cols, gap, reference_dilated=ref_d)
         if u.any():
             # the member's own 2-D overlay mask (bands as their rows, boxes as boxes, gray playheads;
-            # chrome left out) explains the pixels it covers
-            ov = _overlay_mask2d_of(crop, gap, (m["obs_id"], tuple(int(v) for v in box)), memo, chrome)
+            # chrome left out; computed above) explains the pixels it covers
             if ov.any():
                 if dx or _dy:
                     ov = mc._shift(ov, dx, _dy)
@@ -1553,8 +1552,7 @@ def check_minority_content(system: Dict[str, Any], comp: np.ndarray, box: Sequen
         # A one-pixel stroke beside a staff line is not explained by the staff's
         # proximity. Compare raw, normalized pixels after a registration check;
         # do not run this evidence through clean_content or a dilated staff mask.
-        norm, _ = sd.normalize_polarity(crop)
-        gray = cv2.cvtColor(norm, cv2.COLOR_BGR2GRAY).astype(np.int16)
+        gray = raw_grays[i].astype(np.int16)  # normalized gray of this crop, computed above
         # Opaque paper also carries gray notation. A fixed black-ink cutoff
         # cannot silently dismiss a credible gray minority stroke there.
         ceiling = levels[i] - FAINT_PAPER_DROP

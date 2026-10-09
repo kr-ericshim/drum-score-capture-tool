@@ -1,6 +1,6 @@
 """Staff, barline and system-region detection for captured drum scores.
 
-Port of the corpus detector ``~/Documents/drum-score-corpus/tools/measure_detect.py``
+Port of the corpus detector ``tools/measure_detect.py`` (drum-score corpus)
 (the "hardened" detector that reproduces the corpus golden set, 67 captures /
 367 barlines). The staff and barline primitives keep that file's behavior; the
 source line ranges are cited on each function. ``system_regions`` is new: it

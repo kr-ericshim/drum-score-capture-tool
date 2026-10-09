@@ -931,17 +931,35 @@ def _layout_at(intervals: List[Dict[str, Any]], t: float) -> str:
     return "unknown"
 
 
-def manifest_image_loader(manifest_dir: Path, manifest: Dict[str, Any]) -> ImageLoader:
+LOADER_CACHE_BYTES = 768 * 1024 * 1024
+
+
+def manifest_image_loader(manifest_dir: Path, manifest: Dict[str, Any],
+                          max_bytes: int = LOADER_CACHE_BYTES) -> ImageLoader:
+    """Decoded observation crops, least recently used first out, within a byte budget.
+
+    Strip cleaning walks all members of a system several times in order; a budget
+    that holds a whole system decodes each stored frame once instead of every pass.
+    """
+    from collections import OrderedDict
+
     from app.pipeline.observations import load_observation_image
 
-    cache: Dict[str, np.ndarray] = {}
+    cache: "OrderedDict[str, np.ndarray]" = OrderedDict()
+    held = [0]
 
     def load(obs: Dict[str, Any]) -> np.ndarray:
         oid = obs["id"]
-        if oid not in cache:
-            if len(cache) > 64:
-                cache.pop(next(iter(cache)))
-            cache[oid] = load_observation_image(manifest_dir, obs, manifest)
-        return cache[oid]
+        img = cache.get(oid)
+        if img is not None:
+            cache.move_to_end(oid)
+            return img
+        img = load_observation_image(manifest_dir, obs, manifest)
+        cache[oid] = img
+        held[0] += int(img.nbytes)
+        while held[0] > max_bytes and len(cache) > 1:
+            _old, dropped = cache.popitem(last=False)
+            held[0] -= int(dropped.nbytes)
+        return img
 
     return load
