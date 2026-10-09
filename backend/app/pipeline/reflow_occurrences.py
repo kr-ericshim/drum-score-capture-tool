@@ -1,11 +1,15 @@
 """System occurrences in display order (clean reflow, output model ``clean_reflow_v1``).
 
 Decision record: docs/reflow/DECISIONS.md. The output order is the order the
-video shows the systems. When the video goes back to an earlier system (a
-repeat, D.S.), that system is placed again. Systems whose whole cleaned display
-matches an earlier one are only offered as a "looks similar" note (computed
-after the job is done, ``suggest_similar_strips``), never applied and never
-blocking export. The nonlocal identity gates of score_assembly.py are
+video shows the systems. An established replay (repeat, D.S.) of at least three
+consecutive whole cleaned displays matching one unique earlier consecutive
+block is left unchecked by default only when each line is distinctive, the
+blocks were displayed at separate times, and no acquired replay label is lost.
+Its strips and minority alternates are kept for review
+(``collapse_replay_blocks``). Single, two-line, ambiguous and out-of-order
+matches stay placed. Other appearance matches are offered as a "looks similar"
+note after the job (``suggest_similar_strips``), never blocking export.
+The nonlocal identity gates of score_assembly.py are
 not used on this path (that module stays for evaluation and later phases).
 
 Input: an observation manifest (observations.py) and its display episodes
@@ -47,6 +51,7 @@ Input: an observation manifest (observations.py) and its display episodes
 from __future__ import annotations
 
 from pathlib import Path
+import time
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -1444,6 +1449,135 @@ def _same_whole_display(a: np.ndarray, b: np.ndarray, gap: float, *, ink_thresho
                      "largest_piece_px": max(big) if big else 0, "shift": [round(float(dx), 2), round(float(dy), 2)],
                      "only_a_px": int((only_a.astype(bool) & in_big).sum()), "only_b_px": int((only_b.astype(bool) & in_big).sum()),
                      "residue_share": round(float(sum(big)) / ink_px, 4)}
+
+
+def collapse_replay_blocks(
+    systems: List[Dict[str, Any]],
+    strip_of: Dict[str, str],
+    *,
+    logger: Callable[[str], None],
+    min_block: int = 3,
+    budget_pairs: int = 4000,
+    label_by: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    """Find maximal, distinctive temporal replay blocks in the placed order.
+
+    Each replay line must match exactly one earlier included page system; its
+    counterpart must match no other line in either block. Same-view rows and
+    overlapping display intervals cannot establish a replay. A label acquired
+    outside the strip keeps the replay block for review. Jump views, excluded
+    systems, alternates and missing strips break runs. The input is not mutated.
+    A budget stop discards the current candidate until its maximal length and
+    all distinctiveness checks have been established. Strips decode on demand.
+    """
+    if min_block < 3:
+        raise ValueError("min_block must be at least three")
+    started = time.perf_counter()
+    label_by = label_by or {}
+    eligible = {i for i, s in enumerate(systems)
+                if s.get("included", True) and not s.get("alternate_of")
+                and s.get("layout") != "jump_view"}
+    # Use the same first-row-anchored clustering as suggest_similar_strips,
+    # including other rows in the input so page-view identity stays consistent.
+    view_of: Dict[int, int] = {}
+    first_t: Optional[float] = None
+    view = -1
+    for i in sorted(range(len(systems)), key=lambda i: (
+            systems[i]["order_t"], systems[i].get("staff_top_y_crop", 0))):
+        t = float(systems[i]["order_t"])
+        if first_t is None or abs(t - first_t) > VIEW_CLUSTER_SEC:
+            view += 1
+            first_t = t
+        view_of[i] = view
+    imgs: Dict[int, Optional[np.ndarray]] = {}
+    cache: Dict[Tuple[int, int], bool] = {}
+    pairs = 0
+    out: List[Dict[str, Any]] = []
+
+    class BudgetExhausted(Exception):
+        pass
+
+    def image(i: int) -> Optional[np.ndarray]:
+        if i not in imgs:
+            path = strip_of.get(systems[i]["id"])
+            imgs[i] = cv2.imread(str(path)) if path else None
+        return imgs[i]
+
+    def match(i: int, j: int) -> bool:
+        nonlocal pairs
+        i, j = sorted((i, j))
+        if i not in eligible or j not in eligible:
+            return False
+        key = (i, j)
+        if key not in cache:
+            if pairs >= budget_pairs:
+                raise BudgetExhausted
+            a, b = image(i), image(j)
+            if a is None or b is None:
+                cache[key] = False
+            else:
+                pairs += 1
+                gap = float(systems[i].get("staff_gap_px") or 12.0)
+                cache[key] = _same_whole_display(
+                    a, b, gap, min_area_px=4, min_area_gaps=0.04)[0]
+        return cache[key]
+
+    def distinctive(i: int, j: int, length: int) -> bool:
+        a_block = range(i, i + length)
+        b_block = range(j, j + length)
+        for a, b in zip(a_block, b_block):
+            # Include ALL earlier eligible lines, even rows in the same view
+            # and lines returned by an earlier block in this invocation.
+            if any(p != a and match(p, b) for p in range(b)):
+                return False
+            # Also check future lines within both blocks: image matching is
+            # tolerant and cannot be assumed to be transitive.
+            if any(p not in (a, b) and match(a, p)
+                   for p in (*a_block, *b_block)):
+                return False
+        return True
+
+    blocks = 0
+    j = 0
+    try:
+        while j + min_block <= len(systems):
+            if j not in eligible:
+                j += 1
+                continue
+            candidates = []
+            for i in range(j):
+                length = 0
+                while i + length < j and j + length < len(systems):
+                    a, b = i + length, j + length
+                    if view_of[a] == view_of[b] or not match(a, b):
+                        break
+                    length += 1
+                if length >= min_block:
+                    candidates.append((i, length))
+            longest = max((length for _i, length in candidates), default=0)
+            starts = [i for i, length in candidates if length == longest]
+            if len(starts) != 1:
+                j += 1
+                continue
+            i = starts[0]
+            a_end = systems[i + longest - 1].get("t_end")
+            b_start = systems[j].get("t_start")
+            if (a_end is None or b_start is None or not float(b_start) >= float(a_end)
+                    or any(systems[b]["id"] in label_by for b in range(j, j + longest))
+                    or not distinctive(i, j, longest)):
+                j += 1
+                continue
+            block = [systems[j]["id"], systems[j + longest - 1]["id"]]
+            block_of = [systems[i]["id"], systems[i + longest - 1]["id"]]
+            out.extend({"system_id": systems[j + t]["id"], "replay_of": systems[i + t]["id"],
+                        "block": list(block), "block_of": list(block_of)} for t in range(longest))
+            blocks += 1
+            j += longest  # one replay system belongs to at most one block
+    except BudgetExhausted:
+        logger("replay collapse: comparison budget exhausted; keeping only fully established blocks")
+    logger(f"replay collapse: {blocks} blocks, {len(out)} systems "
+           f"({pairs} comparisons, {time.perf_counter() - started:.3f}s)")
+    return out
 
 
 def suggest_similar_strips(

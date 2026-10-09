@@ -1870,6 +1870,7 @@ REFLOW_ISSUE_REASONS = (
     ("LAYOUT_CONFLICT", "페이지보다 커서 지금 크기로는 배치할 수 없습니다 / Does not fit the page at this staff size"),
     ("PREVIEW_TAIL_UNVERIFIED", "오른쪽 끝에 다음 줄의 시작이 함께 보일 수 있습니다 / The right end may also show the start of the next line"),
     ("SHORT_DISPLAY", "짧게 스친 화면입니다 / Shown only briefly"),
+    ("REPLAY_COLLAPSED", "앞에서 이미 나온 줄을 다시 연주한 부분이라 빼 두었습니다(D.S./반복). 필요하면 다시 넣을 수 있습니다 / A replay of lines already shown earlier (D.S./repeat), left out; you can add it back"),
     ("LABELS_OUTSIDE_ROI", "악보 영역 밖의 구간 표시가 빠졌을 수 있습니다 / A section label outside the score region may be missing"),
     ("OVERLAY_UNRECOVERED", "화면 표시에 가려진 악보를 복구하지 못했어요. 원본을 확인해 주세요 / Notation obscured by a screen overlay could not be recovered. Please review the source"),
     ("OVERLAY_COVERS_NOTATION", "화면 표시가 음표에 닿아 그대로 두었어요. 확인이 필요해요 / Screen overlay touches notation; kept as is. Please check"),

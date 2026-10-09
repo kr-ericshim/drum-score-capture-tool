@@ -4,7 +4,7 @@ source video + applied ROI
   -> observation manifest (observations.py)
   -> display episodes + layout intervals (system_tracking.py)
   -> system occurrences in display order (reflow_occurrences.py)
-  -> clean system strips (reflow_strips.py)
+  -> clean system strips (reflow_strips.py) -> established replay exclusions
   -> A4 page plan + rasters (reflow_layout.py, reflow_render.py)
   -> PNG/JPG/PDF (export.export_composed_pages, called by the app)
 
@@ -323,6 +323,23 @@ def analyse_source(
             lab["x_in_strip"] = int(round(x_crop - box[0]))
         labels = {"status": "placed" if acquired["placed"] else "none_found", "label_roi": acquired["label_roi"],
                   "found": acquired["found"], "placed": acquired["placed"], "version": acquired["version"]}
+    # Replay selection follows both leftover coverage and label acquisition:
+    # coverage sees all original displays, and section-label evidence is kept.
+    replay_blocks = []
+    if occ.get("exclusions", {}).get("self_checks", {}).get("revisit_count", 0) >= 1:
+        replay_blocks = ro.collapse_replay_blocks(
+            [s for s in occ["systems"] if s.get("included", True) and not s.get("alternate_of")],
+            {sid: rec["path"] for sid, rec in by_id.items()}, logger=logger, label_by=label_by,
+        )
+        occ.setdefault("exclusions", {})["replay_blocks"] = replay_blocks
+        replay_of = {entry["system_id"]: entry["replay_of"] for entry in replay_blocks}
+        for s in occ["systems"]:
+            if s["id"] in replay_of:
+                s["included"] = False
+                if "REPLAY_COLLAPSED" not in s["issues"]:
+                    s["issues"].append("REPLAY_COLLAPSED")
+                s["replay_of"] = replay_of[s["id"]]
+        _dump(occ, workspace / "occurrences.json")
     systems = []
     occ_systems = []
     for s in occ["systems"]:
@@ -333,6 +350,7 @@ def analyse_source(
             "index": s["index"],
             "included": s["included"],
             "auto_included": s["included"],
+            **({"replay_of": s["replay_of"]} if s.get("replay_of") else {}),
             "strip_path": rec["path"],
             "t_start": s["t_start"],
             "t_end": s["t_end"],
@@ -350,7 +368,8 @@ def analyse_source(
         # minority content the composite leaves out: each alternate is listed right after its
         # system, unchecked, so it can replace (or join) it in review
         for alt in (rec.get("minority_content") or {}).get("alternates", []):
-            if not s.get("included", True) and not s.get("alternate_of"):
+            if (not s.get("included", True) and not s.get("alternate_of")
+                    and "REPLAY_COLLAPSED" not in s.get("issues", [])):
                 continue  # excluded candidates retain their bundle on their own record
             entry, occ_entry = alternate_system(s, rec, alt, label_by.get(s["id"]))
             _alternate_ledger_chain(base, chains, entry, ledger=ledger)
@@ -392,7 +411,10 @@ def analyse_source(
         "review_required": bool(review_reasons),
         "review_reasons": review_reasons,
         "continuity_suggestions": occ.get("continuity_suggestions", []),
-        "duplicate_suggestions": [],
+        "duplicate_suggestions": [
+            {"system_id": entry["system_id"], "of_system_id": entry["replay_of"],
+             "reason": "looks_similar", "basis": "replay_block"} for entry in replay_blocks
+        ],
         **({"jump_view": jump_view_summary(jump, jump_built)} if runs else {}),
         **({"coverage": coverage} if coverage is not None else {}),
         "_manifest": manifest,
@@ -632,7 +654,15 @@ def duplicate_suggestions(record: Dict[str, Any], *, logger: Callable[[str], Non
     (notation and all text) matches an earlier one, plus tracker continuity
     matches that were not accepted as the same display. ``should_stop`` ends the
     work early (time budget / cancel)."""
-    out = [dict(x) for x in record.get("continuity_suggestions", [])]
+    # Preserve established replay pairs when the post-job suggestions replace
+    # the initial list; excluded replay systems are absent from 'included'.
+    out = [
+        {"system_id": entry["system_id"], "of_system_id": entry["replay_of"],
+         "reason": "looks_similar", "basis": "replay_block"}
+        for entry in record.get("exclusions", {}).get("replay_blocks", [])
+    ]
+    replay_ids = {x["system_id"] for x in out}
+    out.extend(dict(x) for x in record.get("continuity_suggestions", []) if x["system_id"] not in replay_ids)
     occ_path = Path(record["workspace"]) / "occurrences.json"
     if not occ_path.is_file():
         return out
