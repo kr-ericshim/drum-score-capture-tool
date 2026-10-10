@@ -490,6 +490,9 @@ def source_review_reasons(source_cls: Dict[str, Any], systems: Sequence[Dict[str
             rs.LOW_CONTRAST_KEPT, rs.CONTENT_LOST_IN_FINISHING))
         if (system.get("strip") or {}).get("unrecovered_columns", 0) > 0:
             reasons.append("OVERLAY_UNRECOVERED")
+        if rj.JUMP_SEAM_UNVERIFIED in system.get("issues", []) and system.get("included", True):
+            # a printed line next to an unverified view jump: a measure may repeat or be missing
+            reasons.append(rj.JUMP_SEAM_UNVERIFIED)
     return sorted(set(reasons))
 
 
@@ -1576,7 +1579,11 @@ def _verify_delivered_ledger(record: Dict[str, Any], pdf: Optional[str], staged:
 def prune_frames(record: Dict[str, Any]) -> None:
     """Remove the per-observation frame PNGs once strips exist (they can be
     decoded again from the source when needed). Persist evidence first; unresolved
-    overlays retain their raw observations until positive recovery is available."""
+    overlays retain their raw observations until positive recovery is available.
+    ``REFLOW_KEEP_FRAMES`` (development) keeps them for diagnosis."""
+    if os.environ.get("REFLOW_KEEP_FRAMES"):
+        record["frames_pruned"] = False
+        return
     base_path = Path(record.get("ledger_base_path") or Path(record["workspace"]) / "ledger_base.json")
     if record.get("dev_ledger", base_path.is_file()):
         try:

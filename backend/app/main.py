@@ -1860,34 +1860,41 @@ def _default_reflow_header(job: Job, payload: JobCreate, export_opts: ExportOpti
 
 
 REFLOW_ISSUE_REASONS = (
-    # the review shows the first matching reason: an action the user must take comes first
+    # the review shows the first matching reason, so the order is by notation impact: a possibly
+    # repeated, missing or reordered measure first, then an action the user must take, then what a
+    # line is (another moment, a brief display), and cosmetic or source notes last
+    ("JUMP_SEAM_UNVERIFIED", "화면이 넘어간 지점을 확인하지 못해 양쪽을 모두 남겼습니다. 마디가 겹치거나 이어지지 않을 수 있습니다 / The view jump here could not be verified, so both sides are kept; a measure may repeat or a join may be missing"),
+    ("CONTENT_LOST_IN_FINISHING", "정리 과정에서 표시 일부가 사라졌어요. 확인이 필요해요 / Some marks were lost during cleanup. Please check"),
+    ("JUMP_OVERLAP_CONTENT_CONFLICT", "겹치는 화면끼리 내용이 달라 다른 버전을 함께 보관했어요 / Overlapping views disagree; the other version is kept as an alternate"),
+    ("LAYOUT_CONFLICT", "페이지보다 커서 지금 크기로는 배치할 수 없습니다 / Does not fit the page at this staff size"),
     ("REPLAY_CANDIDATE", "앞에서 이미 나온 줄과 똑같습니다. D.S./반복으로 다시 연주하는 부분이면 체크를 해제해 빼세요 / Identical to lines shown earlier; if it is a D.S./repeat replay, untick it to leave it out"),
-    ("FORCED_LINE_BREAK", "줄이 너무 길어 마디선에서 나눴습니다. 마디선을 지나던 선(크레셴도 등)이 다음 줄로 이어집니다 / This line was too long, so it was split at a barline; a line crossing it continues on the next line"),
     ("LINE_BELOW_MIN_SIZE", "이 줄은 인쇄하기에 작게 축소되었습니다(오선 간격 {mm} mm) / This line is printed below the readable size (staff gap {mm} mm)"),
-    ("LEDGER_UNASSESSED", "원본 표시와 PDF의 보존 검증 자료가 없어 확인이 필요해요 / Source-to-PDF evidence is missing. Please review"),
-    ("LEDGER_REVIEW_REQUIRED", "원본 표시가 PDF에 보존되었는지 확인이 필요해요 / Source-to-PDF preservation needs review"),
+    ("FORCED_LINE_BREAK", "줄이 너무 길어 마디선에서 나눴습니다. 마디선을 지나던 선(크레셴도 등)이 다음 줄로 이어집니다 / This line was too long, so it was split at a barline; a line crossing it continues on the next line"),
     ("LEDGER_VERIFICATION_FAILED", "PDF 보존 검증에 실패했어요. 선택을 확인하고 다시 만들어 주세요 / PDF preservation verification failed. Check the selection and rebuild"),
+    ("LEDGER_REVIEW_REQUIRED", "원본 표시가 PDF에 보존되었는지 확인이 필요해요 / Source-to-PDF preservation needs review"),
+    ("LEDGER_UNASSESSED", "원본 표시와 PDF의 보존 검증 자료가 없어 확인이 필요해요 / Source-to-PDF evidence is missing. Please review"),
     ("DELIVERED_PDF_UNASSESSED", "PDF가 없어 최종 PDF 보존 검증을 하지 못했어요 / No PDF was produced; delivered PDF preservation is unassessed"),
+    ("OVERLAY_COVERS_NOTATION", "화면 표시가 음표에 닿아 그대로 두었어요. 확인이 필요해요 / Screen overlay touches notation; kept as is. Please check"),
+    ("OVERLAY_UNRECOVERED", "화면 표시에 가려진 악보를 복구하지 못했어요. 원본을 확인해 주세요 / Notation obscured by a screen overlay could not be recovered. Please review the source"),
+    ("PREVIEW_TAIL_UNVERIFIED", "오른쪽 끝에 다음 줄의 시작이 함께 보일 수 있습니다 / The right end may also show the start of the next line"),
+    ("SECTION_LABEL_NOT_PLACED", "이 구간 표시가 실린 줄이 모두 빠져 표시가 출력되지 않았습니다 / Every line of this section is excluded, so its label is not printed"),
+    ("MINORITY_CONTENT_DROPPED", "잠깐만 보인 표시가 이 줄에서 빠졌습니다. 바로 뒤 '다른 순간'에 있습니다 / Marks shown only for a moment are left out here; see the other moment that follows"),
+    ("CONTENT_STEP_STATE", "같은 줄의 다른 상태입니다. 표시가 조금 다릅니다 / Another state of the line above; a few marks differ"),
+    ("MINORITY_ALTERNATE", "같은 줄의 다른 순간입니다. 앞 줄에서 빠진 표시가 보입니다 / Another moment of the line above, with the marks it leaves out"),
+    ("SHORT_DISPLAY", "짧게 스친 화면입니다 / Shown only briefly"),
+    ("REPLAY_COLLAPSED", "앞에서 이미 나온 줄을 다시 연주한 부분이라 빼 두었습니다(D.S./반복). 필요하면 다시 넣을 수 있습니다 / A replay of lines already shown earlier (D.S./repeat), left out; you can add it back"),
+    ("PREVIEW_TAIL_RESTORED", "다음 줄이 바로 뒤에 오지 않아 오른쪽 끝의 미리보기를 남겼습니다 / The next line no longer follows, so the preview at the right end is kept"),
     ("SOURCE_CLIPPED", "원본 영상에서 가장자리가 잘려, 보이는 부분만 담았어요 / Cut off at the edge of the source video; only the visible part is kept"),
     ("UNCERTAIN_MARK_KEPT", "잠깐만 보인 흐린 표시를 지우지 않고 남겼어요. 확인이 필요해요 / A faint mark seen only briefly was kept. Please check"),
     ("TRANSLUCENT_PLATE_GRAY", "반투명 배경 위 회색 표시는 배경과 구분이 어려워요. 확인이 필요해요 / Gray marks on a see-through background are hard to tell from it. Please check"),
-    ("LAYOUT_CONFLICT", "페이지보다 커서 지금 크기로는 배치할 수 없습니다 / Does not fit the page at this staff size"),
-    ("PREVIEW_TAIL_UNVERIFIED", "오른쪽 끝에 다음 줄의 시작이 함께 보일 수 있습니다 / The right end may also show the start of the next line"),
-    ("SHORT_DISPLAY", "짧게 스친 화면입니다 / Shown only briefly"),
-    ("REPLAY_COLLAPSED", "앞에서 이미 나온 줄을 다시 연주한 부분이라 빼 두었습니다(D.S./반복). 필요하면 다시 넣을 수 있습니다 / A replay of lines already shown earlier (D.S./repeat), left out; you can add it back"),
-    ("LABELS_OUTSIDE_ROI", "악보 영역 밖의 구간 표시가 빠졌을 수 있습니다 / A section label outside the score region may be missing"),
-    ("OVERLAY_UNRECOVERED", "화면 표시에 가려진 악보를 복구하지 못했어요. 원본을 확인해 주세요 / Notation obscured by a screen overlay could not be recovered. Please review the source"),
-    ("OVERLAY_COVERS_NOTATION", "화면 표시가 음표에 닿아 그대로 두었어요. 확인이 필요해요 / Screen overlay touches notation; kept as is. Please check"),
     ("LOW_CONTRAST_CONTENT_KEPT", "흐린 표시를 배경과 구분하지 못해 그대로 두었어요. 확인이 필요해요 / Faint marks could not be told apart from the background; kept as is. Please check"),
-    ("CONTENT_LOST_IN_FINISHING", "정리 과정에서 표시 일부가 사라졌어요. 확인이 필요해요 / Some marks were lost during cleanup. Please check"),
-    ("JUMP_OVERLAP_CONTENT_CONFLICT", "겹치는 화면끼리 내용이 달라 다른 버전을 함께 보관했어요 / Overlapping views disagree; the other version is kept as an alternate"),
-    ("SECTION_LABEL_NOT_PLACED", "이 구간 표시가 실린 줄이 모두 빠져 표시가 출력되지 않았습니다 / Every line of this section is excluded, so its label is not printed"),
-    ("PREVIEW_TAIL_RESTORED", "다음 줄이 바로 뒤에 오지 않아 오른쪽 끝의 미리보기를 남겼습니다 / The next line no longer follows, so the preview at the right end is kept"),
-    ("MINORITY_CONTENT_DROPPED", "잠깐만 보인 표시가 이 줄에서 빠졌습니다. 바로 뒤 '다른 순간'에 있습니다 / Marks shown only for a moment are left out here; see the other moment that follows"),
-    ("MINORITY_ALTERNATE", "같은 줄의 다른 순간입니다. 앞 줄에서 빠진 표시가 보입니다 / Another moment of the line above, with the marks it leaves out"),
-    ("CONTENT_STEP_STATE", "같은 줄의 다른 상태입니다. 표시가 조금 다릅니다 / Another state of the line above; a few marks differ"),
-    ("JUMP_SEAM_UNVERIFIED", "화면이 넘어간 지점을 확인하지 못해 양쪽을 모두 남겼습니다. 마디가 겹치거나 이어지지 않을 수 있습니다 / The view jump here could not be verified, so both sides are kept; a measure may repeat or a join may be missing"),
+    ("LABELS_OUTSIDE_ROI", "악보 영역 밖의 구간 표시가 빠졌을 수 있습니다 / A section label outside the score region may be missing"),
 )
+
+
+def _reason_rank(code: str) -> int:
+    """Position of ``code`` in REFLOW_ISSUE_REASONS (by notation impact); other codes after them."""
+    return next((i for i, (c, _t) in enumerate(REFLOW_ISSUE_REASONS) if c == code), len(REFLOW_ISSUE_REASONS))
 
 
 def _reflow_capture_fields(reflow: Dict[str, Any]) -> Dict[str, Any]:
@@ -1963,8 +1970,9 @@ def _reflow_capture_fields(reflow: Dict[str, Any]) -> Dict[str, Any]:
         "review_reasons": [{"code": reason, "text": reason_text[reason]}
                            if reason in ("LEDGER_UNASSESSED", "LEDGER_REVIEW_REQUIRED", "LEDGER_VERIFICATION_FAILED",
                                          "DELIVERED_PDF_UNASSESSED", "OVERLAY_UNRECOVERED", "OVERLAY_COVERS_NOTATION",
-                                         "FORCED_LINE_BREAK", "LINE_BELOW_MIN_SIZE")
-                           else reason for reason in list(dict.fromkeys((reflow.get("review_reasons") or []) + sorted(size_codes)))],
+                                         "FORCED_LINE_BREAK", "LINE_BELOW_MIN_SIZE", "JUMP_SEAM_UNVERIFIED")
+                           else reason for reason in sorted(dict.fromkeys((reflow.get("review_reasons") or []) + sorted(size_codes)),
+                                                            key=_reason_rank)],
     }
 
 

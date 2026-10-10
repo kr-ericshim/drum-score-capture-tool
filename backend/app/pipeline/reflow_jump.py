@@ -41,7 +41,7 @@ from app.pipeline import reflow_ledger as rl
 from app.pipeline import reflow_strips as rs
 from app.pipeline import system_detect as sd
 
-JUMP_VERSION = "reflow_jump-3"
+JUMP_VERSION = "reflow_jump-4"
 SCHEMA_VERSION = 1
 
 ImageLoader = Callable[[Dict[str, Any]], np.ndarray]
@@ -92,6 +92,12 @@ CONFIG: Dict[str, Any] = {
     "prior_min_seams": 5,  # verified jumps with a cursor prior needed to judge the prior
     "prior_reliable_frac": 0.05,  # prior used only when its 90th-percentile error on verified jumps is below this share of the width
     "numbers_min_votes": 3,  # measure-number reads (tesseract) that must agree
+    # reflow_jump-4: a seam whose best registration failed only on residual / ambiguity / ink may be
+    # resolved too, and the typical-jump window also offers sparse (low-ink) offsets that match almost
+    # well (e.g. an overlap of rest bars); either path needs >= 2 constraints besides "forward"
+    "resolve_failures": ["ambiguous_offset", "residual_high", "overlap_blank"],
+    "low_ink_gaps2": 1.5,  # ink floor (staff spaces squared) for a window offset ...
+    "low_ink_ratio_min": 4.0,  # ... that is this much better than every other offset of the window (residual <= resid_max)
     # panorama strips
     "cut_margin_gaps": 1.0,  # the stitch cut stays this far from each display's usable edge
     "cut_center_weight": 0.25,  # pull of the cut toward the middle of the overlap (times the median column difference)
@@ -693,10 +699,10 @@ def prior_fit_dx(ep_a: Dict[str, Any], ep_b: Dict[str, Any], width: int, cfg: Di
 
 
 def window_candidates(a: Dict[str, Any], b: Dict[str, Any], panel_right: int, lo: int, hi: int,
-                      cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
+                      cfg: Dict[str, Any], *, min_ink_gaps2: Optional[float] = None) -> List[Dict[str, Any]]:
     """Every local minimum of the full-resolution (tolerant) residual over offsets lo..hi,
     refined in dy and to the exact offset like ``register_pair``. Only offsets with enough
-    overlap and ink are kept."""
+    overlap and ink are kept (``min_ink_gaps2`` overrides the ink floor)."""
     gap = float(min(a["gap"], b["gap"]))
     y0, y1 = max(a["rows"][0], b["rows"][0]), min(a["rows"][1], b["rows"][1])
     w = min(a["width"], b["width"])
@@ -708,7 +714,7 @@ def window_candidates(a: Dict[str, Any], b: Dict[str, Any], panel_right: int, lo
     vb[:panel_right] = False
     lvl = float(cfg["ink_level"])
     min_overlap = cfg["overlap_min_gaps"] * gap
-    min_ink = cfg["min_ink_gaps2"] * gap * gap
+    min_ink = (cfg["min_ink_gaps2"] if min_ink_gaps2 is None else float(min_ink_gaps2)) * gap * gap
     curve: Dict[int, Tuple[float, int, int]] = {}
     for dx in range(int(lo), int(hi) + 1):
         if abs(dx) > w - 1:
@@ -777,13 +783,24 @@ def resolve_seam(seam: Dict[str, Any], da: Dict[str, Any], db: Dict[str, Any], p
     cursor prior where it is reliable on this slot, (4) the measure-number difference
     where both displays' numbers read (``numbers(dx)`` -> True/False/None). Resolved only
     when exactly one plausible offset passes every applicable constraint; a constraint
-    that rejects every offset the others accept is a contradiction (unresolved)."""
+    that rejects every offset the others accept is a contradiction (unresolved).
+
+    reflow_jump-4: the seam may also have failed on ``residual_high`` / ``overlap_blank``
+    (``resolve_failures``; never ``overlap_narrow``, ``no_candidate`` or a row change), and the
+    typical-jump window also offers sparse offsets (ink >= ``low_ink_gaps2`` staff spaces²,
+    residual <= ``resid_max``, and (other + floor) / (own + floor) >= ``low_ink_ratio_min``
+    against every other local minimum of the window; source ``low_ink_window``). Such a seam, or a chosen
+    low-ink offset, needs at least two constraints besides "forward" (the typical jump and the
+    cursor prior or the measure numbers)."""
     width = min(da["width"], db["width"])
     gap = float(min(da["gap"], db["gap"]))
     content_w = width - panel_right
     out: Dict[str, Any] = {"status": "unverified", "evidence": [], "constraints": {}}
-    if seam.get("reasons") != ["ambiguous_offset"]:
-        return dict(out, reason="not_only_ambiguous")
+    reasons = list(seam.get("reasons") or [])
+    allowed = set(cfg.get("resolve_failures") or ["ambiguous_offset"])
+    if not reasons or not set(reasons) <= allowed:
+        return dict(out, reason="failure_not_resolvable")
+    strict = reasons != ["ambiguous_offset"]
     if last_display:
         # the slot's last display may be clamped at the score end (a shorter jump)
         return dict(out, reason="final_display")
@@ -793,10 +810,25 @@ def resolve_seam(seam: Dict[str, Any], da: Dict[str, Any], db: Dict[str, Any], p
         tol = float(ev["tol_px"])
         lo, hi = int(np.floor(typ["median_dx"] - tol)), int(np.ceil(typ["median_dx"] + tol))
         plaus += window_candidates(da, db, panel_right, lo, hi, cfg)
+        low_floor = cfg.get("low_ink_gaps2")
+        if low_floor is not None and float(low_floor) < float(cfg["min_ink_gaps2"]):
+            # sparse offsets the normal ink floor leaves out; only a clear, unique window minimum counts
+            full_ink = cfg["min_ink_gaps2"] * gap * gap
+            low = window_candidates(da, db, panel_right, lo, hi, cfg, min_ink_gaps2=float(low_floor))
+            sep_w = max(2.0, cfg["distinct_gaps"] * gap)
+            fl = float(cfg["resid_floor"])
+            for c in low:
+                if c["ink_px"] >= full_ink or c["residual"] > cfg["resid_max"]:
+                    continue
+                rivals = [o["residual"] for o in low if abs(o["dx"] - c["dx"]) >= sep_w]
+                ratio = (min(rivals) + fl) / (c["residual"] + fl) if rivals else float("inf")
+                if ratio >= float(cfg["low_ink_ratio_min"]):
+                    plaus.append(dict(c, source="low_ink_window", window_ratio=round(ratio, 2) if np.isfinite(ratio) else None))
     plaus = [c for c in plaus if c["residual"] <= cfg["resid_max"]]
     sep = max(2.0, cfg["distinct_gaps"] * gap)
     plaus = _distinct(plaus, sep)
     out["plausible"] = [[c["dx"], c["residual"]] for c in plaus]
+    out["low_ink"] = [[c["dx"], c["residual"], c["ink_px"], c.get("window_ratio")] for c in plaus if c.get("source") == "low_ink_window"]
     if not plaus:
         return dict(out, reason="no_plausible_offset")
     keep = list(plaus)
@@ -848,14 +880,18 @@ def resolve_seam(seam: Dict[str, Any], da: Dict[str, Any], db: Dict[str, Any], p
         # the forward rule alone never resolves a seam
         return dict(out, reason="no_independent_constraint")
     c = keep[0]
+    if (strict or c.get("source") == "low_ink_window") and len(used) < 3:
+        # a seam that failed on more than ambiguity, or a sparse offset: two independent constraints
+        return dict(out, reason="needs_two_constraints", left=[c["dx"]])
     if c.get("dy") is None:  # a registration candidate: refine dy/exact offset in a small window
         ref = window_candidates(da, db, panel_right, c["dx"] - 2, c["dx"] + 2, cfg)
         if ref:
             c = dict(min(ref, key=lambda r: r["residual"]), source=c["source"])
         else:
             c = dict(c, dy=0)
-    return dict(out, status="resolved", dx=int(c["dx"]), dy=int(c["dy"]), residual=c["residual"], evidence=used,
-                chosen_from=c.get("source"))
+    evidence = used + (["low_ink_window"] if c.get("source") == "low_ink_window" else [])
+    return dict(out, status="resolved", dx=int(c["dx"]), dy=int(c["dy"]), residual=c["residual"], evidence=evidence,
+                chosen_from=c.get("source"), failures=reasons)
 
 
 def _tesseract_number(crop: np.ndarray, min_votes: int) -> Optional[int]:

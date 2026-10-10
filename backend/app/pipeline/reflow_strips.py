@@ -151,6 +151,45 @@ def staff_end(region: Dict[str, Any]) -> int:
     return max(ends)
 
 
+EDGE_NUMBER_MAX_GAPS = 2.0  # a measure number (all its digits) is at most this high
+EDGE_NUMBER_MAX_WIDTH_GAPS = 4.0  # ... and this wide
+EDGE_NUMBER_JOIN_GAPS = 0.4  # digits closer than this form one number
+
+
+def edge_number_extent(norm: np.ndarray, box: Sequence[int], region: Dict[str, Any], gap: float) -> Tuple[int, int]:
+    """Left/right box edges widened over a measure number that the edge cuts.
+
+    The envelope keeps only crisp ink, so a gray measure number printed over the
+    staff start (or end) can stick out of the box and be cut in half ("63" reads
+    "53"). Ink here is the boundary analysis' protected ink (darker than paper by
+    35, below 215); digits within ``EDGE_NUMBER_JOIN_GAPS`` form one number. A
+    number-sized group wholly above the top staff line that crosses a box edge
+    moves that edge to take all of it."""
+    x0, y0, x1, y1 = (int(v) for v in box)
+    gray = cv2.cvtColor(norm, cv2.COLOR_BGR2GRAY) if norm.ndim == 3 else norm
+    h, w = gray.shape
+    top = float(region["staff_y"][0])
+    rows_end = int(np.floor(top - 0.5))
+    if rows_end <= max(0, y0) or gap <= 0:
+        return x0, x1
+    paper = sd.percentile_u8(gray, 75)
+    ink = (gray[max(0, y0):rows_end] < min(215.0, paper - 35.0)).astype(np.uint8)
+    k = max(1, int(round(EDGE_NUMBER_JOIN_GAPS * gap)))
+    grouped = cv2.dilate(ink, np.ones((1, 2 * k + 1), np.uint8))
+    n, _lab, stats, _c = cv2.connectedComponentsWithStats(grouped, connectivity=8)
+    for i in range(1, n):
+        cx, _cy, cw, ch, _a = (int(v) for v in stats[i])
+        # undo the dilation's horizontal growth
+        gx0, gx1 = cx + k, cx + cw - k
+        if gx1 <= gx0 or ch > EDGE_NUMBER_MAX_GAPS * gap or gx1 - gx0 > EDGE_NUMBER_MAX_WIDTH_GAPS * gap:
+            continue
+        if gx0 < x0 < gx1:
+            x0 = max(0, gx0 - 1)
+        if gx0 < x1 < gx1:
+            x1 = min(w, gx1 + 1)
+    return x0, x1
+
+
 def find_preview_tail(norm: np.ndarray, region: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Start of the next system shown at the right end of this row, or None.
 
@@ -555,6 +594,31 @@ def compose_members(images: List[np.ndarray], gap: float, *, keys: Optional[Sequ
             steady = all_cov & zone & (span <= CHROME_STEADY_SPAN)
             unrec = all_cov & ~steady
             info["chrome_steady_px"] = int(steady.sum())
+    if unrec.any() and len(usable) >= STEADY_MIN_MEMBERS:
+        # Every member covers it and every member shows the same thing there: nothing was hidden
+        # in some members and shown in others. Plain ink or paper (or thin tinted fringes of
+        # text, e.g. sub-pixel colored lyrics) is the printed content, not an overlay to recover;
+        # only a solid tinted area (a colored box or band that never moved) stays unrecovered.
+        # (robust to one outlier member: a transition frame, a lyric shown a moment late)
+        ys, xs = np.nonzero(unrec)
+        vals = stack[:, ys, xs].astype(np.float32)  # members x pixels x 3
+        lo, hi = np.percentile(vals, STEADY_QUANTILES, axis=0)
+        span_all = np.zeros(unrec.shape, np.float32)
+        span_all[ys, xs] = (hi - lo).max(axis=-1)
+        chroma = out.max(axis=-1).astype(np.int16) - out.min(axis=-1).astype(np.int16)
+        steady_all = unrec & (span_all <= CHROME_STEADY_SPAN)
+        k = max(STEADY_SOLID_PX, int(round(STEADY_SOLID_GAPS * gap)))
+        solid = cv2.morphologyEx((steady_all & (chroma > STEADY_TINT_MAX)).astype(np.uint8), cv2.MORPH_OPEN,
+                                 np.ones((k, k), np.uint8)).astype(bool)
+        static = steady_all & ~solid
+        unrec = unrec & ~static
+        # what is left in specks (an anti-aliased pixel or two at a glyph edge) cannot hide notation
+        nl, lab, cst, _c = cv2.connectedComponentsWithStats(unrec.astype(np.uint8), connectivity=8)
+        speck_ids = np.flatnonzero(cst[:, cv2.CC_STAT_AREA] < max(4.0, UNRECOVERED_SPECK_GAPS2 * gap * gap))
+        speck = np.isin(lab, speck_ids[speck_ids > 0]) if nl > 1 else np.zeros_like(unrec)
+        static |= speck
+        unrec = unrec & ~speck
+        info["static_covered_px"] = int(static.sum())
     restored = restore_lost_ink(out, [images[i] for i in usable], [masks[i] for i in usable],
                                 ref_index=0) if len(usable) > 1 else _no_restore()
     info.update(members_used=len(usable), unrecovered_px=int(unrec.sum()),
@@ -651,6 +715,12 @@ def restore_lost_ink(out: np.ndarray, images: Sequence[np.ndarray], masks: Seque
 
 OVERLAY_COVERS_NOTATION = "OVERLAY_COVERS_NOTATION"
 CHROME_STEADY_SPAN = 30       # max-min over the members: the pixel did not change
+STEADY_TINT_MAX = 24          # composite chroma (max-min of B, G, R) of plain ink or paper; above it a pixel is tinted
+STEADY_SOLID_PX = 3           # a covered overlay is solid: tinted pixels surviving an opening of this size
+STEADY_SOLID_GAPS = 0.25      # ... or of this share of the staff gap when larger (text strokes are thinner)
+STEADY_QUANTILES = (10, 90)   # the members' spread is measured between these percentiles
+UNRECOVERED_SPECK_GAPS2 = 0.02  # an unrecovered piece smaller than this (x gap^2) is a speck
+STEADY_MIN_MEMBERS = 3        # "every member shows the same" needs at least this many members
 CHROME_PRESENT_SHARE = 0.5    # chrome counts in a display where at least half of its members show it
 CHROME_IN_PLACE = 0.9         # ... and what the display shows around it lies on the chrome
 
@@ -2352,6 +2422,9 @@ def build_strip(system: Dict[str, Any], manifest: Dict[str, Any], load_image: Im
         # envelope (keeping beats cutting).
         box[1] = top_cut if cut_info.get("top_cut_ink") == 0 else min(top_cut, int(env[1]))
         box[3] = bottom_cut if cut_info.get("bottom_cut_ink") == 0 else max(bottom_cut, int(env[3]))
+
+    # a gray measure number over the staff start/end stays whole
+    box[0], box[2] = edge_number_extent(norm_ref, box, ref_region, g)
 
     # Run on every member's full ROI before loading any envelope-cropped member.
     # The inventory is independent of sampling and composition eligibility.

@@ -289,8 +289,8 @@ class SeamResolutionTests(unittest.TestCase):
         out = rj.resolve_seam(seam, d, d, 0, ev, rj.CONFIG, last_display=False)
         self.assertEqual(out["status"], "unverified")
         self.assertEqual(out["reason"], "no_unique_offset")
-        out2 = rj.resolve_seam(dict(seam, reasons=["residual_high"]), d, d, 0, ev, rj.CONFIG, last_display=False)
-        self.assertEqual(out2["reason"], "not_only_ambiguous")
+        out2 = rj.resolve_seam(dict(seam, reasons=["overlap_narrow", "ambiguous_offset"]), d, d, 0, ev, rj.CONFIG, last_display=False)
+        self.assertEqual(out2["reason"], "failure_not_resolvable")
         out3 = rj.resolve_seam(seam, d, d, 0, ev, rj.CONFIG, last_display=True)
         self.assertEqual(out3["reason"], "final_display")
 
@@ -310,6 +310,120 @@ class SeamResolutionTests(unittest.TestCase):
         self.assertEqual(out2["status"], "unverified")
         # measure numbers that reject the only offset the jump size allows: a contradiction
         self.assertEqual(out3["reason"], "measure_numbers_contradict")
+
+
+class LowInkWindowTests(unittest.TestCase):
+    """reflow_jump-4: a sparse overlap (rest bars) matches almost exactly at the typical jump but
+    has less ink than the registration floor; it resolves only with two agreeing constraints."""
+
+    GAP = 14.0
+    D = {"gap": 14.0, "width": 1000}
+    EV = {"tol_px": 30.0, "typical": {"usable": True, "median_dx": 700.0}, "prior": {"usable": True, "tol_px": 100.0}}
+    # the best registration: a wrong offset with a high residual
+    SEAM = {"reasons": ["residual_high", "ambiguous_offset"], "candidates": [[630, 101.0, 0, 900], [560, 110.0, 0, 800]],
+            "prior_fit_dx": 715.0}
+
+    def _windows(self, sparse, normal=()):
+        """window_candidates stub: ``normal`` at the normal ink floor, ``sparse`` only below it."""
+        full = rj.CONFIG["min_ink_gaps2"] * self.GAP * self.GAP
+
+        def fake(_a, _b, _p, _lo, _hi, _cfg, *, min_ink_gaps2=None):
+            if min_ink_gaps2 is None:
+                return [dict(c, source="window_search") for c in normal]
+            return [dict(c, source="window_search") for c in list(normal) + list(sparse)
+                    if c["ink_px"] >= min_ink_gaps2 * self.GAP * self.GAP or c["ink_px"] >= full]
+        from unittest import mock
+        return mock.patch.object(rj, "window_candidates", side_effect=fake)
+
+    @staticmethod
+    def _cand(dx, resid, ink):
+        return {"dx": dx, "dy": 0, "residual": resid, "ink_px": ink, "overlap_px": 109}
+
+    def test_sparse_near_exact_offset_resolves_with_typical_jump_and_prior(self) -> None:
+        with self._windows([self._cand(701, 0.6, 470)]):
+            out = rj.resolve_seam(self.SEAM, self.D, self.D, 0, self.EV, rj.CONFIG, last_display=False)
+        self.assertEqual(out["status"], "resolved", out)
+        self.assertEqual(out["dx"], 701)
+        self.assertEqual(out["chosen_from"], "low_ink_window")
+        self.assertEqual(out["evidence"], ["forward", "typical_jump", "cursor_prior", "low_ink_window"])
+        self.assertEqual(out["low_ink"], [[701, 0.6, 470, None]])
+
+    def test_sparse_offset_stays_unverified_without_a_usable_or_agreeing_prior(self) -> None:
+        with self._windows([self._cand(701, 0.6, 470)]):
+            no_prior = rj.resolve_seam(self.SEAM, self.D, self.D, 0, dict(self.EV, prior={"usable": False}), rj.CONFIG,
+                                       last_display=False)
+            no_cursor = rj.resolve_seam(dict(self.SEAM, prior_fit_dx=None), self.D, self.D, 0, self.EV, rj.CONFIG,
+                                        last_display=False)
+            far = rj.resolve_seam(dict(self.SEAM, prior_fit_dx=400.0), self.D, self.D, 0, self.EV, rj.CONFIG, last_display=False)
+            # an unreadable / unsure measure-number check does not count as the second constraint
+            unsure = rj.resolve_seam(self.SEAM, self.D, self.D, 0, dict(self.EV, prior={"usable": False}), rj.CONFIG,
+                                     last_display=False, numbers=lambda _dx: None)
+            # agreeing measure numbers do
+            nums = rj.resolve_seam(self.SEAM, self.D, self.D, 0, dict(self.EV, prior={"usable": False}), rj.CONFIG,
+                                   last_display=False, numbers=lambda dx: dx == 701)
+        self.assertEqual((no_prior["status"], no_prior["reason"]), ("unverified", "needs_two_constraints"))
+        self.assertEqual((no_cursor["status"], no_cursor["reason"]), ("unverified", "needs_two_constraints"))
+        self.assertEqual((far["status"], far["reason"]), ("unverified", "cursor_prior_contradicts"))
+        self.assertEqual((unsure["status"], unsure["reason"]), ("unverified", "needs_two_constraints"))
+        self.assertEqual(nums["status"], "resolved", nums)
+        self.assertIn("measure_numbers", nums["evidence"])
+
+    def test_two_plausible_offsets_stay_unverified(self) -> None:
+        with self._windows([self._cand(701, 0.6, 470), self._cand(722, 1.5, 400)]):
+            out = rj.resolve_seam(self.SEAM, self.D, self.D, 0, self.EV, rj.CONFIG, last_display=False)
+        # two near-equal sparse minima: neither is a clear window minimum
+        self.assertEqual((out["status"], out["reason"]), ("unverified", "no_plausible_offset"))
+        # a normal-ink offset in the window next to the sparse one: also two
+        with self._windows([self._cand(701, 0.6, 470)], normal=[self._cand(680, 12.0, 2000)]):
+            out2 = rj.resolve_seam(self.SEAM, self.D, self.D, 0, self.EV, rj.CONFIG, last_display=False)
+        self.assertEqual((out2["status"], out2["reason"]), ("unverified", "no_unique_offset"))
+        self.assertEqual(sorted(out2["left"]), [680, 701])
+
+    def test_sparse_offset_needs_a_clear_window_minimum_and_the_low_floor(self) -> None:
+        with self._windows([self._cand(701, 30.0, 470)]):  # residual above resid_max
+            out = rj.resolve_seam(self.SEAM, self.D, self.D, 0, self.EV, rj.CONFIG, last_display=False)
+        self.assertEqual((out["status"], out["reason"]), ("unverified", "no_plausible_offset"))
+        # a rival window offset (any ink above the low floor) less than low_ink_ratio_min times worse
+        with self._windows([self._cand(701, 16.0, 470), self._cand(672, 60.0, 400)]):
+            out1 = rj.resolve_seam(self.SEAM, self.D, self.D, 0, self.EV, rj.CONFIG, last_display=False)
+        self.assertEqual((out1["status"], out1["reason"]), ("unverified", "no_plausible_offset"))
+        with self._windows([self._cand(701, 16.0, 470), self._cand(672, 160.0, 400)]):
+            out1b = rj.resolve_seam(self.SEAM, self.D, self.D, 0, self.EV, rj.CONFIG, last_display=False)
+        self.assertEqual(out1b["status"], "resolved", out1b)
+        self.assertEqual(out1b["low_ink"], [[701, 16.0, 470, 9.0]])
+        with self._windows([self._cand(701, 0.3, 200)]):  # below 1.5 gap^2 (294 px)
+            out2 = rj.resolve_seam(self.SEAM, self.D, self.D, 0, self.EV, rj.CONFIG, last_display=False)
+        self.assertEqual((out2["status"], out2["reason"]), ("unverified", "no_plausible_offset"))
+
+    def test_narrow_overlap_or_no_candidate_is_never_resolved(self) -> None:
+        with self._windows([self._cand(701, 0.6, 470)]):
+            for reasons in (["overlap_narrow"], ["residual_high", "overlap_narrow"], ["no_candidate"], ["row_change"]):
+                out = rj.resolve_seam(dict(self.SEAM, reasons=reasons), self.D, self.D, 0, self.EV, rj.CONFIG, last_display=False)
+                self.assertEqual((out["status"], out["reason"]), ("unverified", "failure_not_resolvable"), reasons)
+            last = rj.resolve_seam(self.SEAM, self.D, self.D, 0, self.EV, rj.CONFIG, last_display=True)
+        self.assertEqual(last["reason"], "final_display")
+
+    def test_a_residual_high_seam_with_a_normal_window_offset_needs_two_constraints(self) -> None:
+        with self._windows([], normal=[self._cand(700, 6.0, 2000)]):
+            typical_only = rj.resolve_seam(self.SEAM, self.D, self.D, 0, dict(self.EV, prior={"usable": False}), rj.CONFIG,
+                                           last_display=False)
+            both = rj.resolve_seam(self.SEAM, self.D, self.D, 0, self.EV, rj.CONFIG, last_display=False)
+        self.assertEqual(typical_only["reason"], "needs_two_constraints")
+        self.assertEqual(both["status"], "resolved")
+        self.assertEqual(both["chosen_from"], "window_search")
+
+    def test_window_candidates_low_floor_finds_a_sparse_exact_offset(self) -> None:
+        # a nearly empty strip: one short mark, repeated nowhere -> below the normal floor at the true offset
+        img = np.full((120, 1000, 3), 255, np.uint8)
+        cv2.rectangle(img, (850, 40), (858, 60), (0, 0, 0), -1)
+        cv2.rectangle(img, (880, 50), (884, 70), (0, 0, 0), -1)
+        a = {"gap": 14.0, "rows": (0, 120), "width": 1000, "features": rj.features(img, 14.0), "covered": np.zeros(1000, bool)}
+        shifted = np.full_like(img, 255)
+        shifted[:, : 1000 - 700] = img[:, 700:]
+        b = dict(a, features=rj.features(shifted, 14.0))
+        self.assertEqual(rj.window_candidates(a, b, 0, 680, 720, rj.CONFIG), [])
+        low = rj.window_candidates(a, b, 0, 680, 720, rj.CONFIG, min_ink_gaps2=1.5)
+        self.assertTrue(any(c["dx"] == 700 and c["residual"] <= 1.0 for c in low), low)
 
 
 class UnverifiedSeamTests(unittest.TestCase):
