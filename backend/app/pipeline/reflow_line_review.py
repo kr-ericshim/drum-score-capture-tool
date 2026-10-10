@@ -116,6 +116,27 @@ def _build(plan: dict, systems: Sequence[dict], jump_record: Optional[dict], epi
     for e in _index(episodes or []).values():
         times[e["id"]] = _span([e["t_start"], e["t_end"]])
     out = []
+    extents = {}
+    for u in by_unit.values():
+        a, b = extents.get(u["system_id"], (u["box"][0], u["box"][2]))
+        extents[u["system_id"]] = (min(a, u["box"][0]), max(b, u["box"][2]))
+
+    def describe(seam, x_frac, boundary=None):
+        resolution = seam.get("resolution") or {}
+        rejected = bool(seam.get("user_rejected"))
+        status = "unverified" if rejected else \
+                 "verified" if seam.get("verified") is True and seam.get("kind") in ("jump", "no_shift") else \
+                 "resolved" if resolution.get("status") == "resolved" else "unverified"
+        evidence = resolution.get("evidence", [])
+        if not isinstance(evidence, list):
+            raise ValueError("invalid resolution evidence")
+        entry = {"id": seam["id"], "status": status, "evidence": list(evidence),
+                 "low_ink": "low_ink_window" in evidence, "x_frac": x_frac, "user_rejected": rejected}
+        if boundary:
+            entry["boundary"] = boundary
+        if rejected:
+            entry.update(reason="USER_REJECTED", jump_time=times[seam["a"]][1])
+        return entry
     for pi, page in enumerate(plan["pages"]):
         size = plan.get("page_px") or page.get("page_px") or page["size"]
         if len(size) != 2 or any(_number(v) <= 0 for v in size):
@@ -176,17 +197,18 @@ def _build(plan: dict, systems: Sequence[dict], jump_record: Optional[dict], epi
                         incoming = [p for p in by_pair if p[1] == owners[0]["display"]]
                         pair = incoming[0] if len(incoming) == 1 else None
                     seam = by_pair[pair]
-                    resolution = seam.get("resolution") or {}
-                    status = "verified" if seam.get("verified") is True and seam.get("kind") in ("jump", "no_shift") else \
-                             "resolved" if resolution.get("status") == "resolved" else "unverified"
-                    evidence = resolution.get("evidence", [])
-                    if not isinstance(evidence, list):
-                        raise ValueError("invalid resolution evidence")
-                    found.append({"id": seam["id"], "status": status, "evidence": list(evidence),
-                                  "low_ink": "low_ink_window" in evidence,
-                                  "x_frac": _x_frac(x, sid, units, pl, audit, by_line.get(lid, {}))})
+                    found.append(describe(seam, _x_frac(x, sid, units, pl, audit, by_line.get(lid, {}))))
+                left, right = extents.get(sid, (0, s["strip"]["size"][0]))
+                for key, boundary, edge, at_edge in (
+                    ("unverified_seam_before", "start", lo, lo == left),
+                    ("unverified_seam_after", "end", hi - 0.000001, hi == right),
+                ):
+                    if jump.get(key) and at_edge and seams[jump[key]].get("user_rejected"):
+                        found.append(describe(seams[jump[key]],
+                                              _x_frac(edge, sid, units, pl, audit, by_line.get(lid, {})), boundary))
             if not sources:
                 raise ValueError("missing line sources")
+            found = list({s["id"]: s for s in found}.values())
             found.sort(key=lambda s: s["x_frac"])
             statuses = {s["status"] for s in found}
             out.append({"line_id": lid, "page": pi + 1, "rect": rect, "page_size": list(size), "system_ids": list(sids),

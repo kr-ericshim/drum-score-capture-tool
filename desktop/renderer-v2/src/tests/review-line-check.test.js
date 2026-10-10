@@ -4,7 +4,8 @@ import assert from "node:assert/strict";
 import { createInitialSessionState, deriveLineReview, deriveReflowInfo } from "../app/session/selectors.js";
 import { createReviewController } from "../features/review/reviewController.js";
 import { renderReviewScreen } from "../features/review/ReviewScreen.js";
-import { lineCheckOpen, lineSourceTimes, seamChecks } from "../features/review/lineCheck.js";
+import { lineCheckOpen, lineSourceTimes, pendingSeamRejections, seamChecks } from "../features/review/lineCheck.js";
+import { reviewExport } from "../lib/api.js";
 
 const LINES = [
   { line_id: "line-001", page: 1, rect: [200, 300, 2000, 200], page_size: [2480, 3508], measures: 4,
@@ -171,4 +172,61 @@ test("the full list loads one still per display on request, cropped to the score
   await controller.handleAction("review-line-source", "line-002");
   await controller.handleAction("review-line-source", "line-002");
   assert.deepEqual(calls.map(call => call[1]), [25.5, 29.5, 29.5]);
+});
+
+test("a join answered wrong waits for a rebuild, which sends every rejected join", async () => {
+  const state = reviewState("ko");
+  state.review.status = "applied";
+  const { box, controller } = harness(state);
+  assert.equal(pendingSeamRejections(box.state), null);
+  await controller.handleAction("review-seam-answer", "seam-ep-0003-ep-0004|bad");
+  assert.equal(box.state.review.status, "idle", "the files no longer match the review");
+  assert.deepEqual(pendingSeamRejections(box.state), ["seam-ep-0003-ep-0004"]);
+  // joins kept by an earlier rebuild stay in the set
+  box.state.review.reflow.rejectedSeamIds = ["seam-ep-0009-ep-0010"];
+  assert.deepEqual(pendingSeamRejections(box.state), ["seam-ep-0003-ep-0004", "seam-ep-0009-ep-0010"]);
+  await controller.handleAction("review-seam-answer", "seam-ep-0003-ep-0004|ok");
+  assert.equal(pendingSeamRejections(box.state), null, "nothing new: the request leaves the kept joins alone");
+
+  const previousWindow = globalThis.window;
+  const bodies = [];
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { drumSheetAPI: { async requestJson(pathname, options) { bodies.push(JSON.parse(options.body)); return { ok: true, status: 200, data: {} }; } } },
+  });
+  try {
+    await reviewExport("job-1", { keepCaptures: ["/a.png"], formats: ["pdf"] });
+    await reviewExport("job-1", { keepCaptures: ["/a.png"], formats: ["pdf"], rejectedSeamIds: ["seam-ep-0003-ep-0004"], baseRevision: 3 });
+    await reviewExport("job-1", { keepCaptures: ["/a.png"], formats: ["pdf"], rejectedSeamIds: [] });
+  } finally {
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+  }
+  assert.equal("rejected_seam_ids" in bodies[0], false);
+  assert.equal("base_revision" in bodies[0], false);
+  assert.deepEqual([bodies[1].rejected_seam_ids, bodies[1].base_revision], [["seam-ep-0003-ep-0004"], 3]);
+  assert.deepEqual(bodies[2].rejected_seam_ids, []);
+});
+
+test("a rebuilt join shows both printed lines and says both views were kept, in Korean and English", () => {
+  const rebuilt = [LINES[0],
+    { ...LINES[1], seams: [{ id: "seam-ep-0003-ep-0004", status: "unverified", user_rejected: true, boundary: "end", x_frac: 1 }], attention: "seam_unverified" },
+    { ...LINES[2], seams: [{ id: "seam-ep-0003-ep-0004", status: "unverified", user_rejected: true, boundary: "start", x_frac: 0 }] }];
+  const lines = deriveLineReview(rebuilt);
+  assert.deepEqual([lines[1].seams[0].userRejected, lines[1].seams[0].boundary], [true, "end"]);
+  assert.equal(deriveLineReview(LINES)[1].seams[0].userRejected, false);
+  const checks = seamChecks(lines);
+  assert.equal(checks.length, 1, "one card per join, not per printed end");
+  assert.deepEqual(checks[0].around.map(line => line.id), ["line-002", "line-003"]);
+  assert.equal(checks[0].jump, 27.4);
+  for (const [locale, note] of [["ko", "앞뒤 화면을 모두 남겼어요"], ["en", "Both views are kept"]]) {
+    const state = reviewState(locale, rebuilt);
+    state.review.reflow = deriveReflowInfo({ output_model: "clean_reflow_v1", source_video_path: "/src/v.webm",
+      reflow: { revision: 2, line_review: rebuilt, rejected_seam_ids: ["seam-ep-0003-ep-0004"] } });
+    assert.deepEqual(state.review.reflow.rejectedSeamIds, ["seam-ep-0003-ep-0004"]);
+    state.review.lineCheck = { answers: { "seam-ep-0003-ep-0004": "bad" } };
+    const html = renderReviewScreen(state);
+    assert.match(html, new RegExp(note));
+    assert.doesNotMatch(html, /data-action="review-seam-answer"/, "no question on a join already rebuilt");
+    assert.equal(pendingSeamRejections(state), null);
+  }
 });

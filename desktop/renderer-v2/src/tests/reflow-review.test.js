@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createInitialSessionState, deriveCapturePages, deriveOutputPages, deriveReflowInfo } from "../app/session/selectors.js";
+import { createInitialSessionState, deriveCapturePages, deriveOutputPages, deriveReflowInfo, localizePageTitle } from "../app/session/selectors.js";
 import { restoreSession, saveSession } from "../app/session/persistence.js";
 import { createReviewController } from "../features/review/reviewController.js";
 import { renderReviewScreen } from "../features/review/ReviewScreen.js";
@@ -62,6 +62,9 @@ test("reflow systems become review items named by their video order with time an
   assert.deepEqual(deriveCapturePages(moved, "en").map(page => page.title), ["System 3", "System 1", "System 2", "System 4"]);
   assert.equal(deriveOutputPages(reflowResult()).length, 2);
   assert.deepEqual(deriveOutputPages({ preview_images: ["/x.png"] }), []);
+  // the same files rewritten by a rebuild load again: the revision is part of the address
+  const rebuilt = deriveOutputPages({ output_model: "clean_reflow_v1", preview_images: ["/job/export/preview/preview_0001.jpg"], reflow: { revision: 5 } });
+  assert.equal(rebuilt[0].path, "file:///job/export/preview/preview_0001.jpg?r=5");
 });
 
 test("review screen offers order controls, a prominent compare, one-click leave-out and the page view", () => {
@@ -398,4 +401,21 @@ test("several other-moment alternates are one collapsed group, each still includ
     await controller.handleAction("review-toggle-alternates");
     assert.equal(state.review.pages.find(page => page.id === state.review.focusedPageId).minorityAlternate, false);
   }
+});
+
+test("review titles follow a language switch without changing ids or order", () => {
+  const strips = ["/job/reflow/strips/strip_jmp-01-002.png", "/job/reflow/strips/strip_jmp-01-001.png", "/job/reflow/strips/alt/strip_jmp-01-001-alt1.png"];
+  const result = { output_model: "clean_reflow_v1", review_candidates: strips, capture_diagnostics: {
+    [strips[0]]: { system_id: "jmp-01-002", t_start: 12 },
+    [strips[1]]: { system_id: "jmp-01-001", t_start: 4 },
+    [strips[2]]: { system_id: "jmp-01-001-alt1", t_start: 6, diagnostic_codes: ["MINORITY_ALTERNATE"] },
+  } };
+  const ko = deriveCapturePages(result, "ko");
+  assert.deepEqual(ko.map(page => page.title), ["줄 2", "줄 1", "줄 1 · 다른 순간 1"]);
+  const en = ko.map(page => ({ ...page, title: localizePageTitle(page, "en") }));
+  assert.deepEqual(en.map(page => page.title), ["System 2", "System 1", "System 1 · other moment 1"]);
+  assert.deepEqual(en.map(page => page.title), deriveCapturePages(result, "en").map(page => page.title));
+  assert.deepEqual(en.map(page => [page.id, page.capturePath]), ko.map(page => [page.id, page.capturePath]));
+  assert.deepEqual(en.map(page => localizePageTitle(page, "ko")), ko.map(page => page.title));
+  assert.equal(localizePageTitle({ kind: "capture", index: 3 }, "en"), "Page 3");
 });

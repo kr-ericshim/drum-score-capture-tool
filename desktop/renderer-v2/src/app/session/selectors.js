@@ -660,7 +660,10 @@ export function deriveLedgerSummary(summary, shownCodes = APP_REVIEW_CODES) {
 export function deriveOutputPages(result = {}) {
   if (result.output_model !== "clean_reflow_v1") return [];
   const previews = Array.isArray(result.preview_images) ? result.preview_images : [];
-  return previews.map((path, index) => ({ index: index + 1, path: normalizeAssetPath(path) }));
+  // a rebuild rewrites the same file names: the revision keeps the browser from showing the old pages
+  const revision = Number(result.reflow?.revision ?? result.revision);
+  const version = Number.isFinite(revision) && revision > 0 ? `?r=${revision}` : "";
+  return previews.map((path, index) => ({ index: index + 1, path: `${normalizeAssetPath(path)}${version}` }));
 }
 
 function finiteOrNull(value) {
@@ -719,6 +722,8 @@ export function deriveReflowInfo(result = {}) {
     // one entry per printed line: where it sits on its page, which part of the video it came
     // from and the view-jump seams inside it (reflow.line_review; empty for older jobs)
     lines: deriveLineReview(reflow.line_review),
+    // seams the user marked wrong, kept unverified by the last rebuild (reflow.rejected_seam_ids)
+    rejectedSeamIds: Array.isArray(reflow.rejected_seam_ids) ? reflow.rejected_seam_ids.map(String).filter(Boolean) : [],
     sourceVideoPath: String(result.source_video_path || ""),
   };
 }
@@ -742,7 +747,11 @@ export function deriveLineReview(raw) {
     const seams = (Array.isArray(line.seams) ? line.seams : [])
       .filter(seam => LINE_SEAM_STATUSES.has(String(seam?.status)))
       .map(seam => ({ id: String(seam.id || ""), status: String(seam.status), lowInk: Boolean(seam.low_ink),
-        xFrac: Math.min(1, Math.max(0, finite(seam.x_frac) ?? 0)) }));
+        xFrac: Math.min(1, Math.max(0, finite(seam.x_frac) ?? 0)),
+        // the user said this join was wrong and a rebuild kept both views
+        userRejected: seam.user_rejected === true,
+        // a rejected seam now ends one printed line ("end") and starts the next ("start")
+        boundary: ["start", "end"].includes(seam.boundary) ? seam.boundary : "" }));
     const attention = ["seam_inferred", "seam_unverified"].includes(line.attention) ? line.attention : "";
     return [{ id: String(line.line_id || `line-${index + 1}`), page, rect, pageSize: size,
       measures: finite(line.measures), sources, seams, attention }];
@@ -867,6 +876,20 @@ export function reviewListPages(review = {}) {
   };
 }
 
+/**
+ * Display title of a review page, from fields kept on the page so a locale switch can redo it.
+ * A system keeps its name (video order number) when the list is rearranged.
+ */
+export function localizePageTitle(page = {}, locale = "en") {
+  const index = Number(page.index) || 0;
+  if (page.kind !== "system") return t("selector.pageTitle", { locale, replacements: { index } });
+  const titleNumber = systemNumber(page.systemId, index);
+  const otherMoment = alternateNumber(page.systemId);
+  return otherMoment
+    ? t("selector.alternateTitle", { locale, replacements: { index: titleNumber, moment: otherMoment } })
+    : t("selector.systemTitle", { locale, replacements: { index: titleNumber } });
+}
+
 export function deriveCapturePages(result = {}, locale = "en") {
   const pageDiagnostics = Array.isArray(result.page_diagnostics) ? result.page_diagnostics : [];
   const similarPairs = buildSimilarPairIndex(result);
@@ -934,18 +957,13 @@ export function deriveCapturePages(result = {}, locale = "en") {
       || diagnosticCodes.includes("video_frame_content");
     const outputPreviewPath = isReflow ? capturePath : (previewImages[index] || finalImages[index] || capturePath);
     const startSec = Number(diagnostic?.t_start);
-    const otherMoment = isReflow ? alternateNumber(diagnostic?.system_id) : 0;
-    const titleNumber = isReflow ? systemNumber(diagnostic?.system_id, index + 1) : index + 1;
     return {
       id: `${index + 1}`,
       index: index + 1,
       kind: isReflow ? "system" : "capture",
       systemId: isReflow ? String(diagnostic?.system_id || "") : "",
       timeLabel: isReflow && Number.isFinite(startSec) ? formatClockLabel(startSec) : "",
-      // A system keeps its name (video order number) when the list is rearranged.
-      title: otherMoment
-        ? t("selector.alternateTitle", { locale, replacements: { index: titleNumber, moment: otherMoment } })
-        : t(isReflow ? "selector.systemTitle" : "selector.pageTitle", { locale, replacements: { index: titleNumber } }),
+      title: localizePageTitle({ kind: isReflow ? "system" : "capture", index: index + 1, systemId: diagnostic?.system_id }, locale),
       capturePath,
       previewPath: normalizeAssetPath(result.capture_edits?.[capturePath]?.image_path || capturePath),
       cropRect: result.capture_edits?.[capturePath]?.roi || null,

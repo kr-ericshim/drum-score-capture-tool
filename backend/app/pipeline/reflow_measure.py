@@ -561,6 +561,7 @@ def build_atoms(decided: Sequence[Dict[str, Any]], *, target_gap_px: float, cont
     trims: List[Dict[str, Any]] = []
     refusals: List[Dict[str, Any]] = []
     prev_an: Optional[rb.StripAnalysis] = None
+    prev_jump: Dict[str, Any] = {}
     for d in decided:
         sid = d["system"]["id"]
         img, rec, an = images[sid], recs[sid], analyses[sid]
@@ -623,10 +624,17 @@ def build_atoms(decided: Sequence[Dict[str, Any]], *, target_gap_px: float, cont
                        "variant": d["variant"], "label": d.get("label"), "label_section": d.get("label_section"),
                        "trim_out": [XL, XR], "gap_src": gap_src}
         us = sorted(units_by.get(sid, []), key=lambda u: u["box"][0])
-        join_ctx = bool(prev_an is not None and _ends_at_barline(prev_an) and atoms and not atoms[-1].get("overhang")
+        current_jump = rec.get("jump") or {}
+        chain_break = bool(prev_jump.get("unverified_seam_after") or current_jump.get("unverified_seam_before")
+                           or (prev_jump and current_jump and
+                               (prev_jump.get("run"), prev_jump.get("chain")) !=
+                               (current_jump.get("run"), current_jump.get("chain"))))
+        join_ctx = bool(not chain_break and prev_an is not None and _ends_at_barline(prev_an) and atoms and not atoms[-1].get("overhang")
                         and abs(prev_an.gap - an.gap) <= 0.03 * max(prev_an.gap, an.gap))
         ctx_why = None
-        if prev_an is None:
+        if chain_break:
+            ctx_why = "JUMP_CHAIN_BREAK"
+        elif prev_an is None:
             ctx_why = "FIRST_SYSTEM"
         elif not _ends_at_barline(prev_an):
             ctx_why = "PREVIOUS_SYSTEM_NOT_ENDING_AT_BARLINE"
@@ -789,6 +797,7 @@ def build_atoms(decided: Sequence[Dict[str, Any]], *, target_gap_px: float, cont
                     a["carried_number"] = num
             atoms.append(a)
         prev_an = an
+        prev_jump = current_jump
     built = {"atoms": atoms, "strips": strips, "doc": doc, "trims": trims, "join_refusals": refusals,
              "analyses": analyses}
     if line_width and not floor_break_ids:

@@ -276,6 +276,9 @@ class JobReviewExportRequest(BaseModel):
     # Clean reflow jobs: rearrange by measure for this export (True) or keep whole
     # systems (False). Omitted: the job's own option (False for jobs saved before it existed).
     measure_reflow: Optional[bool] = None
+    # Full desired override set. None keeps the committed set; [] clears it.
+    rejected_seam_ids: Optional[List[str]] = None
+    base_revision: Optional[int] = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def validate_selection_mode(self):

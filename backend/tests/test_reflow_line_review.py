@@ -34,6 +34,24 @@ def sample():
 
 
 class LineReviewTest(unittest.TestCase):
+    def test_rejected_boundary_endpoints_across_pages_keep_id_and_original_clip_time(self):
+        _plan, _systems, jump, episodes = sample()
+        jump["seams"][1]["user_rejected"] = True
+        systems = []
+        for sid, display, key in (("before", "ep1", "unverified_seam_after"), ("after", "ep2", "unverified_seam_before")):
+            systems.append({"id": sid, "t_start": 0, "t_end": 30, "strip": {"size": [200, 50], "jump": {
+                "owners": [{"display": display, "strip_cols": [0, 200]}], "stitch_cuts": [], key: "s12"}}})
+        plan = {"page_px": [800, 1000], "pages": [{"placements": [{"system_id": s["id"], "x": 0, "y": 0, "w": 200, "h": 50}]} for s in systems]}
+        lines = build_line_review(plan, systems, jump, episodes)
+        self.assertEqual([l["page"] for l in lines], [1, 2])
+        entries = [s for l in lines for s in l["seams"]]
+        self.assertEqual([s["boundary"] for s in entries], ["end", "start"])
+        self.assertEqual([s["id"] for s in entries], ["s12", "s12"])
+        self.assertEqual([s["jump_time"] for s in entries], [19, 19])
+        self.assertTrue(all(s["user_rejected"] and s["status"] == "unverified" and s["reason"] == "USER_REJECTED" for s in entries))
+        jump["seams"][1]["user_rejected"] = False
+        self.assertTrue(all(not l["seams"] for l in build_line_review(plan, systems, jump, episodes)))
+
     def test_jump_owners_and_stitches_split_across_lines(self):
         plan, systems, jump, episodes = sample()
         before = copy.deepcopy((plan, systems, jump, episodes))
@@ -47,9 +65,9 @@ class LineReviewTest(unittest.TestCase):
         self.assertEqual([s["display"] for s in lines[0]["sources"]], ["ep0", "ep1"])
         self.assertEqual([s["display"] for s in lines[1]["sources"]], ["ep1", "ep2"])
         self.assertEqual([(s["t_start"], s["t_end"]) for s in lines[1]["sources"]], [(10, 19), (20, 30)])
-        self.assertEqual(lines[0]["seams"], [{"id": "s01", "status": "verified", "evidence": [], "low_ink": False, "x_frac": 0.75}])
+        self.assertEqual(lines[0]["seams"], [{"id": "s01", "status": "verified", "evidence": [], "low_ink": False, "x_frac": 0.75, "user_rejected": False}])
         self.assertEqual(lines[1]["seams"], [{"id": "s12", "status": "resolved", "evidence": ["forward", "low_ink_window"],
-                                             "low_ink": True, "x_frac": 0.25}])
+                                             "low_ink": True, "x_frac": 0.25, "user_rejected": False}])
         self.assertIsNone(lines[0]["attention"])
         self.assertEqual(lines[1]["attention"], "seam_inferred")
         self.assertEqual(lines, build_line_review(plan, systems, jump))  # Seam times work without tracking.

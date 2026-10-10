@@ -26,6 +26,8 @@ ACTIVE_STATES = (QUEUED, RUNNING)
 # progress ranges of the stages a background export reports (process_control.report_progress)
 STAGE_RANGES = {
     "queued": (0.0, 0.0),
+    "recovering": (0.01, 0.06),
+    "rebuilding": (0.06, 0.15),
     "planning": (0.02, 0.30),
     "sizing": (0.30, 0.60),
     "rendering": (0.60, 0.80),

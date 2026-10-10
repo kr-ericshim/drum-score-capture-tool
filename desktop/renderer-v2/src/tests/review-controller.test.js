@@ -101,3 +101,21 @@ test("viewer inclusion action resolves the filtered capture and respects rebuild
   await controller.handleAction("review-toggle-focused");
   assert.deepEqual(state.review.selectedPageIds, ["1", "2"]);
 });
+
+test("include all leaves other moments, short displays and exclusion candidates as they were", async () => {
+  let state = createInitialSessionState();
+  state.exportConfig.jobId = "job-select-all";
+  state.review.pages = [
+    { id: "1" }, { id: "2" },
+    { id: "3", minorityAlternate: true },
+    { id: "4", transitionFragment: true },
+    { id: "5", autoExcludeCandidate: true },
+    { id: "6", minorityAlternate: true },
+  ];
+  state.review.selectedPageIds = ["6"];
+  const controller = createReviewController({ getState: () => state, setState: f => { state = f(structuredClone(state)); }, root: {}, api: {} });
+  await controller.handleAction("review-select-all");
+  assert.deepEqual(state.review.selectedPageIds, ["1", "2", "6"]);
+  await controller.handleAction("review-undo");
+  assert.deepEqual(state.review.selectedPageIds, ["6"]);
+});

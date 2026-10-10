@@ -988,12 +988,40 @@ def numbers_check(seam: Dict[str, Any], dis_by: Dict[str, Dict[str, Any]], compo
 def seam_offset(s: Dict[str, Any]) -> Optional[Tuple[int, int]]:
     """(dx, dy) of a verified jump, a verified no-shift seam (one view split by the tracker) or a
     resolved seam; None otherwise."""
+    if s.get("user_rejected"):
+        return None
     if s.get("verified") and s.get("kind") in ("jump", "no_shift"):
         return int(s["dx"]), int(s.get("dy") or 0)
     res = s.get("resolution") or {}
     if res.get("status") == "resolved":
         return int(res["dx"]), int(res.get("dy") or 0)
     return None
+
+
+def effective_seam_status(s: Dict[str, Any]) -> str:
+    """User decisions never mutate the recorded registration or resolution evidence."""
+    if s.get("user_rejected"):
+        return "unverified"
+    return "verified" if s.get("verified") else "resolved" if (s.get("resolution") or {}).get("status") == "resolved" else "unverified"
+
+
+def apply_seam_rejections(jump: Dict[str, Any], rejected: Sequence[str]) -> Dict[str, Any]:
+    """Recompute chains from immutable run membership, without classifying runs again."""
+    import copy
+    out = copy.deepcopy(jump)
+    rejected = set(rejected)
+    for s in out.get("seams", []):
+        s["user_rejected"] = s["id"] in rejected
+    for run in out.get("runs", []):
+        run["panorama_chains"] = panorama_chains(run, out["seams"])
+        run["still_unverified_seam_ids"] = [c["break_after"] for c in run["panorama_chains"] if c["break_after"]]
+        members = {d for c in run["panorama_chains"] for d in c["displays"]}
+        run["resolved_seam_ids"] = [s["id"] for s in out["seams"] if s["a"] in members and s["b"] in members
+                                    and effective_seam_status(s) == "resolved"]
+    statuses = [effective_seam_status(s) for s in out.get("seams", [])]
+    out["effective_summary"] = {k: statuses.count(k) for k in ("verified", "resolved", "unverified")}
+    out["rejected_seam_ids"] = sorted(rejected)
+    return out
 
 
 # --------------------------------------------------------------------------- gate and runs
@@ -1426,11 +1454,14 @@ def stitch_cut(ca: np.ndarray, cb: np.ndarray, pa: Tuple[int, int], pb: Tuple[in
 
 
 def build_panorama(chain: Sequence[str], seam_of: Dict[Tuple[str, str], Dict[str, Any]], composites: Dict[str, np.ndarray],
-                   covered: Dict[str, np.ndarray], panel_right: int, gap: float, cfg: Dict[str, Any]) -> Tuple[np.ndarray, Dict[str, Any]]:
+                   covered: Dict[str, np.ndarray], panel_right: int, gap: float, cfg: Dict[str, Any], *,
+                   left_trim: int = 0) -> Tuple[np.ndarray, Dict[str, Any]]:
     """One long strip for a chain of verified/resolved seams with a per-column owner map:
     every panorama column comes from exactly one display. A display's panel columns are used
     only where no other display shows them (the chain's first display)."""
-    X, Y = [0], [0]
+    if not 0 <= left_trim < composites[chain[0]].shape[1]:
+        raise ValueError("invalid panorama left trim")
+    X, Y = [-int(left_trim)], [0]
     for a, b in zip(chain, chain[1:]):
         dx, dy = seam_offset(seam_of[(a, b)])
         X.append(X[-1] + dx)
@@ -1610,11 +1641,49 @@ def _jump_display_fragment(d: str, fragments: Dict[str, Dict[str, Any]], equival
     return fragment
 
 
+def _panel_label_votes(displays: Sequence[str], composites: Dict[str, np.ndarray], covered: Dict[str, np.ndarray],
+                       eps: Dict[str, Dict[str, Any]], obs_by: Dict[str, Dict[str, Any]], panel_right: int,
+                       cfg: Dict[str, Any], pcfg: Dict[str, Any], *, include_panel: bool = False) -> np.ndarray:
+    """The original comparison scope's faded near-panel pixel votes, never reclassified."""
+    h = max(composites[d].shape[0] for d in displays)
+    w = max(composites[d].shape[1] for d in displays)
+    votes = np.zeros((h, w), np.int32)
+    if panel_right <= 0:
+        return votes
+    for d in displays[1:]:
+        comp, ep = composites[d], eps[d]
+        dh, dw = comp.shape[:2]
+        ink, _ = coverage_ink(comp, float(ep["staff_gap_px"]), _episode_staff_y(ep, obs_by),
+                              float(cfg["ink_level"]), COVERAGE_CONFIG)
+        if not include_panel:
+            ink[:, :min(dw, panel_right)] = False
+        if d in covered:
+            ink[:, np.asarray(covered[d][:dw], dtype=bool)] = False
+        norm, _ = sd.normalize_polarity(comp)
+        gray = (cv2.cvtColor(norm, cv2.COLOR_BGR2GRAY) if norm.ndim == 3 else norm).astype(np.float32)
+        contrast = np.clip(float(np.percentile(gray, 75)) - gray, 0, None)
+        body = contrast[:, panel_right:][ink[:, panel_right:]]
+        ref_c = float(np.percentile(body, 90)) if body.size else None
+        if ref_c:
+            if include_panel:
+                edge = min(dw, panel_right)
+                votes[:dh, :edge] += ink[:, :edge] & (contrast[:, :edge] < cfg["panel_faded_contrast"] * ref_c)
+            reach = panel_right + 1 + float(pcfg["label_reach_gaps"]) * float(ep["staff_gap_px"])
+            a, b = panel_right + 2, min(dw, int(np.floor(reach)) + 1)
+            if b > a:
+                votes[:dh, a:b] += ink[:, a:b] & (contrast[:, a:b] < cfg["panel_faded_contrast"] * ref_c)
+    return votes
+
+
 def panorama_preservation(chain: Sequence[str], info: Dict[str, Any], pano: np.ndarray, composites: Dict[str, np.ndarray],
                           covered: Dict[str, np.ndarray], eps: Dict[str, Dict[str, Any]], obs_by: Dict[str, Dict[str, Any]],
                           panel_right: int, cfg: Dict[str, Any], *, fixed: Optional[np.ndarray] = None,
                           chrome: Optional[np.ndarray] = None, chrome_info: Optional[Dict[str, Any]] = None,
-                          pcfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                          pcfg: Optional[Dict[str, Any]] = None,
+                          analysis_chain: Optional[Sequence[str]] = None,
+                          label_votes: Optional[np.ndarray] = None,
+                          start_trim: int = 0,
+                          retained_left: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Every display of a stitched chain against the panorama actually built from it. A
     complete column owner map says only which display supplies each column; it does not show
     that what the other displays draw in those columns is there. For each display, every ink
@@ -1657,18 +1726,26 @@ def panorama_preservation(chain: Sequence[str], info: Dict[str, Any], pano: np.n
     cnt_by: Dict[str, Dict[str, int]] = {}
     # per crop pixel: in how many displays it is faded ink just right of the panel edge; and the
     # unmatched faded components there (with their crop pixels), decided once every display is seen
-    lh = max(int(composites[d].shape[0]) for d in chain)
-    lw = max(int(composites[d].shape[1]) for d in chain)
-    label_votes = np.zeros((lh, lw), np.int32)
+    comparison = analysis_chain if analysis_chain is not None else chain
+    external_votes = label_votes is not None or analysis_chain is not None
+    if label_votes is None:
+        label_votes = _panel_label_votes(comparison, composites, covered, eps, obs_by, panel_right, cfg, pcfg,
+                                         include_panel=bool(start_trim)) \
+            if external_votes else np.zeros((max(composites[d].shape[0] for d in chain),
+                                             max(composites[d].shape[1] for d in chain)), np.int32)
     label_pending: List[Tuple[Dict[str, Any], np.ndarray, np.ndarray]] = []
+    trim_evidence: List[Dict[str, Any]] = []
+    recurring = label_votes >= int(pcfg["label_recur_min_others"]) + 1
+    if recurring.any():
+        recurring = cv2.dilate(recurring.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
     items: List[Dict[str, Any]] = []
     # Use the line-switch chrome detector, with its own steady appearance. Direct
     # callers without a raw loader can still obtain positive evidence from the
     # composites; build_jump_systems supplies the job's raw-observation evidence.
     if chrome_info is None:
-        shapes = [composites[d].shape for d in chain]
+        shapes = [composites[d].shape for d in comparison]
         shape = max(set(shapes), key=shapes.count)
-        chrome, chrome_info = oc.screen_fixed_chrome([composites[d] for d in chain if composites[d].shape == shape])
+        chrome, chrome_info = oc.screen_fixed_chrome([composites[d] for d in comparison if composites[d].shape == shape])
     appearance = chrome_info.get("_appearance")
     reference = rs.nearest_appearance(appearance) if appearance is not None else None
     chrome_evidence = {k: v for k, v in chrome_info.items() if not k.startswith("_")}
@@ -1684,7 +1761,9 @@ def panorama_preservation(chain: Sequence[str], info: Dict[str, Any], pano: np.n
         if chrome is not None and chrome.shape == ink.shape and reference is not None and reference.shape[:2] == ink.shape:
             palette = rs.chrome_palette([comp], chrome)
             identified = rs.chrome_explained(comp, ink & chrome, palette, rs._paper_color(comp, ~chrome), reference)
-        if k > 0 and panel_right > 0:
+        later_display = d != comparison[0]
+        trimmed_start = k == 0 and start_trim > 0 and later_display
+        if later_display and panel_right > 0 and not trimmed_start:
             ink[:, :min(w, int(panel_right))] = False  # the screen-fixed panel: not score content of a later display
         cov = covered.get(d)
         if cov is not None:
@@ -1693,7 +1772,7 @@ def panorama_preservation(chain: Sequence[str], info: Dict[str, Any], pano: np.n
         cnt = {"components": 0, "owned": 0, "matched": 0, "unmatched": 0, "speckle": 0, "panel_overflow": 0,
                "panel_label_recurring": 0}
         cnt_by[d] = cnt
-        edge = int(panel_right) if k > 0 else 0
+        edge = int(panel_right) if later_display else 0
         label_reach = edge + 1 + float(pcfg["label_reach_gaps"]) * float(ep["staff_gap_px"])
         contrast = ref_c = None
         if edge > 0:
@@ -1702,11 +1781,28 @@ def panorama_preservation(chain: Sequence[str], info: Dict[str, Any], pano: np.n
             contrast = np.clip(float(np.percentile(g, 75)) - g, 0, None)
             body = contrast[:, edge:][ink[:, edge:]]  # the display's own ink right of its panel
             ref_c = float(np.percentile(body, 90)) if body.size else None
-            if ref_c:
+            if ref_c and not external_votes:
                 b0, b1 = edge + 2, min(w, int(np.floor(label_reach)) + 1)  # edge+1 < x <= label_reach
                 if b1 > b0:
                     band = ink[:, b0:b1] & (contrast[:, b0:b1] < cfg["panel_faded_contrast"] * ref_c)
                     label_votes[:h, b0:b1] += band
+        panel_pixels = np.zeros(ink.shape, bool)
+        if trimmed_start and ref_c:
+            # Use the already detected panel and the same faded-ink threshold.
+            # Dark ink is not panel merely because it falls left of the trim.
+            panel_pixels[:, :edge] = (contrast[:, :edge] < cfg["panel_faded_contrast"] * ref_c) & recurring[:h, :edge]
+            # Opaque fixed panel strokes also need their own steady appearance,
+            # using the existing chrome appearance and matching tolerances.
+            samples = [composites[e][:, :edge] for e in comparison[1:]
+                       if composites[e].shape == comp.shape]
+            if comp.ndim == 3 and len(samples) >= int(cfg["panel_min_pairs"]):
+                values = np.stack(samples).astype(np.float32)
+                stable = values.std(axis=0).max(axis=-1) <= oc.CHROME_MAX_STD
+                panel_pixels[:, :edge] |= rs.chrome_explained(
+                    comp[:, :edge], ink[:, :edge] & stable, np.empty((0, 3), np.float32),
+                    rs._paper_color(comp, ~ink), values.mean(axis=0))
+            panel_pixels |= identified
+            panel_pixels[:, start_trim:] = False
         for i in range(1, n):
             x, y, bw, bh, area = (int(v) for v in stats[i])
             cnt["components"] += 1
@@ -1728,15 +1824,50 @@ def panorama_preservation(chain: Sequence[str], info: Dict[str, Any], pano: np.n
                 continue
             fx, fy = px[foreign], py[foreign]
             inside = (fx >= 0) & (fx < pw) & (fy >= 0) & (fy < ph)
-            hit = int(pink[fy[inside], fx[inside]].sum())
+            hits = np.zeros(nf, bool)
+            hits[inside] = pink[fy[inside], fx[inside]]
+            prefix_problem = False
+            if trimmed_start:
+                cy, cx = (ys + y)[foreign], (xs + x)[foreign]
+                prefix = cx < start_trim
+                if prefix.any():
+                    explained_panel = panel_pixels[cy, cx].copy()
+                    faded = contrast[cy, cx] < cfg["panel_faded_contrast"] * ref_c if ref_c else np.zeros(nf, bool)
+                    faded_panel = prefix & faded & (cx < edge)
+                    if faded_panel.any() and float(recurring[cy[faded_panel], cx[faded_panel]].mean()) >= float(pcfg["label_mask_cover"]):
+                        explained_panel |= faded_panel
+                    # Assess only the discarded pixels: a retained black note can
+                    # touch a faded label without turning that label into music.
+                    if edge - 1 <= x <= edge + 1 or (x <= edge + 1 and bool((explained_panel & (cx < edge)).any())):
+                        explained_panel |= faded & (cx >= edge)
+                    explained_panel |= faded & recurring[cy, cx] & (cx <= label_reach)
+                    explained_panel &= prefix
+                    retained = np.zeros(nf, bool)
+                    if retained_left is not None:
+                        rx, ry = cx + retained_left["dx"], cy + retained_left["dy"]
+                        target = retained_left["ink"]
+                        valid = prefix & (rx >= 0) & (rx < target.shape[1]) & (ry >= 0) & (ry < target.shape[0])
+                        retained[valid] = target[ry[valid], rx[valid]]
+                    hits |= explained_panel | retained
+                    unexplained = int((prefix & ~hits).sum())
+                    prefix_problem = unexplained > int(pcfg["min_foreign_px"])
+                    trim_evidence.append({"display": d, "box_crop": [x, y, x + bw, y + bh],
+                                          "trim_native": [0, int(start_trim)], "panel_px": int(explained_panel.sum()),
+                                          "retained_overlap_px": int((retained & ~explained_panel).sum()),
+                                          "unexplained_px": unexplained,
+                                          "retained_display": retained_left["display"] if retained_left else None,
+                                          "basis": "original_nonfirst_panel_and_retained_edge"})
+                    if bool(explained_panel.all()):
+                        cnt["panel_overflow"] += 1
+                        continue
+            hit = int(hits.sum())
             frac = hit / float(nf)
-            if nf <= int(pcfg["min_foreign_px"]) or frac >= float(pcfg["match_min_frac"]):
+            if not prefix_problem and (nf <= int(pcfg["min_foreign_px"]) or frac >= float(pcfg["match_min_frac"])):
                 cnt["matched"] += 1
                 continue
             # All missing foreign pixels need an appearance explanation. A chrome
             # icon adjacent to a neutral note cannot exempt the whole component.
-            missing = np.ones(nf, bool)
-            missing[inside] = ~pink[fy[inside], fx[inside]]
+            missing = ~hits
             explained = identified[ys + y, xs + x][foreign]
             if bool(explained[missing].all()):
                 fixed_out.append({"display": d, "box_crop": [x, y, x + bw, y + bh],
@@ -1745,7 +1876,7 @@ def panorama_preservation(chain: Sequence[str], info: Dict[str, Any], pano: np.n
                                   "classification": "EXPLAINED_CHROME",
                                   "evidence": {"method": "screen_fixed_chrome_appearance", **chrome_evidence}})
                 continue
-            if edge > 0 and x <= edge + 1 and ref_c and \
+            if not prefix_problem and edge > 0 and x <= edge + 1 and ref_c and \
                     float(contrast[y:y + bh, x:x + bw][lab[y:y + bh, x:x + bw] == i].max()) < cfg["panel_faded_contrast"] * ref_c:
                 # faded ink cut by a later display's panel edge: the panel's own label running past
                 # the measured panel (a measure number, an instrument name); the panel is screen
@@ -1756,7 +1887,7 @@ def panorama_preservation(chain: Sequence[str], info: Dict[str, Any], pano: np.n
                         "area_px": area, "foreign_px": nf, "matched_frac": round(frac, 3),
                         "owner": next((o["display"] for o in info["owners"]
                                        if o["pano_cols"][0] <= int(np.median(fx)) < o["pano_cols"][1]), None)}
-            if near_label:
+            if near_label and not prefix_problem:
                 label_pending.append((conflict, ys + y, xs + x))  # decided by recurrence below
                 continue
             cnt["unmatched"] += 1
@@ -1797,7 +1928,8 @@ def panorama_preservation(chain: Sequence[str], info: Dict[str, Any], pano: np.n
             "content_preserved": not conflicts, "conflicts": conflicts,
             "panel_label_recurring": label_out,
             "screen_fixed": fixed_out, "screen_fixed_suspicions": suspicions,
-            "chrome_evidence": chrome_evidence}
+            "chrome_evidence": chrome_evidence,
+            **({"start_trim_evidence": trim_evidence} if start_trim else {})}
 
 
 def _strip_conflicts(ledger: Dict[str, Any], x0: int, x1: int, first_k: bool, last_k: bool, prefix_w: int, top: int, sid: str,
@@ -2013,7 +2145,8 @@ def build_jump_systems(jump: Dict[str, Any], tracking: Dict[str, Any], manifest:
                        load: Optional[ImageLoader] = None,
                        evidence_dir: Optional[Path] = None, ledger: bool = False,
                        logger: Callable[[str], None] = lambda _m: None,
-                       checkpoint: Callable[[], None] = lambda: None) -> List[Tuple[Dict[str, Any], Dict[str, Any]]]:
+                       checkpoint: Callable[[], None] = lambda: None,
+                       run_indices: Optional[Sequence[int]] = None) -> List[Tuple[Dict[str, Any], Dict[str, Any]]]:
     """Panorama strips of every jump-view run: (occurrence entry, strip record with ``path``) per
     chunk, in video order. The strip record has the keys of ``reflow_strips.build_strip`` plus a
     ``jump`` section (chain, owner map, member offsets, clef prefix, flags). Strip coordinates:
@@ -2045,20 +2178,51 @@ def build_jump_systems(jump: Dict[str, Any], tracking: Dict[str, Any], manifest:
     chrome, chrome_info = None, None
     if load is not None:
         chrome, chrome_info = rs.job_screen_chrome(manifest, load)
-        audits, spots = audit_jump_minority(jump, eps, obs_by, composites, load, manifest=manifest)
+        audit_jump = dict(jump, runs=[r for i, r in enumerate(jump.get("runs") or [])
+                                     if run_indices is None or i in run_indices])
+        audits, spots = audit_jump_minority(audit_jump, eps, obs_by, composites, load, manifest=manifest)
         logger(f"jump: minority audit of {len(audits)} displays: {sum(len(a['events']) for a in audits.values())} events"
                + (f", specks at {len(spots)} screen-fixed spots kept on record" if spots else ""))
     for ri, run in enumerate(jump.get("runs") or []):
+        if run_indices is not None and ri not in run_indices:
+            continue
         panel_right = panel_of.get(run["slot_id"], 0)
+        analysis_context = {}
+        analysis_starts = {}
+        original_pairs = {}
+        run_members = {d for c in run["panorama_chains"] for d in c["displays"]}
+        if any(s.get("user_rejected") and s["a"] in run_members and s["b"] in run_members for s in seam_of.values()):
+            # Retain the original comparison population and original incoming
+            # owner boundary. Reusing recorded offsets is not seam registration.
+            original_seams = [dict(s, user_rejected=False) for s in jump.get("seams", [])]
+            original_pairs = {(s["a"], s["b"]): s for s in original_seams}
+            for original_chain in panorama_chains(run, original_seams):
+                members = original_chain["displays"]
+                gap = float(np.median([float(eps[d]["staff_gap_px"]) for d in members]))
+                _original_pano, original_info = build_panorama(members, original_pairs, composites, covered,
+                                                               panel_right, gap, cfg)
+                votes = _panel_label_votes(members, composites, covered, eps, obs_by, panel_right, cfg, PRESERVE_CONFIG,
+                                           include_panel=True)
+                for owner in original_info["owners"]:
+                    d = owner["display"]
+                    analysis_context[d] = (members, votes)
+                    analysis_starts[d] = owner["owned_cols_display"][0]
+                del _original_pano
         clef: Optional[Dict[str, Any]] = None
         clef_source: Optional[Dict[str, Any]] = None
         clef_info: Dict[str, Any] = {"verified": False, "reason": "not_checked"}
         chunk_no = 0
+        previous_owner = None
         for ci, chain in enumerate(run["panorama_chains"]):
             checkpoint()
             disp = chain["displays"]
             gap = float(np.median([float(eps[d]["staff_gap_px"]) for d in disp]))
-            pano, info = build_panorama(disp, seam_of, composites, covered, panel_right, gap, cfg)
+            rejected_start = bool(chain.get("break_before") and
+                                  next((s.get("user_rejected") for s in seam_of.values()
+                                        if s["id"] == chain["break_before"]), False))
+            left_trim = max(panel_right, analysis_starts.get(disp[0], panel_right)) \
+                if rejected_start and panel_right > 0 else 0
+            pano, info = build_panorama(disp, seam_of, composites, covered, panel_right, gap, cfg, left_trim=left_trim)
             if not info["owner_map_complete"]:
                 raise ValueError(f"panorama owner map incomplete for {disp[0]}..{disp[-1]}")
             for d in disp if ledger else ():
@@ -2068,9 +2232,30 @@ def build_jump_systems(jump: Dict[str, Any], tracking: Dict[str, Any], manifest:
                                                         evidence_dir=evidence_dir)["ledger"]
             # a complete owner map does not certify preservation: every display's own content is
             # looked up in the panorama actually built (Codex J1)
+            comparison, votes = analysis_context.get(disp[0], (None, None))
+            retained_left = None
+            if left_trim and previous_owner is not None:
+                a = previous_owner["display"]
+                original_offset = seam_offset(original_pairs.get((a, disp[0]), {}))
+                if original_offset is not None:
+                    # The preceding chain keeps its full right edge. This is a
+                    # pixel witness, not permission to join the rejected seam.
+                    target, _ = coverage_ink(composites[a], float(eps[a]["staff_gap_px"]),
+                                             _episode_staff_y(eps[a], obs_by), float(cfg["ink_level"]), COVERAGE_CONFIG)
+                    lo, hi = previous_owner["owned_cols_display"]
+                    target[:, :lo] = False
+                    target[:, hi:] = False
+                    target[:, np.asarray(covered[a], dtype=bool)] = False
+                    tol = int(PRESERVE_CONFIG["match_tol_px"])
+                    if tol > 0:
+                        target = cv2.dilate(target.astype(np.uint8), np.ones((2 * tol + 1, 2 * tol + 1), np.uint8)) > 0
+                    retained_left = {"ink": target, "display": a, "dx": original_offset[0], "dy": original_offset[1]}
             preservation = panorama_preservation(disp, info, pano, composites, covered, eps, obs_by, panel_right, cfg,
                                            fixed=(fixed_of or {}).get(str(run["slot_id"])),
-                                           chrome=chrome, chrome_info=chrome_info)
+                                           chrome=chrome, chrome_info=chrome_info,
+                                           analysis_chain=comparison, label_votes=votes,
+                                           start_trim=left_trim, retained_left=retained_left)
+            previous_owner = info["owners"][-1]
             equivalences = _overlap_dispositions(disp, info, composites, seam_of, preservation, covered) if ledger else {}
             attached: set[str] = set()
             if preservation["conflicts"]:
@@ -2165,6 +2350,7 @@ def build_jump_systems(jump: Dict[str, Any], tracking: Dict[str, Any], manifest:
                 h = img.shape[0]
                 jrec = {
                     "run": ri, "chain": ci, "chunk": k, "chunks_in_chain": len(edges) - 1,
+                    **({"left_trim_native": left_trim, "left_trim_basis": "original_nonfirst_owner"} if left_trim else {}),
                     "chain_displays": [disp[0], disp[-1]], "pano_cols": [int(x0), int(x1)],
                     "owners": [{"display": o["display"], "strip_cols": [int(max(x0, o["pano_cols"][0]) - x0 + prefix_w),
                                                                          int(min(x1, o["pano_cols"][1]) - x0 + prefix_w)],
@@ -2184,6 +2370,8 @@ def build_jump_systems(jump: Dict[str, Any], tracking: Dict[str, Any], manifest:
                                      "screen_fixed": preservation["screen_fixed"] if k == 0 else [],
                                      "screen_fixed_suspicions": preservation["screen_fixed_suspicions"] if k == 0 else [],
                                      "panel_label_recurring": preservation["panel_label_recurring"] if k == 0 else [],
+                                     **({"start_trim_evidence": preservation["start_trim_evidence"]}
+                                        if k == 0 and "start_trim_evidence" in preservation else {}),
                                      "chrome_evidence": preservation["chrome_evidence"],
                                      "conflicts": chunk_conf},
                 }
@@ -2331,6 +2519,8 @@ STATUS_RANK = {"non_score": 0, "redundant": 1, "recovered": 2, "unresolved": 3}
 
 def _link_dx(s: Dict[str, Any]) -> Optional[int]:
     """Offset of a registered seam (verified, any shift, or resolved); None when unknown."""
+    if s.get("user_rejected"):
+        return None
     if s.get("verified") and s.get("dx") is not None:
         return int(s["dx"])
     res = s.get("resolution") or {}

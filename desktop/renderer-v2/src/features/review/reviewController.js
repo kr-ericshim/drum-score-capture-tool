@@ -175,6 +175,8 @@ export function createReviewController({ getState, setState, api, mountEditor, r
         if (action === "review-seam-answer") {
           const [seamId, answer] = String(value || "").split("|");
           if (seamId && ["ok", "bad"].includes(answer)) check.answers = { ...(check.answers || {}), [seamId]: answer };
+          // a join to rebuild: the files on disk no longer match the review
+          if (answer === "bad" && !(next.review.reflow?.rejectedSeamIds || []).includes(seamId) && next.review.status === "applied") next.review.status = "idle";
         }
         // shown only when no other view (pages, items to check, crop) covers it
         if (action === "review-lines") check.open = !(lineCheckOpen(next) && !next.review.pagePreview && !next.review.hypotheses?.open && !next.review.cropping);
@@ -206,7 +208,13 @@ export function createReviewController({ getState, setState, api, mountEditor, r
       });
       return;
     }
-    if (action === "review-select-all") { select(state.review.pages.map(page => page.id)); return; }
+    if (action === "review-select-all") {
+      // other moments, short displays and exclusion candidates would repeat measures: they keep their own tick
+      const selected = new Set(state.review.selectedPageIds);
+      const spare = page => page.minorityAlternate || page.transitionFragment || page.autoExcludeCandidate;
+      select(state.review.pages.filter(page => !spare(page) || selected.has(page.id)).map(page => page.id));
+      return;
+    }
     if (action === "review-select-none") { select([]); return; }
     if (action === "review-undo" || action === "review-redo") {
       const from = action === "review-undo" ? undo : redo;

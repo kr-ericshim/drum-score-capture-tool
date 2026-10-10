@@ -196,7 +196,7 @@ def probe_video(path: Path) -> VideoInfo:
     return VideoInfo(str(path), fps, count, w, h, dur)
 
 
-def iter_frames_at(path: Path, targets: Iterable[float]) -> Iterator[Tuple[float, float, np.ndarray]]:
+def iter_frames_at(path: Path, targets: Iterable[float], *, checkpoint: Callable[[], None] = lambda: None) -> Iterator[Tuple[float, float, np.ndarray]]:
     """Yield ``(target_sec, pts_sec, frame)`` for each target time.
 
     The chosen frame is the first decoded frame whose PTS is at or after
@@ -215,6 +215,7 @@ def iter_frames_at(path: Path, targets: Iterable[float]) -> Iterator[Tuple[float
     i = 0
     try:
         while i < len(todo):
+            checkpoint()
             if not cap.grab():
                 break
             pts = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
@@ -686,3 +687,108 @@ def load_observation_image(manifest_dir: Path, obs: Dict[str, Any], manifest: Op
     for _t, _pts, frame in iter_frames_at(Path(manifest["source"]["path"]), [obs["t_sec"]]):
         return crop_observation(frame, obs["applied_roi"], obs.get("crop_size"))
     raise FileNotFoundError(f"frame at {obs['t_sec']} not decodable")
+
+
+class SeamRepairSourceUnavailable(RuntimeError):
+    code = "SEAM_REPAIR_SOURCE_UNAVAILABLE"
+
+    def __init__(self, reason: str):
+        super().__init__(f"{self.code}: {reason}; previous export kept")
+
+
+def recover_observation_images(manifest_dir: Path, manifest: Dict[str, Any], observation_ids: Iterable[str],
+                               recovery_dir: Path, *, checkpoint: Callable[[], None] = lambda: None,
+                               progress: Callable[[float], None] = lambda _f: None,
+                               max_bytes: int = 768 * 1024 * 1024) -> Callable[[Dict[str, Any]], np.ndarray]:
+    """Reuse complete PNG crops; decode all missing saved PTS in one cancellable pass.
+
+    Missing crops live only in the caller's unpublished workspace. The returned loader
+    has a bounded LRU and never falls back to another source decode. The caller removes
+    recovery_dir after the audited producers finish, including on cancellation/failure.
+    """
+    from collections import OrderedDict
+    from app.pipeline.process_control import OperationCancelled
+
+    by_id = {o["id"]: o for o in manifest["observations"]}
+    ids = sorted(set(observation_ids), key=lambda oid: (float(by_id[oid]["t_sec"]), oid))
+    paths, missing = {}, []
+
+    def check_shape(img, obs):
+        size = obs.get("crop_size")
+        if img is None or not size or list(img.shape[:2][::-1]) != list(size) or img.ndim != 3 or img.shape[2] != 3:
+            raise SeamRepairSourceUnavailable(f"crop shape mismatch for {obs['id']}")
+
+    for i, oid in enumerate(ids):
+        checkpoint()
+        obs = by_id[oid]
+        path = Path(manifest_dir) / obs["frame_path"] if obs.get("frame_path") else None
+        img = cv2.imread(str(path)) if path is not None and path.is_file() else None
+        if img is None:
+            missing.append(obs)
+        else:
+            check_shape(img, obs)
+            paths[oid] = path
+        progress(0.1 * (i + 1) / max(1, len(ids)))
+    if missing:
+        source = manifest.get("source") or {}
+        path = Path(source.get("path") or "")
+        try:
+            checkpoint()
+            try:
+                matches = path.is_file() and source.get("sha256") and file_sha256(path) == source["sha256"]
+            except OSError as exc:
+                raise SeamRepairSourceUnavailable("source missing or unreadable") from exc
+            if not matches:
+                raise SeamRepairSourceUnavailable("source missing or SHA-256 mismatch")
+            recovery_dir = Path(recovery_dir)
+            recovery_dir.mkdir(parents=True, exist_ok=True)
+            targets = {}
+            for obs in missing:
+                targets.setdefault(round(float(obs["t_sec"]), 6), []).append(obs)
+            recovered = 0
+            for target, pts, frame in iter_frames_at(path, targets, checkpoint=checkpoint):
+                checkpoint()
+                if abs(float(pts) - target) > 0.000001:
+                    raise SeamRepairSourceUnavailable(f"saved frame timing mismatch at {target}")
+                if list(frame.shape[:2][::-1]) != list(source.get("frame_size") or []):
+                    raise SeamRepairSourceUnavailable("source frame shape mismatch")
+                for obs in targets[target]:
+                    img = crop_observation(frame, obs["applied_roi"], obs.get("crop_size"))
+                    check_shape(img, obs)
+                    dest = recovery_dir / f"{obs['id']}.png"
+                    if not cv2.imwrite(str(dest), img):
+                        raise OSError(f"failed to write recovered crop {dest}")
+                    paths[obs["id"]] = dest
+                    recovered += 1
+                    progress(0.1 + 0.9 * recovered / len(missing))
+            if recovered != len(missing):
+                raise SeamRepairSourceUnavailable("saved frames not decodable")
+        except (OperationCancelled, SeamRepairSourceUnavailable):
+            raise
+        except (RuntimeError, ValueError, KeyError, cv2.error) as exc:
+            raise SeamRepairSourceUnavailable(str(exc)) from exc
+    progress(1.0)
+    cache = OrderedDict()
+    held = 0
+
+    def load(obs):
+        nonlocal held
+        checkpoint()
+        oid = obs["id"]
+        if oid in cache:
+            cache.move_to_end(oid)
+            return cache[oid]
+        if oid not in paths:
+            raise SeamRepairSourceUnavailable(f"unrecovered dependency {oid}")
+        img = cv2.imread(str(paths[oid]))
+        check_shape(img, obs)
+        if img.nbytes <= max_bytes:
+            cache[oid] = img
+            held += img.nbytes
+            while held > max_bytes:
+                _, dropped = cache.popitem(last=False)
+                held -= dropped.nbytes
+        return img
+
+    load.paths = paths
+    return load

@@ -282,7 +282,9 @@ function renderPageWindow(path, pageW, [x, y, w, h], alt, overlay = "") {
 function renderSeamCheck(check, index, lineCheck, pagePath, roiCrop, videoUrl, lines, locale) {
   const tt = (key, replacements = {}) => escapeHtml(t(`review.lines.${key}`, { locale, replacements }));
   const { seam, line, lineNumber, around, clip } = check;
-  const answer = lineCheck?.answers?.[seam.id] || "";
+  // a join the last rebuild kept with both views, after the user marked it wrong
+  const repaired = seam.userRejected;
+  const answer = repaired ? "" : lineCheck?.answers?.[seam.id] || "";
   const where = tt("checkWhere", { page: line.page, line: lineNumber, time: clock(check.jump) });
   const printed = around.map(other => {
     const number = lineNumberOnPage(lines, other);
@@ -292,11 +294,11 @@ function renderSeamCheck(check, index, lineCheck, pagePath, roiCrop, videoUrl, l
   const crop = roiCrop ? `style="aspect-ratio:${roiCrop.w.toFixed(1)} / ${roiCrop.h.toFixed(1)}"` : "";
   const videoStyle = roiCrop ? `style="width:${pct(roiCrop.frameW / roiCrop.w)};margin-left:${pct(-roiCrop.x / roiCrop.w)};margin-top:${pct(-roiCrop.y / roiCrop.w)}"` : "";
   const clipLabel = clip ? `${clock(clip[0])}–${clock(clip[1])}` : "";
-  return `<article class="review-seam-check ${answer ? `is-${answer}` : ""}" data-seam-id="${escapeHtml(seam.id)}" aria-labelledby="seamCheck${index}">
+  return `<article class="review-seam-check ${repaired ? "is-repaired" : answer ? `is-${answer}` : ""}" data-seam-id="${escapeHtml(seam.id)}" aria-labelledby="seamCheck${index}">
       <header class="review-line-head">
         <strong id="seamCheck${index}">${tt("checkTitle", { index: index + 1 })}</strong>
         <span class="review-line-meta">${where}</span>
-        ${answer === "ok" ? `<span class="review-seam-done">${tt("answeredOk")}</span>` : ""}
+        ${answer === "ok" ? `<span class="review-seam-done">${tt("answeredOk")}</span>` : repaired ? `<span class="review-seam-done">${tt("repairedTag")}</span>` : ""}
       </header>
       <p class="review-seam-label">${tt("pdfLabel")}</p>
       <div class="review-seam-printed">${printed}</div>
@@ -307,13 +309,13 @@ function renderSeamCheck(check, index, lineCheck, pagePath, roiCrop, videoUrl, l
       <div class="review-seam-play-row">
         <button type="button" class="button button-primary" data-action="review-seam-play" data-value="${escapeHtml(seam.id)}" data-label-play="${tt("play", { range: clipLabel })}" data-label-pause="${tt("pause")}">${tt("play", { range: clipLabel })}</button>
       </div>` : `<p class="review-reflow-note" role="status">${tt("videoMissing")}</p>`}
-      <p class="review-seam-question">${tt("question")}</p>
+      ${repaired ? `<p class="review-reflow-note" role="status">${tt("repairedNote")}</p>` : `<p class="review-seam-question">${tt("question")}</p>
       <div class="review-seam-answers" role="group" aria-label="${tt("checkTitle", { index: index + 1 })}">
         <button type="button" class="button ${answer === "ok" ? "button-primary" : "button-secondary"}" data-action="review-seam-answer" data-value="${escapeHtml(seam.id)}|ok" aria-pressed="${answer === "ok"}">${tt("answerOk")}</button>
         <button type="button" class="button button-secondary" data-action="review-seam-answer" data-value="${escapeHtml(seam.id)}|bad" aria-pressed="${answer === "bad"}">${tt("answerBad")}</button>
       </div>
       ${answer === "bad" ? `<div class="review-reflow-note is-warning" role="status"><p>${tt("badNote")}</p>
-        <button type="button" class="button button-secondary" data-action="open-bug-report">${tt("report")}</button></div>` : ""}
+        <button type="button" class="button button-secondary" data-action="open-bug-report">${tt("report")}</button></div>` : ""}`}
     </article>`;
 }
 
@@ -323,7 +325,7 @@ function renderLineCheck(lines, lineCheck, outputPages, roiCrop, videoUrl, local
   const tt = (key, replacements = {}) => escapeHtml(t(`review.lines.${key}`, { locale, replacements }));
   const seams = lines.flatMap(line => line.seams);
   const checks = seamChecks(lines);
-  const answered = checks.filter(check => lineCheck?.answers?.[check.seam.id]).length;
+  const answered = checks.filter(check => check.seam.userRejected || lineCheck?.answers?.[check.seam.id]).length;
   const pagePath = page => outputPages.find(item => item.index === page)?.path || "";
   // nothing to check: the full list is the content
   const showAll = typeof lineCheck?.showAll === "boolean" ? lineCheck.showAll : !checks.length;

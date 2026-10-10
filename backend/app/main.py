@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import copy
 import json
 import os
 import platform
@@ -2428,8 +2429,10 @@ def _finish_reflow_suggestions(job_id: str, record: Dict[str, Any], *, time_budg
 def _reflow_export_inputs(job: Job, payload: JobReviewExportRequest) -> Dict[str, Any]:
     """Check the request against the job (selection, order, formats) and resolve what to compose.
     Raises HTTPException 400 for a selection or format the job cannot export."""
-    result = dict(job.result or {})
-    reflow = dict(result.get("reflow") or {})
+    result = copy.deepcopy(job.result or {})
+    reflow = result.get("reflow") or {}
+    if payload.base_revision is not None and payload.base_revision != int(reflow.get("revision", 1)):
+        raise HTTPException(status_code=409, detail=f"STALE_REVISION: expected revision {int(reflow.get('revision', 1))}, received {payload.base_revision}")
     systems = [dict(s) for s in reflow.get("systems", [])]
     by_path = {str(Path(s["strip_path"]).resolve()): s for s in systems}
 
@@ -2468,11 +2471,51 @@ def _reflow_export_inputs(job: Job, payload: JobReviewExportRequest) -> Dict[str
     formats = _normalize_requested_export_formats(requested)
     if not formats:
         raise HTTPException(status_code=400, detail="formats must include at least one export format")
+    from app.pipeline.reflow_seam_reject import SeamRepairError, validate_request
+    reflow.setdefault("workspace", str(Path(job.artifact_dir) / "reflow"))
+    try:
+        repair = validate_request(reflow, systems, composed, payload)
+    except SeamRepairError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
     return {"result": result, "reflow": reflow, "systems": systems, "order": order, "keep_ids": keep_ids,
-            "composed": composed, "formats": formats, "export_config": export_config}
+            "composed": composed, "formats": formats, "export_config": export_config, "repair": repair}
 
 
 def _review_export_reflow(job: Job, job_id: str, payload: JobReviewExportRequest) -> JobReviewExportResponse:
+    """Revalidate under the export lock, prepare an unpublished candidate, then commit."""
+    from app.pipeline import reflow_pipeline
+    from app.pipeline.observations import SeamRepairSourceUnavailable
+    from app.pipeline.reflow_seam_reject import SeamRepairError
+    inputs = _reflow_export_inputs(job, payload)
+    repair = inputs["repair"]
+    revision_dir = None
+    published = False
+    try:
+        if repair["changed"]:
+            revision_dir = Path(job.artifact_dir) / "reflow_revisions" / f"revision-{int(inputs['reflow'].get('revision', 1))+1}-{uuid.uuid4().hex[:12]}"
+            reflow, order, composed = reflow_pipeline.rebuild_jump_runs(
+                inputs["reflow"], repair, inputs["order"], inputs["composed"], revision_dir,
+                checkpoint=checkpoint, progress=report_progress, logger=lambda msg: _append(job_id, msg))
+            inputs.update(reflow=reflow, systems=order, order=order, composed=composed,
+                          keep_ids={s["id"] for s in composed})
+            inputs["result"]["reflow"] = reflow
+            if "coverage" in reflow:
+                inputs["result"]["coverage"] = reflow["coverage"]
+        inputs["reflow"]["rejected_seam_ids"] = repair["desired"]
+        response = _compose_review_export_reflow(job, job_id, payload, inputs)
+        published = True
+        return response
+    except SeamRepairSourceUnavailable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SeamRepairError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+    finally:
+        if revision_dir is not None and not published:
+            shutil.rmtree(revision_dir, ignore_errors=True)
+
+
+def _compose_review_export_reflow(job: Job, job_id: str, payload: JobReviewExportRequest,
+                                inputs: Dict[str, Any]) -> JobReviewExportResponse:
     """Re-compose the clean reflow chart from the user's system order and selection.
 
     Transactional: the pages are written to a staged folder and installed only when complete; a
@@ -2483,11 +2526,10 @@ def _review_export_reflow(job: Job, job_id: str, payload: JobReviewExportRequest
     from app.pipeline.export import ExportVerificationError, export_composed_pages, verify_composed_export
     from app.pipeline.reflow_line_review import load_line_review
 
-    inputs = _reflow_export_inputs(job, payload)
     result, reflow, systems = inputs["result"], inputs["reflow"], inputs["systems"]
     order, keep_ids, composed, formats = inputs["order"], inputs["keep_ids"], inputs["composed"], inputs["formats"]
     export_config = inputs["export_config"]
-    previous_result = dict(job.result or {})
+    previous_result = copy.deepcopy(job.result or {})
     header = reflow.get("header") or {}
     if export_config.document_header is not None:
         header = export_config.document_header.model_dump()
@@ -2514,7 +2556,8 @@ def _review_export_reflow(job: Job, job_id: str, payload: JobReviewExportRequest
         # the export's own choice, else the job's option; dependencies are re-validated on every compose
         measure_reflow = bool(payload.measure_reflow) if payload.measure_reflow is not None else _job_measure_reflow(job)
         coverage = result.get("coverage") or reflow.get("coverage")
-        plan, pages = reflow_pipeline.compose_systems(composed, header=_compose_header(header, coverage, composed),
+        pdf_coverage = reflow.get("seam_repair_pdf_coverage") if reflow.get("rejected_seam_ids") else coverage
+        plan, pages = reflow_pipeline.compose_systems(composed, header=_compose_header(header, pdf_coverage, composed),
                                                       staff_gap_mm=staff_gap_mm, all_systems=systems,
                                                       workspace=Path(reflow.get("workspace") or Path(job.artifact_dir) / "reflow"),
                                                       measure_reflow=measure_reflow, auto_staff_size=not staff_gap_explicit, ledger_sink=ledger_sink)
@@ -2529,6 +2572,8 @@ def _review_export_reflow(job: Job, job_id: str, payload: JobReviewExportRequest
         conflict = _layout_conflict_record(reflow_pipeline.json_safe(exc.plan))
         conflict["selected_system_ids"] = [s["id"] for s in composed]
         # metadata only: the previous export files and order stay as they are
+        if inputs["repair"]["changed"]:
+            raise HTTPException(status_code=409, detail=_layout_conflict_detail(conflict))
         noted = dict(reflow)
         noted["layout_conflict"] = conflict
         noted_result = dict(result)

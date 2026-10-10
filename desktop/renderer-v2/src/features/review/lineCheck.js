@@ -40,9 +40,22 @@ export function seamChecks(lines) {
     const after = line.sources.find(source => source.display === b);
     const jump = before ? before.tEnd : after ? after.tStart : null;
     // a seam near a line end continues on the neighbouring line: show that one too
-    const around = [seam.xFrac < 0.25 ? lines[index - 1] : null, line, seam.xFrac > 0.75 ? lines[index + 1] : null]
+    // (a rebuilt seam that now splits two lines always does)
+    const around = [seam.boundary === "start" || (!seam.boundary && seam.xFrac < 0.25) ? lines[index - 1] : null, line,
+      seam.boundary === "end" || (!seam.boundary && seam.xFrac > 0.75) ? lines[index + 1] : null]
       .filter(other => other && other.page > 0);
     return { seam, line, lineNumber: lineNumberOnPage(lines, line), around, jump,
       clip: jump === null ? null : [Math.max(0, jump - CLIP_LEAD_SEC), jump + CLIP_TAIL_SEC] };
   }));
+}
+
+/**
+ * The seams the next rebuild keeps unverified: the ones already kept so, plus every seam answered
+ * "bad" since. null when no new "bad" answer waits for a rebuild (the request then leaves them as they are).
+ */
+export function pendingSeamRejections(state) {
+  const committed = state.review.reflow?.rejectedSeamIds || [];
+  const answers = state.review.lineCheck?.answers || {};
+  const fresh = Object.keys(answers).filter(id => answers[id] === "bad" && !committed.includes(id));
+  return fresh.length ? [...new Set([...committed, ...fresh])].sort() : null;
 }

@@ -462,6 +462,13 @@ def _build_base_ledger(inventory: dict, occurrences: dict, records: Sequence[dic
     return base, chains
 
 
+def rebuild_jump_runs(reflow, repair, order, composed, revision_dir, *, checkpoint, progress, logger):
+    """Rebuild selected original run lineages in an unpublished revision workspace."""
+    from app.pipeline.reflow_seam_reject import rebuild_jump_runs as rebuild
+    return rebuild(reflow, repair, order, composed, revision_dir,
+                   checkpoint=checkpoint, progress=progress, logger=logger)
+
+
 def _alternate_ledger_chain(base: dict, chains: dict, entry: dict, *, ledger: bool = True) -> None:
     did = f"strip:{entry['id']}"
     strip = entry["strip"]
@@ -545,9 +552,9 @@ def jump_view_summary(jump: Dict[str, Any], built: Sequence[Tuple[Dict[str, Any]
                   "chains": len(r["panorama_chains"]), "still_unverified_seam_ids": r.get("still_unverified_seam_ids", [])}
                  for r in jump.get("runs") or []],
         "seams": len(seams),
-        "verified": sum(1 for s in seams if s.get("status") == "verified"),
-        "resolved": sum(1 for s in seams if s.get("status") == "resolved"),
-        "unverified": sum(1 for s in seams if s.get("status", "unverified") == "unverified"),
+        "verified": sum(1 for s in seams if rj.effective_seam_status(s) == "verified"),
+        "resolved": sum(1 for s in seams if rj.effective_seam_status(s) == "resolved"),
+        "unverified": sum(1 for s in seams if rj.effective_seam_status(s) == "unverified"),
         "strips": [r["system_id"] for _o, r in built],
         "flagged_strips": [r["system_id"] for _o, r in built if rj.JUMP_SEAM_UNVERIFIED in r.get("issues", [])],
     }

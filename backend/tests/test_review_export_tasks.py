@@ -129,6 +129,23 @@ class ReviewExportTaskTest(unittest.TestCase):
         self.assertEqual(saved["state"], "done")
         self.assertEqual(saved["result"]["revision"], 2)
 
+    def test_stale_revision_answers_before_queue_and_is_rechecked_under_lock(self):
+        with self.assertRaises(HTTPException) as ctx:
+            main.start_review_export("job-t", self._request(base_revision=0))
+        self.assertEqual(ctx.exception.status_code, 409)
+        self.assertTrue(ctx.exception.detail.startswith("STALE_REVISION:"))
+        self.assertFalse(self.tasks.is_active("job-t"))
+        # Queue without starting the worker, then advance the record before it
+        # acquires the job lock: no compose or file writes may happen.
+        with patch.object(main.export_executor, "submit"):
+            task = main.start_review_export("job-t", self._request(base_revision=1))
+        job = self.store.get("job-t")
+        job.result["reflow"]["revision"] = 2
+        with patch.object(reflow_pipeline, "compose_systems", side_effect=AssertionError("must not compose")):
+            main._run_review_export_task("job-t", task.task_id, self._request(base_revision=1))
+        failed = main.get_review_export("job-t", task.task_id)
+        self.assertEqual((failed.state, failed.error_status, failed.error_code), ("failed", 409, "STALE_REVISION"))
+
     def test_cancel_stops_the_export_and_keeps_the_previous_files_and_result(self):
         export_dir = self.artifact / "export"
         before = digest(export_dir)

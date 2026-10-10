@@ -376,14 +376,16 @@
   flex: 1;
   display: flex;
   min-height: 0;
-  padding: 132px 32px 96px;
+  padding: var(--review-surface-top, 132px) 32px 96px;
   overflow: auto;
   background: transparent;
 }
 .screen-review .review-viewer-surface:focus-visible { outline: none; }
 /* Keep the paper clear of the current-capture bar when it carries a warning or similarity note. */
-.screen-review .review-viewer:has(.review-inspector :is(.review-risk-note, .review-similar-note)) .review-viewer-surface { padding-top: 164px; }
-.screen-review .review-viewer:has(.review-inspector .review-risk-note):has(.review-inspector .review-similar-note) .review-viewer-surface { padding-top: 190px; }
+.screen-review .review-viewer:has(.review-inspector :is(.review-risk-note, .review-similar-note)) { --review-surface-top: 164px; }
+.screen-review .review-viewer:has(.review-inspector .review-risk-note):has(.review-inspector .review-similar-note) { --review-surface-top: 190px; }
+/* Reading views (line check, check items) scroll below the bar, so it never covers a heading. */
+.screen-review .review-viewer-surface:is(.is-lines, .is-hypotheses) { margin-top: var(--review-surface-top, 132px); padding-top: 4px; }
 .screen-review .review-full-image { background: var(--surface-paper); box-shadow: var(--paper-shadow); border-radius: 3px; opacity: 1; }
 .screen-review .review-full-image.is-fit { width: auto; height: auto; max-width: 100%; max-height: 100%; margin: auto; object-fit: contain; }
 .screen-review .review-crop-stage { margin: 72px 32px 84px; }
@@ -499,6 +501,7 @@
 .screen-review .review-seam-check { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px 14px; border: 1px solid var(--warning-line); border-radius: 10px; background: var(--surface-control); }
 .screen-review .review-seam-check.is-ok { border-color: var(--line-soft); }
 .screen-review .review-seam-check.is-bad { border-color: var(--danger-line); }
+.screen-review .review-seam-check.is-repaired { border-color: var(--line-soft); }
 .screen-review .review-seam-check .review-line-head strong { font-size: 13.5px; font-weight: 650; color: var(--text-1); }
 .screen-review .review-seam-done { margin-left: auto; font-size: 12px; font-weight: 600; color: var(--success); }
 .screen-review .review-seam-label { margin: 4px 0 0; font-size: 12px; font-weight: 600; color: var(--text-2); }

@@ -328,7 +328,7 @@ function exportTaskError(task) {
   });
 }
 
-function reviewExportBody({ keepCaptures = [], keepImages = [], formats = [], systemOrder = [], staffGapMm = null, staffGapMmExplicit = null, measureReflow = null } = {}) {
+function reviewExportBody({ keepCaptures = [], keepImages = [], formats = [], systemOrder = [], staffGapMm = null, staffGapMmExplicit = null, measureReflow = null, rejectedSeamIds = null, baseRevision = null } = {}) {
   return JSON.stringify({
     keep_captures: keepCaptures,
     keep_images: keepImages,
@@ -341,6 +341,8 @@ function reviewExportBody({ keepCaptures = [], keepImages = [], formats = [], sy
       : Number.isFinite(staffGapMm) ? { staff_gap_mm_explicit: true } : {}),
     // Clean reflow jobs: rearrange by measure (true) or keep whole lines (false); omitted = the job's option.
     ...(typeof measureReflow === "boolean" ? { measure_reflow: measureReflow } : {}),
+    // Jump-view joins the user marked wrong (the full set; omitted = keep the last rebuild's), checked against the shown revision.
+    ...(Array.isArray(rejectedSeamIds) ? { rejected_seam_ids: rejectedSeamIds, ...(Number.isFinite(baseRevision) ? { base_revision: baseRevision } : {}) } : {}),
   });
 }
 

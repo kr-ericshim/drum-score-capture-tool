@@ -11,6 +11,7 @@ import {
   createReviewHypothesesState,
   deriveOutputPages,
   deriveReflowInfo,
+  localizePageTitle,
   isLayoutConflictPending,
   isLedgerFailurePending,
   isReviewableRun,
@@ -43,6 +44,7 @@ import { renderExportScreen } from "../features/export/ExportScreen.js";
 import { renderReviewScreen } from "../features/review/ReviewScreen.js";
 import { createReviewController } from "../features/review/reviewController.js";
 import { syncThumbShape } from "../features/review/thumbShape.js";
+import { pendingSeamRejections } from "../features/review/lineCheck.js";
 import { renderArchiveModal } from "../features/archive/ArchiveModal.js";
 import { createBugReportDraft, createBugReportState, renderBugReportModal } from "../features/support/BugReportModal.js";
 import { mountRoiEditor } from "../features/roi/roiEditor.js";
@@ -111,6 +113,9 @@ function isSupportedVideoPath(filePath = "") {
 
 /** Job/task error codes of a composed export that may not be published as done (STRATEGY Step 2A). */
 export const EXPORT_INVALID_CODES = ["INVALID_PLACEMENT_PLAN", "EMPTY_EXPORT", "PAGE_COUNT_MISMATCH", "PDF_UNREADABLE"];
+
+/** Review export refusals of a jump-view join rebuild (SEAM_REJECT_DESIGN.md); each has its own message. */
+const SEAM_REPAIR_CODES = ["SEAM_REPAIR_SOURCE_UNAVAILABLE", "SEAM_REPAIR_SELECTION", "STALE_REVISION", "SEAM_UNKNOWN"];
 
 /** The user-facing message for a failed job's error code, or "" when the code has no specific one. */
 export function exportErrorCodeMessage(errorCode, locale = "en") {
@@ -312,8 +317,12 @@ function captureStageInputFocus() {
       selectionEnd: Number.isInteger(activeElement.selectionEnd) ? activeElement.selectionEnd : null,
     };
   }
+  const actionSelector = `[data-action="${activeElement.dataset.action}"]`;
+  // One action on many cards (the seam answers, the line toggles): keep focus on the same card.
+  const value = activeElement.dataset.value;
   return {
-    selector: `[data-action="${activeElement.dataset.action}"]`,
+    selector: value ? `${actionSelector}[data-value="${cssAttributeValue(value)}"]` : actionSelector,
+    fallbackSelector: value ? actionSelector : "",
     selectionStart: Number.isInteger(activeElement.selectionStart) ? activeElement.selectionStart : null,
     selectionEnd: Number.isInteger(activeElement.selectionEnd) ? activeElement.selectionEnd : null,
   };
@@ -330,6 +339,9 @@ function restoreStageInputFocus(stagePane, snapshot) {
     return;
   }
   let nextField = stagePane.querySelector?.(snapshot.selector);
+  if (!nextField && snapshot.fallbackSelector) {
+    nextField = stagePane.querySelector?.(snapshot.fallbackSelector);
+  }
   if (!nextField && FOCUS_STAND_INS[snapshot.selector]) {
     nextField = stagePane.querySelector?.(FOCUS_STAND_INS[snapshot.selector]);
   }
@@ -2372,6 +2384,9 @@ export function createApp(root, dependencies = {}) {
     if (detail.startsWith("LEGACY_JOB:")) return t("review.legacyJob", { locale });
     if (detail.startsWith("UNCUT_STRIP_UNAVAILABLE:")) return t("review.uncutStripUnavailable", { locale });
     if (detail.startsWith("EXPORT_INTERRUPTED:")) return t("review.exportInterrupted", { locale });
+    // a join rebuild that could not run: the previous files are kept
+    const seamCode = SEAM_REPAIR_CODES.find(code => error?.code === code || new RegExp(`^${code}\\b`).test(detail));
+    if (seamCode) return t(`review.seamRepair.${seamCode}`, { locale });
     // a rebuild that may not be published (no valid plan, empty or unreadable files): previous files kept
     const invalid = EXPORT_INVALID_CODES.find(code => error?.code === code || detail.startsWith(`${code}:`));
     if (invalid) return t("review.exportInvalid", { locale, replacements: { reason: t(`export.invalid.${invalid}`, { locale }) } });
@@ -2587,6 +2602,8 @@ export function createApp(root, dependencies = {}) {
     const previousRevision = Number(state.review.jobRevision || 0);
     const previousStatus = state.review.status;
     const jobId = state.exportConfig.jobId;
+    // joins answered "a measure repeats or is missing": rebuilt with both views kept
+    const rejectedSeamIds = pendingSeamRejections(state);
     setState((next) => {
       next.review.status = "running";
       next.review.error = "";
@@ -2604,6 +2621,7 @@ export function createApp(root, dependencies = {}) {
         ...(Number.isFinite(staffGapMm) ? { staffGapMm, staffGapMmExplicit: true } : {}),
         // the score layout chosen now (each rebuild sends it, so an older job follows the toggle too)
         measureReflow: state.exportConfig.measureReflow !== false,
+        ...(rejectedSeamIds ? { rejectedSeamIds, baseRevision: previousRevision } : {}),
       }, {
         onTask: (task) => trackExportTask(jobId, task, sourceSessionToken),
         shouldStop: () => destroyed || !runtimeGuards.isCurrentSourceSession(sourceSessionToken),
@@ -2760,6 +2778,8 @@ export function createApp(root, dependencies = {}) {
       const locale = persistLocale(target.dataset.locale);
       setState((next) => {
         next.ui.locale = locale;
+        // Review titles are baked when the job loads; redo them so the list follows the language.
+        next.review.pages = next.review.pages.map((page) => ({ ...page, title: localizePageTitle(page, locale) }));
         if (next.source.prepareStatus === "error" && next.source.prepareErrorDetail) {
           next.source.error = youtubePrepareError(next.source.prepareErrorDetail, locale);
         }

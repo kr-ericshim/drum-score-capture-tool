@@ -2,6 +2,31 @@
 
 State of the clean-reflow work for a new session. Read this first, then [DECISIONS.md](DECISIONS.md).
 
+## Start here (2026-10-10 near midnight: "a measure repeats or is missing" now rebuilds the join)
+
+Open item 1 of the block below is built (committed with the small review fixes listed there). Design and the
+"Implemented" notes: [SEAM_REJECT_DESIGN.md](SEAM_REJECT_DESIGN.md) (option B: recover the run's frames from the source).
+
+- Backend (Codex gpt-6.1-sol xhigh, three rounds): `JobReviewExportRequest.rejected_seam_ids` (full set; omitted = keep,
+  [] = clear) + `base_revision`; errors SEAM_REPAIR_SOURCE_UNAVAILABLE / SEAM_REPAIR_SELECTION (409) / STALE_REVISION (409) /
+  SEAM_UNKNOWN (422). New `pipeline/reflow_seam_reject.py`; batch frame recovery in `observations.py`; rejection precedence and
+  original run indices in `reflow_jump.py`; no cross-chain join/trim in `reflow_measure.py`; `line_review` seams carry
+  `user_rejected` and `boundary` start/end. Overrides persist in `result.reflow.rejected_seam_ids`. Round 2 fixed false
+  coverage findings on untouched seams (panel-label evidence recomputed over the shortened chain) and the panel chrome
+  ("#12 架子鼓", ghost clef) at a repaired chain start (now trimmed like any non-first display). Round 3: the trimmed panel no
+  longer marks the chart incomplete (real notation there still does).
+- Renderer (lead): a "bad" answer marks the review unsaved; "PDF 다시 만들기" sends the set (`lineCheck.pendingSeamRejections`);
+  a repaired card shows "양쪽 모두 남김" and both printed lines; KO/EN copy for the four refusals. Also fixed: the line-check
+  cards and A4 view showed the browser-cached old preview after any rebuild (same file names) → preview URLs carry `?r=<revision>`.
+- Checked: Codex real-job acceptance on a /private/tmp copy of job `b7424442…` (baseline pages pixel-identical; single and
+  double rejection → 2 and 3 chains, 2 pages, ~43 s, ≤ 2.2 GB, coverage complete; missing source / cancel / failed install keep
+  the previous files). Lead: dev Electron with `DRUMSHEET_JOBS_DIR` on a scratch copy — answered card 1 "bad", rebuilt
+  (~30 s), card shows "양쪽 모두 남김", no incomplete flag, crops correct after the cache fix. Backend suite 1391 OK (Codex);
+  renderer 355 OK. Live job untouched (content hash = Codex's original digest; only its mtime moved when an orphaned dev
+  backend re-saved it).
+- Not done: packaged app, Windows, a second jump-view video, a full notation read of the repaired chart against the video.
+- Dev gotcha: killing the dev Electron with pkill leaves its Python backend on :8000 (still on the old jobs dir); kill it too.
+
 ## Start here (2026-10-10 late night: join check in the review screen)
 
 The rc1 holdout fixes below are **committed** (58f968e code, 52995ed docs). After them the user tried the source app on a new
@@ -41,7 +66,19 @@ show whether measures continue; show the video". The design follows that last po
    strips re-cut, which happens in analysis today (frames are pruned) — design it before promising it.
 2. On job `b7424442…` the user's list showed "다른 순간 1" ticked (선택 2/2) and a rebuild included it (17 lines, revision 3); the
    default selection leaves exclusion candidates unticked (`App.js` ~1203). Cause unknown: the user may have ticked it; asked, no answer.
-3. The floating inspector bar covers the line-check heading when scrolled (same as other views).
+   2026-10-11: the user does not remember. alt1 had `recommended_action: exclude` (so it started unticked); the rev 2/3 selections
+   were overwritten on disk (rev 4 kept only the main strip). The only renderer paths that tick it are the checkbox, "전체 포함"
+   (`review-select-all` selects every page, alternates and short displays included), undo/redo, and a restored local draft of
+   the user's own selection. Likely "전체 포함" or the checkbox; the app did not tick it by itself.
+   Fixed (user OK, not committed): "전체 포함" now ticks only the main lines; other moments, short displays and exclusion
+   candidates keep their tick (`reviewController.js`, test in `review-controller.test.js`). Renderer verify 352 OK.
+3. ~~The floating inspector bar covers the line-check heading when scrolled.~~ Fixed 2026-10-11 (not committed): the line-check
+   and check-item views start below the bar (`--review-surface-top` on `.review-viewer`, margin instead of padding). Also fixed:
+   answering card 2 moved focus (and the scroll) to card 1's button, because focus restore matched `data-action` only; it now
+   matches `data-value` too, falling back to the action (`App.js` `captureStageInputFocus`). Checked in dev Electron over CDP on
+   job `b7424442…`: 1440×960 and 1120×840, KO and EN, focus stays on card 2 after "문제없어요". Seen while checking: the left
+   list keeps Korean titles ("줄 1 · 다른 순간 1") after switching to EN (titles are derived at job load) — fixed
+   the same day: `selectors.localizePageTitle`, re-run on `set-locale` in App.js; test in `reflow-review.test.js`. Renderer 353 OK.
 4. Still open from HOLDOUT_RC1: the next sealed holdout set (pick by one frame per video, balance channels).
 
 ## Start here (2026-10-10 night: fixes after the rc1 holdouts, committed 58f968e/52995ed)
