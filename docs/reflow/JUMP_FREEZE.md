@@ -29,3 +29,9 @@
 - **Cursor prior:** fitted lines over the last / first 1.5 s of the cursor track, compared at the mid-transition moment. Used only when its 90th-percentile error on the slot's verified jumps is at most 5% of the width; tolerance 10% of the width.
 - **Measure numbers:** read by tesseract over barlines (3 agreeing reads); a candidate must put B's numbers on the same numbers in A.
 - **Panorama:** cut at least 1 staff space inside the overlap, at the least-difference column (centre pull 0.25 × median difference). Chunks at most 650 staff spaces, at least 60, cut 0.4–1.0 staff space right of a barline in a column clear over the full height.
+
+## Seam resolution, reflow_jump-4 (2026-10-10)
+
+- **Config hash:** `69bcc239ec48df9b`. Not a frozen held-out change: made after the rc1 holdouts were opened (RnY5 is now a regression video).
+- **Rule:** see DECISIONS.md "Jump-view seam resolution", bullet "Sparse overlaps".
+- **Checked** on RnY5, SHvfn, Z4eb, _7gP, qA-M and Pxt9 (same frames, -3 vs -4): two seams change, RnY5 ep-0007→0008 (dx 1311, residual 16.5, 534 ink px) and Z4eb ep-0016→0017 (dx 1313, residual 2.3, 428 ink px), both resolved by typical jump + cursor prior and checked by eye. No other seam changes.

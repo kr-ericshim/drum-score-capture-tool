@@ -2,6 +2,56 @@
 
 State of the clean-reflow work for a new session. Read this first, then [DECISIONS.md](DECISIONS.md).
 
+## Start here (2026-10-10 night: fixes after the rc1 holdouts, uncommitted)
+
+Read [HOLDOUT_RC1.md](HOLDOUT_RC1.md) first (ship bar not met). Three of its lessons are worked on here. The six holdouts are
+opened and are now a regression set. Diagnosis images and scripts: `~/Documents/drum-score-corpus/eval_v1/holdout_rc1_fixes/`.
+
+**Done (in the working tree, not committed):**
+1. **Review reason order** (`main.py` `REFLOW_ISSUE_REASONS`): ordered by notation impact. `JUMP_SEAM_UNVERIFIED` first, then
+   `CONTENT_LOST_IN_FINISHING`, `JUMP_OVERLAP_CONTENT_CONFLICT`, `LAYOUT_CONFLICT`, `REPLAY_CANDIDATE`, size codes, ledger codes,
+   overlay codes, what-a-line-is codes (alternate, short display), and source/cosmetic notes (`SOURCE_CLIPPED`,
+   `UNCERTAIN_MARK_KEPT`, …) last. The job-level `review_reasons` are sorted the same way (`_reason_rank`), and an included
+   system with `JUMP_SEAM_UNVERIFIED` now adds it to the job-level reasons (`reflow_pipeline.source_review_reasons`).
+   RnY5's seam warning was hidden behind `SOURCE_CLIPPED`/`UNCERTAIN_MARK_KEPT`; it now shows first.
+2. **Gray measure numbers clipped at the strip edge** (`reflow_strips.edge_number_extent`, called after the box is set in
+   `build_strip`): the envelope keeps only crisp ink, so a gray number over the staff start stuck out of the box. A group of
+   protected ink (gray < min(215, paper − 35), digits joined within 0.4 gap) wholly above the top staff line, ≤ 2 gaps high and
+   ≤ 4 gaps wide, that crosses the box's left/right edge widens the box over it. Checked on the TeoV run: exactly the 7 clipped
+   lines (17, 29, 33, 47, 51, 63, 67) widen, by 3–7 px each (`holdout_rc1_fixes/teov_edge.png`). Fzc 81 not re-run yet.
+3. **`OVERLAY_UNRECOVERED` on every 0MiL line** (`reflow_strips.compose_members`): the overlay masks covered lyric glyphs in every
+   member (steady warm sub-pixel fringes around the text), and pixels covered in every member were all counted as unrecovered.
+   Now, with ≥ 3 used members, a covered pixel is not counted when the members agree there (10–90 percentile spread ≤ 30) unless
+   it is part of a solid tinted area (chroma > 24 surviving an opening of max(3, 0.25 gap) px); leftover pieces smaller than
+   max(4, 0.02 gap²) px are dropped. 0MiL: 20/20 lines flagged → 0/20 (recomputed per system on the kept workspace). Existing
+   tests (static colored rectangle, static pink band without chrome) still report unrecovered.
+4. Dev only: `REFLOW_KEEP_FRAMES=1` keeps the frame PNGs (diagnosis); corpus `reflow/tools/dashboard.py` no longer refuses the
+   opened holdouts and keeps job workspaces with `DASHBOARD_KEEP_JOBS=1`.
+
+**Checked (2026-10-10, source backend over HTTP, `dashboard.py` on RnY5/TeoV/0MiL):** full backend suite 1347 OK
+(12 skipped). TeoV pages: 17, 29, 33, 47, 51, 63, 67 now print whole. 0MiL: no line and no job-level `OVERLAY_UNRECOVERED`
+(job reasons empty). RnY5: job reasons `JUMP_SEAM_UNVERIFIED, SOURCE_CLIPPED, UNCERTAIN_MARK_KEPT`, and jmp-01-002/003 show the
+seam reason first (the duplicated rests are still printed: see below). TeoV keeps `OVERLAY_UNRECOVERED` on sys-002 only (it was
+flagged before too; not inspected). Not re-run: Fzc (81), the other dev videos, the packaged app, the renderer screen (renderer
+code unchanged; it shows `warning_reasons[0]`). To rerun: spec with three entries `{"id", "path":
+eval_v1/videos/<id>.<ext>, "split": "regression"}` for RnY59tZccF0 (.mkv), TeoVPiiwjUY (.webm), 0MiLvEDSN60 (.webm).
+
+5. **RnY5 duplicated measures at seam ep-0007→ep-0008: fixed** (`reflow_jump-4`, config hash `69bcc239ec48df9b`; rule in DECISIONS
+   "Jump-view seam resolution" → "Sparse overlaps", note in JUMP_FREEZE.md). The overlap is sparse rest bars (534 ink px < 4 gap²) and the
+   registration failed on `residual_high` + `ambiguous_offset`, so `resolve_seam` never tried. Now such a seam may be resolved, and the
+   typical-jump window also offers low-ink offsets (≥ 1.5 gap², residual ≤ 25, ≥ 4× better than every other window minimum) that need
+   typical jump + cursor prior (or numbers). Same-frames check on RnY5, SHvfn, Z4eb, _7gP, qA-M, Pxt9: only RnY5 0007→0008 (dx 1311) and
+   Z4eb 0016→0017 (dx 1313) change. Risk: a one-bar shift is excluded only by the ±3% window.
+
+**Checked after merge (2026-10-10 night, battery):** full backend suite 1354 OK (12 skipped). 12-video dev dashboard `eval_v1/rc1fix_dashboard` (items 1–4, before the seam merge):
+10 videos' pages byte-identical to the freeze baseline (step2d2/step2d3); Fzc: "81" and "13" now whole; w7mK: every line shifted a few px,
+notation identical (cause not traced). `eval_v1/seamfix_dashboard` (seam merged): RnY5 2 pages, three rests after the fill, job reasons
+`SOURCE_CLIPPED, UNCERTAIN_MARK_KEPT`; Z4eb 2 pages, all seams resolved, the old short 3-bar line on p1 is gone, p2 opens with 6 rest bars
+(was 8 with the "#75 鼓组" label: the 2 overlapping rests are no longer doubled), `OVERLAY_UNRECOVERED` stays (as before).
+
+**Also open from HOLDOUT_RC1:** next sealed holdout set (pick by one frame per video, balance channels); commit of the above
+after the checks pass.
+
 ## Start here (2026-10-10: frozen as checkpoint5-rc1, holdouts next)
 
 - Read [FREEZE_RC1.md](FREEZE_RC1.md) (build, rules in force, rubric, holdout protocol, baseline grades) and STRATEGY.md "Step 2D checkpoint #5".
