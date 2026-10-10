@@ -39,7 +39,24 @@ Open item 1 of the block below is built (committed with the small review fixes l
 2. Regression: rerun the 12-video dev dashboard and the 6 opened rc1 holdouts on one manifest; pages must match the last
    baselines (step2d2 / seamfix / holdout_rc1_fixes) except where a change is explained. Seam rebuild once more on a second
    jump-view video (RnY5 or Z4eb).
+   **Done 2026-10-11.** `eval_v1/rc2check_dashboard` (spec `rc2check_spec.json`, one code manifest, compare with
+   `rc2check_compare.py`): 11 dev + Z4eb + RnY5 pixel-identical to rc1fix/seamfix; 4M0X still refused. Changed vs
+   holdout_rc1 only as explained: TeoV measure numbers no longer clipped (edge fix), 0MiL/Dr5j title glyphs only
+   (score area identical). Seam rebuild on RnY5 through the API (`eval_v1/seamcheck_rny5`, rejected the resolved
+   `seam-ep-0006-ep-0007`): revision 1→2 in 61 s, coverage still complete, both lines carry `user_rejected` with
+   boundary end/start, the overlap measures repeat and nothing is lost. The whole document re-flows because the auto
+   staff size moved 1.35→1.45 mm with the extra line (17→18 lines); expected for a measure re-flow.
 3. Packaged macOS build: export, replay untick, cancel, memory, and the seam rebuild (frame recovery needs ffmpeg + source).
+   **Done 2026-10-11 (macOS arm64 `pack:release`, signatures valid, 457 MiB).** `smoke:packaged-runtime` was failing
+   (fixture passed `extract.end_sec: 0.8`, so every display was short); fixed in a side session: a 12 s three-page
+   synthetic video, asserts clean_reflow_v1 with 6 systems; passes, desktop-node 94/94. Packaged backend on RnY5 via
+   API (`eval_v1/seamcheck_packaged`, PATH stripped so only the bundled ffmpeg is used): job done, seam rebuild 67 s,
+   a second rebuild cancelled (EXPORT_CANCELLED, revision and PDF kept), peak RSS 2.1 GB, disk 162 MB. Pages equal dev
+   in layout and notation; only text glyphs (title, "† 원본 영상에서 잘림") differ by font rendering. Packaged UI
+   (`--user-data-dir` scratch + `DRUMSHEET_JOBS_DIR`, driven over CDP): new job 1 min 47 s → review with 3 join
+   cards; the .mkv clip plays; untick line 4 → rebuild 13 s, 3 kept; rebuild → Cancel → selection and previous PDF
+   kept; card 1 "마디가 겹치거나 빠졌어요" → rebuild 68 s → "양쪽 모두 남김". Small: the clip box is black until
+   played. Not done: Windows, the dmg installer.
 4. Freeze rc2 and write the ChatGPT Pro checkpoint prompt + attachments (memory: pro-checkpoints).
 5. New sealed holdout set (one frame per video checked for a real score, channels balanced), one run, grade by the rubric.
 

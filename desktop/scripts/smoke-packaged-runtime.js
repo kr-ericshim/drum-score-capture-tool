@@ -120,34 +120,79 @@ function runCommand(command, args, { timeoutMs: commandTimeoutMs = 15000 } = {})
   });
 }
 
-async function createFixtureVideo({ packagedBackendMainPath, jobsDir }) {
-  const ffmpegPath = findPackagedBackendToolExecutable({
+// A page-turn video: three distinct two-system pages, each shown long enough to be
+// placed by the clean-reflow pipeline (displays under ~1.5 s are listed short).
+const fixture = {
+  width: 960,
+  height: 360,
+  rate: 5,
+  pageSeconds: 4,
+  pages: 3,
+  staffGap: 12,
+  systemTops: [110, 240],
+  staffLeft: 60,
+  staffRight: 900,
+  barsPerSystem: 4,
+  slotsPerBar: 8,
+};
+fixture.durationSec = fixture.pages * fixture.pageSeconds;
+fixture.roi = [[20, 20], [fixture.width - 20, 20], [fixture.width - 20, fixture.height - 20], [20, fixture.height - 20]];
+
+function fixtureFilterGraph() {
+  const { staffGap: gap, staffLeft: left, staffRight: right, barsPerSystem, slotsPerBar } = fixture;
+  const barWidth = (right - left) / barsPerSystem;
+  const drawing = [`color=c=white:size=${fixture.width}x${fixture.height}:rate=${fixture.rate}:duration=${fixture.durationSec}`];
+  const box = (x, y, w, h, enable) => {
+    drawing.push(`drawbox=x=${Math.round(x)}:y=${Math.round(y)}:w=${w}:h=${h}:color=black:t=fill${enable ? `:enable='${enable}'` : ""}`);
+  };
+  for (const top of fixture.systemTops) {
+    for (let line = 0; line < 5; line += 1) {
+      box(left, top + line * gap, right - left, 2);
+    }
+    for (let bar = 0; bar <= barsPerSystem; bar += 1) {
+      box(left + bar * barWidth, top, 2, 4 * gap + 2);
+    }
+  }
+  for (let page = 0; page < fixture.pages; page += 1) {
+    const enable = `between(t,${page * fixture.pageSeconds},${(page + 1) * fixture.pageSeconds - 0.001})`;
+    fixture.systemTops.forEach((top, system) => {
+      for (let bar = 0; bar < barsPerSystem; bar += 1) {
+        for (let slot = 0; slot < slotsPerBar; slot += 1) {
+          // Each page has its own groove so its displays are distinct content.
+          const k = page * 97 + system * 31 + bar * 11 + slot * 7;
+          if ((k * 5 + page) % 3 === 0) {
+            continue;
+          }
+          const x = left + bar * barWidth + ((slot + 0.5) * barWidth) / slotsPerBar - 6;
+          const line = [1.5, 2.5, 3.5][(k + slot + page) % 3];
+          const y = top + line * gap - 4;
+          box(x, y, 12, 9, enable);
+          box(x + 10, top - 2 * gap, 2, y - (top - 2 * gap) + 4, enable);
+        }
+      }
+    });
+  }
+  return drawing.join(",");
+}
+
+async function createFixtureVideo({ packagedBackendMainPath, jobsDir, ffmpegPath: ffmpegOverride }) {
+  const ffmpegPath = ffmpegOverride || findPackagedBackendToolExecutable({
     packagedBackendMainPath,
     toolName: "ffmpeg",
   });
   assert(fs.existsSync(ffmpegPath), `Packaged ffmpeg is missing: ${ffmpegPath}`);
 
   const sourcePath = path.join(jobsDir, "packaged-smoke-source.mp4");
-  const drawing = ["color=c=white:size=640x360:rate=5:duration=1"];
-  for (const top of [80, 200]) {
-    for (let line = 0; line < 5; line += 1) {
-      drawing.push(`drawbox=x=60:y=${top + line * 10}:w=520:h=2:color=black:t=fill`);
-    }
-    for (let note = 0; note < 8; note += 1) {
-      const x = 90 + note * 60;
-      const y = top + 10 + (note % 3) * 10;
-      drawing.push(`drawbox=x=${x}:y=${y}:w=12:h=7:color=black:t=fill`);
-      drawing.push(`drawbox=x=${x + 10}:y=${y - 25}:w=2:h=30:color=black:t=fill`);
-    }
-  }
   await runCommand(ffmpegPath, [
     "-y",
     "-f",
     "lavfi",
     "-i",
-    drawing.join(","),
+    fixtureFilterGraph(),
     "-c:v",
     "mpeg4",
+    "-q:v",
+    "2",
     "-pix_fmt",
     "yuv420p",
     sourcePath,
@@ -242,8 +287,8 @@ async function smokePackagedRuntime() {
       source_type: "file",
       file_path: fixturePath,
       options: {
-        extract: { fps: 1, start_sec: 0, end_sec: 0.8 },
-        detect: { roi: [[40, 40], [600, 40], [600, 300], [40, 300]], auto_fit: false },
+        extract: { fps: 1, start_sec: 0, end_sec: fixture.durationSec },
+        detect: { roi: fixture.roi, auto_fit: false },
         rectify: { auto: false },
         stitch: { enable: false },
         upscale: { enable: false },
@@ -252,18 +297,23 @@ async function smokePackagedRuntime() {
     });
     assert(created.statusCode === 200 && created.data.job_id, `Capture job creation failed: ${JSON.stringify(created)}`);
     const jobDeadline = Date.now() + timeoutMs;
-    let completed = false;
+    let completed = null;
     while (Date.now() < jobDeadline) {
       const status = await requestJson("GET", `/jobs/${created.data.job_id}`);
       assert(status.statusCode === 200, `Capture status failed: ${JSON.stringify(status)}`);
       assert(!["failed", "error", "cancelled"].includes(status.data.status), `Capture job failed: ${JSON.stringify(status.data)}`);
       if (status.data.status === "done") {
-        completed = true;
+        completed = status.data;
         break;
       }
       await wait(500);
     }
     assert(completed, "Timed out waiting for packaged capture/export job");
+    const result = completed.result || {};
+    assert(result.output_model === "clean_reflow_v1", `Capture job did not use clean reflow: ${result.output_model}`);
+    const placed = (result.reflow?.systems || []).filter((system) => system.included).length;
+    const expected = fixture.pages * fixture.systemTops.length;
+    assert(placed === expected, `Clean reflow placed ${placed} systems, expected ${expected}`);
     const files = await requestJson("GET", `/jobs/${created.data.job_id}/files`);
     assert(files.statusCode === 200, `Capture files failed: ${JSON.stringify(files)}`);
     assert(files.data.images?.length > 0, "Capture job returned no images");
@@ -274,7 +324,7 @@ async function smokePackagedRuntime() {
 
     console.log("- runtime metadata: ok");
     console.log("- preview frame extraction: ok");
-    console.log("- synthetic score video capture and PNG/PDF export: ok");
+    console.log(`- synthetic score video clean-reflow capture (${placed} systems) and PNG/PDF export: ok`);
   } catch (error) {
     const output = logs.join("").trim();
     if (output) {
@@ -301,6 +351,7 @@ if (require.main === module) {
 
 module.exports = {
   createFixtureVideo,
+  fixture,
   requestHealth,
   requestJson,
   smokePackagedRuntime,
