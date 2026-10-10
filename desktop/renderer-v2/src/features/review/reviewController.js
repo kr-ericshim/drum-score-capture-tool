@@ -174,7 +174,7 @@ export function createReviewController({ getState, setState, api, mountEditor, r
         if (action === "review-lines-all") check.showAll = !(typeof check.showAll === "boolean" ? check.showAll : !seamChecks(next.review.reflow?.lines || []).length);
         if (action === "review-seam-answer") {
           const [seamId, answer] = String(value || "").split("|");
-          if (seamId && ["ok", "bad"].includes(answer)) check.answers = { ...(check.answers || {}), [seamId]: answer };
+          if (seamId && ["ok", "bad", "unsure"].includes(answer)) check.answers = { ...(check.answers || {}), [seamId]: answer };
           // a join to rebuild: the files on disk no longer match the review
           if (answer === "bad" && !(next.review.reflow?.rejectedSeamIds || []).includes(seamId) && next.review.status === "applied") next.review.status = "idle";
         }

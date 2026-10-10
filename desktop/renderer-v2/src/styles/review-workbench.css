@@ -501,9 +501,11 @@
 .screen-review .review-seam-check { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px 14px; border: 1px solid var(--warning-line); border-radius: 10px; background: var(--surface-control); }
 .screen-review .review-seam-check.is-ok { border-color: var(--line-soft); }
 .screen-review .review-seam-check.is-bad { border-color: var(--danger-line); }
-.screen-review .review-seam-check.is-repaired { border-color: var(--line-soft); }
+.screen-review .review-seam-check.is-repaired,
+.screen-review .review-seam-check.is-unsure { border-color: var(--warning-line); }
 .screen-review .review-seam-check .review-line-head strong { font-size: 13.5px; font-weight: 650; color: var(--text-1); }
 .screen-review .review-seam-done { margin-left: auto; font-size: 12px; font-weight: 600; color: var(--success); }
+.screen-review .review-seam-done.is-unconfirmed { color: var(--warning-text); }
 .screen-review .review-seam-label { margin: 4px 0 0; font-size: 12px; font-weight: 600; color: var(--text-2); }
 .screen-review .review-seam-printed { display: flex; flex-direction: column; gap: 6px; }
 .screen-review .review-seam-video { width: 100%; overflow: hidden; background: #000; }

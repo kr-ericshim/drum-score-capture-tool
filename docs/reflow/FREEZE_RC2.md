@@ -1,15 +1,16 @@
 # Freeze record: checkpoint6-rc2
 
-Written 2026-10-11 after the rc1 holdout fixes, the join check and the join rebuild. Same structure as
-[FREEZE_RC1.md](FREEZE_RC1.md); the rubric and the change rules are carried over unchanged. The holdout protocol below is
-a draft until the Pro checkpoint ([PRO_CHECKPOINT_RC2.md](PRO_CHECKPOINT_RC2.md)) is answered; fix it before the run.
+Written 2026-10-11 after the rc1 holdout fixes, the join check and the join rebuild. It was updated the same day after
+Pro checkpoint #6 ([PRO_REPLY_RC2.md](PRO_REPLY_RC2.md)) and its five pre-freeze items. Same structure as
+[FREEZE_RC1.md](FREEZE_RC1.md). The rubric additions and the fixed holdout protocol are at the end.
 
 ## Build
 
-- Git: code = da3bdfa (branch `feature/clean-reflow`); 812d9b2 only changes the packaged smoke script and docs; the freeze
-  commit adds this file and the Pro prompt.
-- Packaged build: macOS arm64, `npm --prefix desktop run pack:release` from da3bdfa (unpacked app, signatures verified,
-  457.1 MiB). Backend executable `drumsheet-backend` SHA-256 7875e1443aa4e6ce5d001828d3dbd3278e16ee6c00d2ec0b8ef30dbf0572533f;
+- Git: code = the pre-freeze commit "Close the Pro #6 pre-freeze items" on `feature/clean-reflow`, on top of da3bdfa.
+  Regression code manifest `38d4cb69597f1939`.
+- Packaged build: macOS arm64, `npm --prefix desktop run pack:release` from that working tree (unpacked app, 460 MB).
+  Backend executable `drumsheet-backend` SHA-256 b2818271d1d614fdefb730332ba704fd7d6d542c222447e77f66153e327e29d8.
+  The first rc2 build (da3bdfa) was 7875e144…;
   bundled ffmpeg 8.1.2 (pinned media bundle `media-tools-850fac73bcaa288a6a92`, darwin-arm64 sha 486cbff7…).
   Test machine: 18 GiB, M-series, AC power.
 - Runtime (source backend): Python 3.13.4, numpy 2.5.3, OpenCV 4.13.0; Electron 44.5.1; app 0.2.1.
@@ -28,6 +29,11 @@ a draft until the Pro checkpoint ([PRO_CHECKPOINT_RC2.md](PRO_CHECKPOINT_RC2.md)
 | Review | Join rebuild: a "bad" answer + "PDF 다시 만들기" re-cuts that run with the seam treated as unverified (both views kept, overlap trimmed only by the saved panel edge). Frames are recovered from the source by one batch decode. New revision directory; the previous files stay on any failure; refusals SEAM_REPAIR_SOURCE_UNAVAILABLE / _SELECTION / _INCOMPATIBLE, STALE_REVISION, SEAM_UNKNOWN. | 6e0c110, da3bdfa |
 | Review | "전체 포함" ticks only main lines (other moments, short displays and exclusion candidates keep their tick); focus and locale fixes; preview URLs carry the revision. | 6e0c110 |
 | Release | Packaged runtime smoke runs a real clean-reflow capture (12 s, 3 pages, 6 systems). | 812d9b2 |
+| Lines | Pre-freeze (Pro #6 item 1): a line whose overhang ink (a "Fine" box) would cross the page margin at the chosen edge is not justified there (ragged `OVERHANG_AT_MARGIN`). `reflow_lines-5`, `reflow_measure-3`. TeoV now gets measure reflow: 3 pages, 28 lines, 1.45 mm. It was a whole-systems fallback (`MEASURE_PLAN_ERROR`, LayoutConflictError line-013) in rc1 and in the first rc2 record. | (pre-freeze) |
+| Jump seams | Pre-freeze (item 4a), `reflow_jump-5`: a low-ink offset must also beat every other forward offset with overlap by 4×, over the whole feasible range and at ± one or two local bar widths. Otherwise the seam stays unverified (`low_ink_rival`); agreeing measure numbers bypass the check. Cost: RnY5 ep-0007→0008 is unverified again, so rest bars 42–43 print twice and the PDF marks them. Z4eb 0016→0017 still resolves. | (pre-freeze) |
+| Strips | Pre-freeze (item 4b): a steady pixel covered in every member is exempt only when it looks like the strip's own print: near-paper (chroma ≤ 48), neutral ink, or a 0.08-gap fringe of it. A static gray bar or a thin colored cursor over notes keeps `OVERLAY_UNRECOVERED`; 0MiL stays at 0. | (pre-freeze) |
+| PDF | Pre-freeze (item 2): every join where both views are kept (unverified, or rejected by the user) gets a ⇄ mark in the margin beside both lines and a note at the bottom of the page: "앱이 화면 연결을 확정하지 못해 앞뒤 화면을 모두 담았습니다. 표시된 곳에서 마디가 겹칠 수 있습니다." The source-clipping header has no line count. | (pre-freeze) |
+| Review | Pre-freeze (item 2): the join check adds a "판단하기 어려워요" answer, which leaves the place unchecked with a note. A rebuilt join is tagged "연결 미확정 · 양쪽 화면 보존" in warning color, not green. | (pre-freeze) |
 
 Version strings not bumped for the strip changes (`reflow_strips-1` is informational only; no cache keys use it).
 
@@ -40,7 +46,17 @@ preview-tail speck rule, strip threads min(4, cpu−1, (RAM_GiB−4)//3), dev le
 
 ## Checks at freeze
 
-- Backend suite 1394 OK (12 skipped); renderer verify 355 OK; desktop node 94 OK; packaged smokes pass.
+- Pre-freeze build:
+  - Backend suite 1409 OK (12 skipped); renderer verify 355 OK; desktop node 94 OK; packaged runtime and Electron smokes pass.
+  - Regression `eval_v1/prefreeze_dashboard` (17 videos, manifest `38d4cb69597f1939`) against `rc2check_dashboard`:
+    12 videos pixel-identical. Three differ as intended: TeoV (measure reflow), RnY5 (the 0007→0008 join is kept as both
+    views, with ⇄ marks and the note), and aOED (header wording only). GTOc and 4M0X are refused.
+  - Packaged backend, RnY5 (`eval_v1/seamcheck_prefreeze`): first export marks the unverified join. Rejecting
+    0013→0014 rebuilds revision 2 in 66 s with both joins marked, and a cancelled second rebuild keeps revision 2 and the
+    PDF. Peak RSS 2.5 GB.
+  - The packaged renderer files for the join check (ReviewScreen, reviewController, i18n, CSS) are byte-identical to the
+    source. The "hard to tell" button was not clicked in the packaged GUI.
+- First rc2 record (da3bdfa): backend 1394 OK; renderer verify 355 OK; desktop node 94 OK; packaged smokes pass.
 - Regression `eval_v1/rc2check_dashboard` (17 videos, one code manifest `fc3b09bb8779f0f3`): 11 dev + Z4eb + RnY5
   pixel-identical to the post-fix baselines (rc1fix / seamfix); 0MiL, Dr5j: title glyphs only; TeoV: measure numbers whole;
   4M0X refused in 9 s.
@@ -61,38 +77,68 @@ preview-tail speck rule, strip threads min(4, cpu−1, (RAM_GiB−4)//3), dev le
 | Fzc | Clean (was usable) | 81 and 13 now whole |
 | 0MiL | Clean | holdout rc1; no measure numbers; lyrics run on across joins |
 | Dr5j | Clean | holdout rc1; 1–139 continuous |
-| TeoV | Clean (was usable) | holdout rc1; clipped gray numbers fixed; light last page |
-| aOED | Usable with flaws, source limitation | D.S. replay printed (8 lines `REPLAY_CANDIDATE`; assisted untick → 2 pages); lyric bottoms clipped in source |
+| TeoV | Clean (was usable) | holdout rc1; clipped gray numbers fixed. The rc2 export was a **whole-systems fallback** (`MEASURE_PLAN_ERROR`), Clean as a fallback, not a measure-reflow success. Measure reflow works after the pre-freeze fix. |
+| aOED | **Unusable** (first export; Pro #6) | D.S. al Coda and the replayed section printed, so the reader must skip music (8 lines `REPLAY_CANDIDATE`). Assisted untick → 2 pages, Usable. Lyric bottoms clipped in the source. |
 | bF69 | Usable with flaws | gray footage smear above lines (cleanup off); blob under "Bridge 1" |
 | _7gP | Usable with flaws | dense, ragged lines; two forced breaks at 1.3 mm |
 | SZwT | Usable with flaws | blue player icons touch beams |
 | SHvfn | Usable with flaws | gray return icons touch beams |
 | Z4eb | Usable with flaws, source limitation | faded "#75 + track name" label, ghost clef; bass beams clipped by the video frame; short line and doubled rests fixed |
-| RnY5 | Usable with flaws, source limitation (was unusable) | holdout rc1; doubled rests fixed; tempo mark and bass tuplets clipped by the frame; "† 원본 영상에서 잘림" under every one of 17 lines |
+| RnY5 | **Not usable, conservative** (Pro #6 rule) | holdout rc1; doubled rests fixed; full read 2026-10-11: every bar present once and in order. Bass tuplet numerals are clipped by the video frame itself; on the page-2 grooves 3 vs 5 cannot be told from the PDF alone. Tempo mark clipped; "†" note under the clipped lines. |
 | GTOc | Unsupported | refused in 7 s |
 | 4M0X | Unsupported | holdout rc1; refused in 9 s |
 
 m_YP (holdout rc1) has no score in the video and is dropped from the set.
-Tally 17: clean 8, usable with flaws 7, unusable 0, unsupported 2 → usable 15/17. Single reviewer (the lead), not blind.
+Tally 17 (after Pro #6): clean 8, usable with flaws 5, unusable 2 (aOED first export, RnY5), unsupported 2 → usable 13/17.
+Was 15/17 before Pro #6. Single reviewer (the lead), not blind.
 
 ## Known flaws carried into the next holdouts
 
-- A user-rejected join prints the overlap twice by design (both views kept); a faint panel-label fragment ("鼓") can remain at
-  the repaired line start.
-- The sparse-overlap seam rule excludes a one-bar shift only by the ±3 % typical-jump window.
+- A join kept as both views (unverified, or rejected by the user) prints the overlap twice by design; the PDF marks it with ⇄
+  and a note. A faint panel-label fragment ("#42 鼓组") can remain at the line start after it (RnY5).
+- Sparse-overlap seams resolve only when no other forward offset, including one or two bars off, matches comparably
+  (`reflow_jump-5`). RnY5 0007→0008 is correct by eye but now stays unverified.
 - Join check covers inferred/unverified seams only (RnY5: 3 of 21); a wrong "verified" seam is not shown to the user.
 - The join clip box is black until played.
-- Source-clipping disclosure prints a "†" note under every affected line (RnY5: all 17), which costs vertical space.
+- Source-clipping disclosure prints a "†" note under every affected line, which costs vertical space; the header has no count.
+- A layout conflict at render time still falls back to whole systems without trying a smaller staff size.
+- A static solid gray icon over notes is not in the overlay mask at all, so it gets no warning (Pro #6 item 4b case, same
+  before and after 58f968e). Static dark-gray marks count as ink and very pale pastel lines as paper.
 - Replay candidates are not auto-excluded; dark-theme footage smear is not cleaned; player icons over notation are kept.
 
-## Next holdout protocol (draft, pending the Pro reply)
+## Next holdout protocol (fixed after Pro checkpoint #6, see [PRO_REPLY_RC2.md](PRO_REPLY_RC2.md))
 
-1. New sealed set, chosen before any run: for each candidate video look at one mid-video frame only to confirm a plate
-   score is shown (reject live-overlay and no-score videos before sealing); balance channels (≤ 2 per channel); include
-   page views, scroll and jump views. Size and composition per the Pro answer.
-2. Packaged app (this build), normal setup (auto ROI suggestion, auto label region), one run per video; first export kept.
-3. Grade the first export with the FREEZE_RC1 rubric; record the per-video fields of FREEZE_RC1 "Holdout protocol" 4 and
-   the join-check items shown (count, which); an assisted grade (unticks, join rejections) is recorded separately.
-4. Fidelity audit as FREEZE_RC1 step 5, plus every join the app inferred.
-5. Ship bar: as FREEZE_RC1 (≥ 5/6 usable, ≥ 4/6 clean, zero silent fidelity defects, ≤ 1 honest failure), scaled to the set
-   size, unless the Pro reply changes it.
+1. **Scope, declared before selection.** Supported: page-turn views, jump views, and the scroll kinds this build supports
+   (vertical scroll only; continuous horizontal scroll is classed `UNSUPPORTED_HORIZONTAL_SCROLL` and is not picked as a
+   scroll input). Mac arm64 only, packaged app.
+2. **Set: 8 supported + 2 refusal tests, kept apart.** Supported: 3 page-turn, 2 scroll, 3 jump; at most 2 per channel,
+   at least 4 channels, at least one channel or display style not in the dev set. Refusal tests: 1 live-overlay video,
+   1 video without a score.
+3. **Selection.** Write the channel candidate lists first. Shuffle each list with a recorded seed. For each candidate look
+   at 15 s at 10 %, 50 % and 90 % only, and record score present / plate / motion kind / mixed display. Take candidates in
+   order until the quotas are met. Never exclude a supported video for gray numbers, lyrics, density, a cursor, clipping or a
+   messy background. Hash the list and seal it. Anything found after sealing stays in the denominator.
+4. **Run.** Packaged app of this build, normal setup (auto ROI suggestion, auto label region), one run per video. Keep the
+   first PDF and the diagnostics read-only.
+5. **Grading: single grader, two passes** (procedure in PRO_REPLY_RC2 "Grading procedure").
+   - Pass 1 as a user, in random chart order: provisional grade and worst page/line. Then the assistance budget: at most
+     5 min active, at most 1 rebuild (join check, unticks). The assisted grade is recorded separately.
+   - Pass 2 after a break: walk the source timeline and check every seam, verified ones included.
+   - A loss found later lowers the final grade. Unaudited parts are reported as "not audited".
+6. **Rubric** (FREEZE_RC1 grades, with these rules):
+   - A chart with a known repeated or skipped passage the reader must work around is **Unusable**. This includes a printed
+     D.S. replay and a kept-both-views join, even if the user accepts it.
+   - A detail clipped in the source counts only if it is still unambiguous from the PDF alone.
+   - A clean whole-systems fallback may be graded Clean, but it is reported as a fallback, not as a measure-reflow success.
+7. **Record per video:**
+   - The FREEZE_RC1 fields.
+   - Seams by status.
+   - Join cards shown, review time, clip replays, "hard to tell" answers.
+   - Wrong joins found on cards, defects at unshown verified seams, duplicates or losses left after a repair.
+8. **Ship bar (8 supported):**
+   - Usable ≥ 7/8 and clean ≥ 6/8.
+   - Unusable + failed + refused + unresolved fidelity ≤ 1.
+   - Observed silent fidelity defects = 0.
+   - Refusal tests 2/2.
+   - Packaged create/review/save/cancel/restore works on the stated Mac.
+   - Supported and refusal results are reported separately, never as "9 of 10".

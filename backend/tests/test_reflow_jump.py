@@ -426,6 +426,93 @@ class LowInkWindowTests(unittest.TestCase):
         self.assertTrue(any(c["dx"] == 700 and c["residual"] <= 1.0 for c in low), low)
 
 
+class LowInkRivalTests(unittest.TestCase):
+    """reflow_jump-5: rest bars repeat, so a sparse window offset one bar away from the true jump
+    fits just as well. The low-ink path checks every forward offset outside the typical-jump window
+    (the whole feasible range and one / two local bar widths either side) and only ever drops the
+    candidate; it never picks another offset. Real features of drawn rest bars, no stubs."""
+
+    GAP = 14
+    TOP = 50
+    BAR = 250
+    W = 1000
+    YS = [50 + k * 14 for k in range(5)]
+    # typical jump two bars; the cursor prior fits the window offset
+    EV = {"tol_px": 30.0, "typical": {"usable": True, "median_dx": 500.0}, "prior": {"usable": True, "tol_px": 100.0}}
+
+    def _score(self, bars: int, rest_x=None) -> np.ndarray:
+        img = np.full((150, bars * self.BAR + 40, 3), 255, np.uint8)
+        for y in self.YS:
+            cv2.line(img, (0, y), (img.shape[1] - 1, y), (0, 0, 0), 1)
+        for k in range(bars + 1):
+            x = 20 + k * self.BAR
+            cv2.line(img, (x, self.YS[0]), (x, self.YS[4]), (0, 0, 0), 2)
+        for k in range(bars):
+            rx = 20 + k * self.BAR + (rest_x(k) if rest_x else self.BAR // 2)
+            cv2.rectangle(img, (rx - 4, self.YS[1] + 3), (rx + 4, self.YS[3] - 3), (0, 0, 0), -1)  # a rest
+        return img
+
+    def _display(self, score: np.ndarray, off: int) -> dict:
+        v = score[:, off: off + self.W].copy()
+        return {"gap": float(self.GAP), "rows": (0, v.shape[0]), "width": self.W, "covered": np.zeros(self.W, bool),
+                "features": rj.features(v, self.GAP, self.YS), "staff_y": [float(y) for y in self.YS]}
+
+    def test_repeated_rest_bars_one_bar_off_the_typical_jump_stay_unverified(self) -> None:
+        score = self._score(8)
+        a, b = self._display(score, 0), self._display(score, 250)  # true jump 250: one bar less than typical
+        # the window offset (500) is sparse: above the low floor, below the normal ink floor
+        _r, ink, _n = rj._residual(a["features"], b["features"], ~a["covered"], ~b["covered"], 500, float(rj.CONFIG["ink_level"]))
+        self.assertTrue(1.5 * self.GAP ** 2 <= ink < 4 * self.GAP ** 2, ink)
+        self.assertEqual(rj.feature_barlines(a, 0, rj.CONFIG), [20.0, 270.0, 520.0, 770.0])
+        seam = {"reasons": ["ambiguous_offset"], "candidates": [[250, 0.0, 0, 750], [750, 0.0, 0, 250]], "prior_fit_dx": 510.0}
+        out = rj.resolve_seam(seam, a, b, 0, self.EV, rj.CONFIG, last_display=False)
+        self.assertEqual(out["low_ink"][0][0], 500)  # the old rule would have resolved to 500
+        self.assertEqual((out["status"], out["reason"]), ("unverified", "low_ink_rival"), out)
+        self.assertNotIn("dx", out)  # nothing else is picked
+        self.assertIn(250.0, out["low_ink_rivals"]["bar_widths"])
+        self.assertIn(out["low_ink_rivals"]["best"][0], (250, 750))
+        # the same with the true jump one bar MORE than typical
+        b2 = self._display(score, 750)
+        seam2 = dict(seam, candidates=[[750, 0.0, 0, 250]])
+        out2 = rj.resolve_seam(seam2, a, b2, 0, self.EV, rj.CONFIG, last_display=False)
+        self.assertEqual((out2["status"], out2["reason"]), ("unverified", "low_ink_rival"), out2)
+        # a rival is never removed by narrowing: a seam with no registration candidates finds it itself
+        out3 = rj.resolve_seam(dict(seam, candidates=[], reasons=["overlap_blank"]), a, b, 0, self.EV, rj.CONFIG,
+                               last_display=False)
+        self.assertEqual((out3["status"], out3["reason"]), ("unverified", "low_ink_rival"), out3)
+
+    def test_a_sparse_but_unique_offset_still_resolves(self) -> None:
+        # every bar's rest sits elsewhere: only the true offset lines the rests up
+        score = self._score(8, rest_x=lambda k: 40 + (k * 67) % 170)
+        a, b = self._display(score, 0), self._display(score, 500)
+        seam = {"reasons": ["overlap_blank"], "candidates": [], "prior_fit_dx": 505.0}
+        out = rj.resolve_seam(seam, a, b, 0, self.EV, rj.CONFIG, last_display=False)
+        self.assertEqual(out["status"], "resolved", out)
+        self.assertEqual(out["dx"], 500)
+        self.assertEqual(out["chosen_from"], "low_ink_window")
+        self.assertGreater(out["low_ink_rivals"]["examined"], 0)
+        self.assertGreaterEqual(out["low_ink_rivals"]["ratio"], rj.CONFIG["low_ink_ratio_min"])
+
+    def test_a_cursor_prior_on_the_wrong_offset_never_resolves_it(self) -> None:
+        score = self._score(8)
+        a, b = self._display(score, 0), self._display(score, 250)
+        seam = {"reasons": ["ambiguous_offset"], "candidates": [[250, 0.0, 0, 750]], "prior_fit_dx": 495.0}
+        # measure numbers read on both displays put bar n of B on bar n of A only at the true offset
+        nums = lambda dx: {250: True, 500: False, 750: False}.get(dx)  # noqa: E731
+        out = rj.resolve_seam(seam, a, b, 0, self.EV, rj.CONFIG, last_display=False, numbers=nums)
+        self.assertEqual((out["status"], out["reason"]), ("unverified", "measure_numbers_contradict"), out)
+        # unreadable numbers: the prior and the typical jump alone do not beat the one-bar rival
+        out2 = rj.resolve_seam(seam, a, b, 0, self.EV, rj.CONFIG, last_display=False, numbers=lambda _dx: None)
+        self.assertEqual((out2["status"], out2["reason"]), ("unverified", "low_ink_rival"), out2)
+        # numbers that do identify the window offset are positive evidence (the existing path)
+        b5 = self._display(score, 500)
+        out3 = rj.resolve_seam(dict(seam, candidates=[]), a, b5, 0, self.EV, rj.CONFIG, last_display=False,
+                               numbers=lambda dx: dx == 500)
+        self.assertEqual(out3["status"], "resolved", out3)
+        self.assertEqual(out3["dx"], 500)
+        self.assertIn("measure_numbers", out3["evidence"])
+
+
 class UnverifiedSeamTests(unittest.TestCase):
     def test_an_unverified_seam_splits_the_chain_and_flags_both_sides(self) -> None:
         score = long_score()

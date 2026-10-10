@@ -41,7 +41,9 @@ from app.pipeline import reflow_ledger as rl
 from app.pipeline import reflow_strips as rs
 from app.pipeline import system_detect as sd
 
-JUMP_VERSION = "reflow_jump-4"
+# reflow_jump-5: a sparse (low-ink) window offset is dropped when another forward offset over the
+# whole feasible range, or one / two local bar widths away, matches comparably (no new offset is picked)
+JUMP_VERSION = "reflow_jump-5"
 SCHEMA_VERSION = 1
 
 ImageLoader = Callable[[Dict[str, Any]], np.ndarray]
@@ -98,6 +100,11 @@ CONFIG: Dict[str, Any] = {
     "resolve_failures": ["ambiguous_offset", "residual_high", "overlap_blank"],
     "low_ink_gaps2": 1.5,  # ink floor (staff spaces squared) for a window offset ...
     "low_ink_ratio_min": 4.0,  # ... that is this much better than every other offset of the window (residual <= resid_max)
+    # reflow_jump-5: ... and than every other forward offset with overlap: the whole feasible range plus the
+    # offsets one and two local bar widths either side (rest bars repeat: a one-bar shift fits as well)
+    "low_ink_rival_gaps2": 0.75,  # a rival offset needs at least this much ink (staff spaces squared) to compare
+    "low_ink_rival_win_gaps": 0.5,  # each bar-width rival is searched within +- this (bar widths vary)
+    "bar_min_gaps": 3.0,  # barlines closer than this are one barline (double / repeat bars), not a bar
     # panorama strips
     "cut_margin_gaps": 1.0,  # the stitch cut stays this far from each display's usable edge
     "cut_center_weight": 0.25,  # pull of the cut toward the middle of the overlap (times the median column difference)
@@ -194,6 +201,7 @@ def display_record(ep: Dict[str, Any], manifest: Dict[str, Any], load: ImageLoad
     rec = {
         "id": ep["id"], "gap": gap, "rows": (y0, y1), "width": int(shape[1]), "contrast": contrast,
         "features": features(comp, gap, _episode_staff_y(ep, obs_by)), "covered": covered,
+        "staff_y": _episode_staff_y(ep, obs_by),
         "members_used": int(info.get("members_used", 1)), "unrecovered_columns": int(covered.sum()),
     }
     if ledger:
@@ -774,6 +782,109 @@ def slot_evidence(seams: Sequence[Dict[str, Any]], width: int, cfg: Dict[str, An
     return out
 
 
+def feature_barlines(d: Dict[str, Any], panel_right: int, cfg: Dict[str, Any]) -> List[float]:
+    """Barline x centres of a display from its registration features (staff-line rows are zero
+    there): a column inked over the staff height between the lines (>= 90 %), with little ink just
+    above and below the staff (a stem goes on). Columns under an overlay or the panel are not
+    read. Strokes closer than ``bar_min_gaps`` are one barline. Empty without five staff rows."""
+    ys = [float(y) for y in d.get("staff_y") or []]
+    f = d.get("features")
+    if len(ys) != 5 or f is None:
+        return []
+    gap = float(d["gap"])
+    h, w = f.shape
+    lvl = float(cfg["ink_level"])
+    top, bot = int(round(ys[0])), int(round(ys[4]))
+    if bot - top < 2 or top < 0 or bot >= h:
+        return []
+    half = max(1, int(round(0.12 * gap)))
+    rows = np.ones(bot - top + 1, bool)
+    for y in ys:
+        yc = int(round(y)) - top
+        rows[max(0, yc - half - 1): yc + half + 2] = False
+    if rows.sum() < 3:
+        return []
+    ink = f > lvl
+    cover = ink[top: bot + 1][rows].mean(axis=0)
+    a0, a1 = max(0, int(top - 1.5 * gap)), max(0, int(top - 0.35 * gap))
+    b0, b1 = min(h, int(bot + 0.35 * gap)), min(h, int(bot + 1.5 * gap))
+    above = ink[a0:a1].mean(axis=0) if a1 > a0 else np.zeros(w)
+    below = ink[b0:b1].mean(axis=0) if b1 > b0 else np.zeros(w)
+    cand = (cover >= 0.9) & (above < 0.5) & (below < 0.5)
+    cand[: max(0, int(panel_right))] = False
+    cov = d.get("covered")
+    if cov is not None and len(cov) >= w:
+        cand &= ~np.asarray(cov[:w], bool)
+    groups: List[List[int]] = []
+    for x in np.flatnonzero(cand):
+        if groups and x - groups[-1][-1] <= cfg["bar_min_gaps"] * gap:
+            groups[-1].append(int(x))
+        else:
+            groups.append([int(x)])
+    return [(g[0] + g[-1]) / 2.0 for g in groups]
+
+
+def local_bar_widths(da: Dict[str, Any], db: Dict[str, Any], dx: int, panel_right: int, cfg: Dict[str, Any]) -> List[float]:
+    """Widths of single bars and of two consecutive bars around a seam at offset ``dx``: the
+    barlines of A and of B (shifted into A's columns), merged within ``bar_min_gaps``."""
+    gap = float(min(da["gap"], db["gap"]))
+    xs = sorted(feature_barlines(da, panel_right, cfg) + [x + dx for x in feature_barlines(db, panel_right, cfg)])
+    merged: List[float] = []
+    for x in xs:
+        if merged and x - merged[-1] < cfg["bar_min_gaps"] * gap:
+            continue
+        merged.append(x)
+    one = [b - a for a, b in zip(merged, merged[1:])]
+    two = [b - a for a, b in zip(merged, merged[2:])]
+    return sorted({round(v, 1) for v in one + two})
+
+
+def low_ink_rivals(c: Dict[str, Any], da: Dict[str, Any], db: Dict[str, Any], panel_right: int,
+                   cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Every other offset a sparse candidate ``c`` must beat (reflow_jump-5): each local minimum over
+    the whole geometrically feasible forward range (overlap >= ``overlap_min_gaps``), and the best
+    offset within +- ``low_ink_rival_win_gaps`` of ``c.dx`` +- one and two local bar widths. A rival
+    needs ``low_ink_rival_gaps2`` of ink. Returns the rivals and the worst ratio
+    (rival + floor) / (own + floor); it only ever rejects ``c``, never proposes an offset."""
+    width = min(da["width"], db["width"])
+    gap = float(min(da["gap"], db["gap"]))
+    content_w = width - panel_right
+    rival_ink = float(cfg["low_ink_rival_gaps2"])
+    fwd_lo = int(np.ceil(cfg["jump_min_dx_frac"] * content_w))
+    sep = max(2.0, cfg["distinct_gaps"] * gap)
+    rivals = [dict(o, via="range") for o in window_candidates(da, db, panel_right, fwd_lo, width - 1, cfg, min_ink_gaps2=rival_ink)]
+    widths = local_bar_widths(da, db, int(c["dx"]), panel_right, cfg)
+    if "features" in da and "features" in db:
+        y0, y1 = max(da["rows"][0], db["rows"][0]), min(da["rows"][1], db["rows"][1])
+        fa, fb = da["features"][y0:y1, :width], db["features"][y0:y1, :width]
+        va, vb = ~da["covered"][:width].copy(), ~db["covered"][:width].copy()
+        va[:panel_right] = False
+        vb[:panel_right] = False
+        lvl = float(cfg["ink_level"])
+        min_overlap = cfg["overlap_min_gaps"] * gap
+        min_ink = rival_ink * gap * gap
+        win = max(2, int(round(cfg["low_ink_rival_win_gaps"] * gap)))
+        dy_max = int(cfg["dy_max_px"])
+        for bw in widths:
+            for sign in (-1, 1):
+                t = int(round(c["dx"] + sign * bw))
+                best = None
+                for dx in range(max(fwd_lo, t - win), min(width - 1, t + win) + 1):
+                    for dy in range(-dy_max, dy_max + 1):
+                        r, n, nc = _residual(fa, fb, va, vb, dx, lvl, dy=dy, tolerant=True)
+                        if nc >= min_overlap and n >= min_ink and (best is None or r < best["residual"]):
+                            best = {"dx": dx, "dy": dy, "residual": round(float(r), 2), "ink_px": int(n), "overlap_px": int(nc)}
+                if best is not None:
+                    rivals.append(dict(best, via=f"bar{sign * bw:+.0f}"))
+    rivals = [o for o in rivals if abs(o["dx"] - c["dx"]) >= sep]
+    fl = float(cfg["resid_floor"])
+    worst = min(((o["residual"] + fl) / (c["residual"] + fl) for o in rivals), default=float("inf"))
+    best = min(rivals, key=lambda o: o["residual"]) if rivals else None
+    return {"bar_widths": widths, "examined": len(rivals),
+            "best": None if best is None else [best["dx"], best["residual"], best["ink_px"], best["via"]],
+            "ratio": round(worst, 2) if np.isfinite(worst) else None, "_ratio": worst}
+
+
 def resolve_seam(seam: Dict[str, Any], da: Dict[str, Any], db: Dict[str, Any], panel_right: int, ev: Dict[str, Any],
                  cfg: Dict[str, Any], *, last_display: bool, numbers: Optional[Callable[[int], Optional[bool]]] = None) -> Dict[str, Any]:
     """Resolve one ambiguous seam (fail-closed). Plausible offsets: every candidate of the
@@ -791,7 +902,11 @@ def resolve_seam(seam: Dict[str, Any], da: Dict[str, Any], db: Dict[str, Any], p
     residual <= ``resid_max``, and (other + floor) / (own + floor) >= ``low_ink_ratio_min``
     against every other local minimum of the window; source ``low_ink_window``). Such a seam, or a chosen
     low-ink offset, needs at least two constraints besides "forward" (the typical jump and the
-    cursor prior or the measure numbers)."""
+    cursor prior or the measure numbers).
+
+    reflow_jump-5: a chosen low-ink offset without agreeing measure numbers is also checked against
+    every forward offset outside the window (``low_ink_rivals``); a rival less than
+    ``low_ink_ratio_min`` times worse leaves the seam unverified (reason ``low_ink_rival``)."""
     width = min(da["width"], db["width"])
     gap = float(min(da["gap"], db["gap"]))
     content_w = width - panel_right
@@ -883,6 +998,15 @@ def resolve_seam(seam: Dict[str, Any], da: Dict[str, Any], db: Dict[str, Any], p
     if (strict or c.get("source") == "low_ink_window") and len(used) < 3:
         # a seam that failed on more than ambiguity, or a sparse offset: two independent constraints
         return dict(out, reason="needs_two_constraints", left=[c["dx"]])
+    if c.get("source") == "low_ink_window" and "measure_numbers" not in used:
+        # reflow_jump-5: a sparse offset (rest bars) must also beat every offset outside the window,
+        # above all one or two bars away; the typical jump and the cursor prior cannot tell a one-bar
+        # shift apart. Agreeing measure numbers identify the bars and may still resolve it.
+        riv = low_ink_rivals(c, da, db, panel_right, cfg)
+        ratio = riv.pop("_ratio")
+        out["low_ink_rivals"] = riv
+        if ratio < float(cfg["low_ink_ratio_min"]):
+            return dict(out, reason="low_ink_rival", left=[c["dx"]])
     if c.get("dy") is None:  # a registration candidate: refine dy/exact offset in a small window
         ref = window_candidates(da, db, panel_right, c["dx"] - 2, c["dx"] + 2, cfg)
         if ref:

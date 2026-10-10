@@ -610,7 +610,21 @@ def compose_members(images: List[np.ndarray], gap: float, *, keys: Optional[Sequ
         k = max(STEADY_SOLID_PX, int(round(STEADY_SOLID_GAPS * gap)))
         solid = cv2.morphologyEx((steady_all & (chroma > STEADY_TINT_MAX)).astype(np.uint8), cv2.MORPH_OPEN,
                                  np.ones((k, k), np.uint8)).astype(bool)
-        static = steady_all & ~solid
+        # Only pixels that look like the strip's own printed content are exempt: (near-)paper,
+        # neutral ink, or the thin fringe right next to that ink (anti-aliased / sub-pixel tinted
+        # text edges). A static mid-gray playhead or icon, or a thin colored line, that sits over
+        # the notation in every member is neither, so it stays unrecovered: being covered the same
+        # way in every frame does not mean the notation under it was seen.
+        norm_out, _inv = sd.normalize_polarity(out)
+        g = cv2.cvtColor(norm_out, cv2.COLOR_BGR2GRAY).astype(np.int16)
+        paper = float(np.percentile(g, 75))
+        neutral = chroma <= STEADY_TINT_MAX
+        ink_like = neutral & (g <= paper - STEADY_INK_DROP)
+        # near-paper with at most a faint tint: the light sub-pixel fringe beside a text stroke
+        paper_like = (chroma <= STEADY_PAPER_TINT_MAX) & (g >= paper - STEADY_PAPER_DROP)
+        r = max(1, int(round(STEADY_FRINGE_GAPS * gap)))
+        near_ink = cv2.dilate(ink_like.astype(np.uint8), np.ones((2 * r + 1, 2 * r + 1), np.uint8)) > 0
+        static = steady_all & ~solid & (ink_like | paper_like | near_ink)
         unrec = unrec & ~static
         # what is left in specks (an anti-aliased pixel or two at a glyph edge) cannot hide notation
         nl, lab, cst, _c = cv2.connectedComponentsWithStats(unrec.astype(np.uint8), connectivity=8)
@@ -721,6 +735,10 @@ STEADY_SOLID_GAPS = 0.25      # ... or of this share of the staff gap when large
 STEADY_QUANTILES = (10, 90)   # the members' spread is measured between these percentiles
 UNRECOVERED_SPECK_GAPS2 = 0.02  # an unrecovered piece smaller than this (x gap^2) is a speck
 STEADY_MIN_MEMBERS = 3        # "every member shows the same" needs at least this many members
+STEADY_INK_DROP = 150         # a steady covered pixel is plain ink when this much darker than the composite's paper (neutral)
+STEADY_PAPER_DROP = 40        # ... plain paper within this of the paper level
+STEADY_PAPER_TINT_MAX = 48    # ... with at most this chroma (a light fringe; a colored line or box is more saturated or darker)
+STEADY_FRINGE_GAPS = 0.08     # ... or a text fringe within this share of the gap (>= 1 px) of plain ink
 CHROME_PRESENT_SHARE = 0.5    # chrome counts in a display where at least half of its members show it
 CHROME_IN_PLACE = 0.9         # ... and what the display shows around it lies on the chrome
 

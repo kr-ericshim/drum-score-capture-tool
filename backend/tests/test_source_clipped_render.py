@@ -50,7 +50,7 @@ class SourceClippedRenderTest(unittest.TestCase):
         self.assertTrue(plan['validation']['valid'])
         self.assertNotIn('incomplete', plan)
         self.assertNotIn('incomplete', header)
-        self.assertEqual(plan['header']['notice'], '원본 영상에서 잘린 줄 2개 — 보이는 부분만 담음')
+        self.assertEqual(plan['header']['notice'], '원본 영상에서 일부 표기가 잘려 있습니다. 보이는 부분만 담았습니다.')
         markers = [(p, m) for p in plan['pages'] for m in p.get('markers', [])]
         self.assertEqual(len(markers), 2)
         for page, mark in markers:
@@ -66,7 +66,7 @@ class SourceClippedRenderTest(unittest.TestCase):
         coverage = incomplete(*[(100 + 10 * i, 104 + 10 * i) for i in range(24)])
         header = main._compose_header({'title': 'T'}, coverage, self.systems)
         plan, _ = rp.compose_systems(self.systems, header=header)
-        self.assertIn('원본 영상에서 잘린 줄 2개', plan['header']['notice'])
+        self.assertIn('원본 영상에서 일부 표기가 잘려 있습니다.', plan['header']['notice'])
         self.assertIn('전체 목록은 악보 끝', plan['header']['notice'])
         self.assertTrue(plan['incomplete']['appendix']['complete'])
         self.assertEqual(plan['incomplete']['appendix']['listed'], 24)
@@ -74,7 +74,7 @@ class SourceClippedRenderTest(unittest.TestCase):
         self.assertEqual(len(plan['source_limited']['markers']), 2)
         runs = rr._layout_header(header)
         drawn_notice = ' '.join(r['text'] for r in runs if r['kind'] == 'notice')
-        self.assertIn('원본 영상에서 잘린 줄 2개', drawn_notice)
+        self.assertIn('원본 영상에서 일부 표기가 잘려 있습니다.', drawn_notice)
         self.assertNotIn('…', drawn_notice)
         self.assertTrue(plan['validation']['valid'])
 

@@ -21,8 +21,16 @@ so the three formats share page count, order, header and placements.
   last page or on added pages that count in the plan's page count. No interval is left out.
 * Source limits: header ``source_clipped`` lists the original ``system_id`` values whose
   visible content is kept. Each affected output line gets a small unboxed dagger notice,
-  kept with that line, and page 1 names the number of original source-cut lines. This is
-  independent of ``incomplete``; combined notices use the same missing-interval appendix.
+  kept with that line, and page 1 says that some notation is cut off in the source (no count:
+  a clipped source strip can span several printed lines). This is independent of
+  ``incomplete``; combined notices use the same missing-interval appendix.
+* Rejected jump joins (SEAM_REJECT_DESIGN "Implemented"): header ``rejected_seams`` lists
+  ``{"system_id", "boundary": "start"|"end", "seam_id"}`` for composed systems that start or
+  end at a seam the user marked wrong (main._compose_header). Every printed line holding such
+  a boundary gets a small ``SEAM_SYMBOL`` mark in the page margin beside it (left: the line
+  starts at the boundary; right: it ends there, or the boundary is inside the line), and each
+  affected page gets one short gray note in the bottom margin. Nothing is moved or resized:
+  the marks and the note are drawn only in margins the layout already leaves free.
 * Header faces are selected using actual Unicode cmap coverage, with macOS/Windows CJK
   system-font fallbacks. No additional font package is required.
 
@@ -68,6 +76,13 @@ MARKER_BORDER_PX = 3
 MARKER_H = int(round(1.9 * MARKER_PX))  # one short boxed row
 NOTICE_MAX_LINES = 3  # page-1 notice; a longer interval list moves to the appendix
 APPENDIX_ITEM_SEP = "    "
+SEAM_SYMBOL = "⇄"  # ⇄; drawn as a shape when the resolved face lacks the glyph
+SEAM_MARK_PX = int(round(10 / 72 * rl.DPI))  # 10 pt margin mark
+SEAM_NOTE_PX = int(round(8 / 72 * rl.DPI))  # 8 pt bottom-margin note
+SEAM_MARK_GAP_PX = int(round(2.5 * rl.MM))  # clear paper between a mark and its line
+SEAM_COLOR = MUTED_COLOR
+SEAM_NOTE_COLOR = (110, 110, 110)
+SEAM_NOTE_MAX_LINES = 2
 
 
 @lru_cache(maxsize=32)
@@ -197,10 +212,10 @@ def source_clipped_notice(header: Optional[Dict[str, Any]]) -> Optional[str]:
     clipped = (header or {}).get("source_clipped") or []
     if not clipped:
         return None
-    n = len({r["system_id"] for r in clipped})
+    # No count: clipped source strips are not printed lines (a strip can span many lines).
     if _locale(header, {}) == "en":
-        return f"{n} source-cut lines — only the visible part is kept."
-    return f"원본 영상에서 잘린 줄 {n}개 — 보이는 부분만 담음"
+        return "Some notation is cut off in the source video. Only the visible part is kept."
+    return "원본 영상에서 일부 표기가 잘려 있습니다. 보이는 부분만 담았습니다."
 
 
 def _notice_width() -> int:
@@ -296,6 +311,7 @@ def layout_markers(header: Optional[Dict[str, Any]],
                     "keep_with_previous": True, "h": MARKER_H, "text": text, "system_ids": clipped}
             markers.append(mark)
             records.append(dict(mark, position="placed"))
+    records.extend(rejected_seam_records(header, unit_systems))
     inc = _incomplete(header)
     if inc is None:
         return markers, records
@@ -322,8 +338,76 @@ def layout_markers(header: Optional[Dict[str, Any]],
     return markers, records
 
 
+def _rejected_seams(header: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    out = []
+    for r in (header or {}).get("rejected_seams") or []:
+        if isinstance(r, dict) and r.get("system_id") and r.get("boundary") in ("start", "end"):
+            out.append(r)
+    return out
+
+
+def rejected_seam_records(header: Optional[Dict[str, Any]],
+                          unit_systems: Sequence[Tuple[str, Sequence[str]]]) -> List[Dict[str, Any]]:
+    """Margin marks for printed lines at a seam the user rejected (no layout room is taken).
+
+    ``unit_systems``: the printed units (lines) in output order with their systems in content
+    order. A system's ``start`` boundary lies in the first unit holding it, its ``end`` boundary
+    in the last one. The mark goes in the left margin when that unit starts with the system's
+    start, in the right margin when it ends with the system's end, and in the right margin when
+    the boundary falls inside the line. A system that is not printed gets no mark."""
+    by_side: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    for r in _rejected_seams(header):
+        sid = str(r["system_id"])
+        holders = [k for k, (_uid, systems) in enumerate(unit_systems) if sid in systems]
+        if not holders:
+            continue
+        k = holders[0] if r["boundary"] == "start" else holders[-1]
+        uid, systems = unit_systems[k]
+        systems = list(systems)
+        if r["boundary"] == "start":
+            at_edge = systems[0] == sid
+            side = "left" if at_edge else "right"
+        else:
+            at_edge = systems[-1] == sid
+            side = "right"
+        rec = by_side.setdefault((uid, side), {"id": f"rejected-seam-{uid}-{side}", "kind": "rejected_seam",
+                                               "line_id": uid, "side": side, "seam_ids": [], "boundaries": [],
+                                               "position": "placed"})
+        if r.get("seam_id") and r["seam_id"] not in rec["seam_ids"]:
+            rec["seam_ids"].append(r["seam_id"])
+        rec["boundaries"].append({"system_id": sid, "boundary": r["boundary"], "at_line_edge": at_edge})
+    return list(by_side.values())
+
+
+def _seam_note_body(header: Optional[Dict[str, Any]]) -> str:
+    if _locale(header, _incomplete(header) or {}) == "en":
+        return "The app could not confirm this join, so both views are kept. Measures may repeat at the marked lines."
+    return "앱이 화면 연결을 확정하지 못해 앞뒤 화면을 모두 담았습니다. 표시된 곳에서 마디가 겹칠 수 있습니다."
+
+
+def seam_note_text(header: Optional[Dict[str, Any]]) -> str:
+    """The per-page note, led by the same symbol as the margin marks."""
+    return f"{SEAM_SYMBOL} {_seam_note_body(header)}"
+
+
+def attach_rejected_seams(plan: Dict[str, Any], header: Optional[Dict[str, Any]],
+                          records: Sequence[Dict[str, Any]]) -> None:
+    """Record the rejected-join marks with their pages (nothing when no seam was rejected)."""
+    marks = [r for r in records if r.get("kind") == "rejected_seam"]
+    if not marks:
+        plan.pop("rejected_seams", None)
+        return
+    page_of = {pl["system_id"]: p["index"] for p in plan.get("pages", []) for pl in p.get("placements", [])}
+    placed = [dict(r, page=page_of.get(r["line_id"])) for r in marks]
+    plan["rejected_seams"] = {"note": seam_note_text(header), "marks": placed,
+                              "pages": sorted({m["page"] for m in placed if m["page"] is not None})}
+
+
 def attach_incomplete(plan: Dict[str, Any], header: Optional[Dict[str, Any]], records: Sequence[Dict[str, Any]]) -> None:
-    """Record the incomplete-chart notice and markers in the plan (nothing for a complete chart)."""
+    """Record the incomplete-chart notice and markers in the plan (nothing for a complete chart).
+    Rejected-join margin marks in ``records`` are recorded too (``attach_rejected_seams``)."""
+    attach_rejected_seams(plan, header, records)
+    records = [r for r in records if r.get("kind") != "rejected_seam"]
     notice = incomplete_notice_text(header)
     if notice is None:
         return
@@ -528,6 +612,80 @@ def _draw_generated(draw, generated: Optional[list], page_index: int, kind: str,
                           "inputs": inputs})
 
 
+def _seam_font(size: int, text: str):
+    """The header face at ``size`` and whether it draws ``SEAM_SYMBOL`` (else a drawn shape)."""
+    font = _resolve_score_header_font(size, f"Ag가{SEAM_SYMBOL}{text}")
+    return font, font_covers_text(font, SEAM_SYMBOL)
+
+
+def _seam_shape(d: ImageDraw.ImageDraw, box: Sequence[int], color, width: int) -> None:
+    """Two opposed arrows (the ⇄ shape) inside ``box`` = [x0, y0, x1, y1]."""
+    x0, y0, x1, y1 = box
+    h = y1 - y0
+    head = max(3, int(round(0.28 * h)))
+    ya, yb = y0 + int(round(0.28 * h)), y0 + int(round(0.72 * h))
+    d.line([(x0, ya), (x1, ya)], fill=color, width=width)
+    d.line([(x1 - head, ya - head), (x1, ya), (x1 - head, ya + head)], fill=color, width=width)
+    d.line([(x0, yb), (x1, yb)], fill=color, width=width)
+    d.line([(x0 + head, yb - head), (x0, yb), (x0 + head, yb + head)], fill=color, width=width)
+
+
+def _seam_mark_ops(draw: ImageDraw.ImageDraw, mark: Dict[str, Any], pl: Dict[str, Any]):
+    """(operation, inputs) drawing one margin mark beside placement ``pl``; outside the line box."""
+    font, glyph = _seam_font(SEAM_MARK_PX, "")
+    if glyph:
+        bbox = draw.textbbox((0, 0), SEAM_SYMBOL, font=font)
+        w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    else:
+        bbox, w, h = (0, 0, 0, 0), int(0.9 * SEAM_MARK_PX), int(0.6 * SEAM_MARK_PX)
+    if mark["side"] == "left":
+        x0 = max(0, min(int(pl["x"]), rl.MARGIN_X) - SEAM_MARK_GAP_PX - w)
+    else:
+        x0 = min(rl.PAGE_W - w - 1, max(int(pl["x"]) + int(pl["w"]), rl.PAGE_W - rl.MARGIN_X) + SEAM_MARK_GAP_PX)
+    y0 = int(pl["y"]) + (int(pl["h"]) - h) // 2
+    box = [x0, y0, x0 + w, y0 + h]
+    if glyph:
+        xy = (x0 - bbox[0], y0 - bbox[1])
+        def op(d):
+            d.text(xy, SEAM_SYMBOL, font=font, fill=SEAM_COLOR)
+    else:
+        def op(d):
+            _seam_shape(d, box, SEAM_COLOR, 3)
+    return op, {"text": SEAM_SYMBOL, "glyph": glyph, "box": box, "mark": dict(mark)}
+
+
+def _seam_note_ops(draw: ImageDraw.ImageDraw, header: Optional[Dict[str, Any]], p: Dict[str, Any]):
+    """(operation, inputs) for the bottom-margin note of a page with rejected-join marks. It sits
+    right-aligned below every placement, clear of the page number at the bottom left."""
+    body = _seam_note_body(header)
+    font, glyph = _seam_font(SEAM_NOTE_PX, body)
+    lh = draw.textbbox((0, 0), "Ag가", font=font)
+    top_off, line_h = lh[1], lh[3] - lh[1]
+    gap = int(0.35 * SEAM_NOTE_PX)
+    prefix_w = 0 if glyph else int(0.9 * SEAM_NOTE_PX) + _measure_text_width(draw, " ", font)
+    reserve = 0
+    if p.get("page_number"):
+        reserve = _measure_text_width(draw, str(p["page_number"]), _resolve_score_header_font(PAGE_NUMBER_PX)) + 2 * SEAM_NOTE_PX
+    avail = rl.PAGE_W - 2 * rl.MARGIN_X - reserve - prefix_w
+    lines = wrap_words(draw, seam_note_text(header) if glyph else body, font=font, max_width=avail,
+                       max_lines=SEAM_NOTE_MAX_LINES)
+    block_w = prefix_w + max(_measure_text_width(draw, ln, font) for ln in lines)
+    block_h = len(lines) * line_h + (len(lines) - 1) * gap
+    lowest = max([int(pl["y"]) + int(pl["h"]) for pl in p.get("placements", [])]
+                 + [int(m["y"]) + int(m["h"]) for m in p.get("markers", [])]
+                 + [int(r["y"]) + int(r.get("h", 0)) for r in p.get("appendix", [])] + [rl.PAGE_H - rl.MARGIN_BOTTOM])
+    y0 = max(rl.PAGE_H - rl.MARGIN_BOTTOM + (rl.MARGIN_BOTTOM - block_h) // 2, lowest + gap)
+    x0 = rl.PAGE_W - rl.MARGIN_X - block_w
+    def op(d):
+        y = y0
+        for i, ln in enumerate(lines):
+            if i == 0 and not glyph:
+                _seam_shape(d, [x0, y + int(0.2 * line_h), x0 + int(0.9 * SEAM_NOTE_PX), y + int(0.8 * line_h)], SEAM_NOTE_COLOR, 2)
+            d.text((x0 + prefix_w, y - top_off), ln, font=font, fill=SEAM_NOTE_COLOR)
+            y += line_h + gap
+    return op, {"text": lines, "glyph": glyph, "xy": [x0, y0], "box": [x0, y0, x0 + block_w, y0 + block_h]}
+
+
 def render_pages(plan: Dict[str, Any], strips: Dict[str, np.ndarray], *, header: Optional[Dict[str, Any]] = None,
                  generated: Optional[list] = None) -> List[np.ndarray]:
     """BGR page rasters (A4 at 300 dpi) for ``plan``; ``strips`` maps system id -> strip image.
@@ -540,13 +698,15 @@ def render_pages(plan: Dict[str, Any], strips: Dict[str, np.ndarray], *, header:
     runs = _layout_header(header)
     pages = []
     num_font = _resolve_score_header_font(PAGE_NUMBER_PX)
+    seam_marks = (plan.get("rejected_seams") or {}).get("marks") or []
     for page_index, p in enumerate(plan["pages"]):
         page = np.full((rl.PAGE_H, rl.PAGE_W, 3), 255, np.uint8)
         for pl in p["placements"]:
             img = _to_page_paper(strips[pl["system_id"]])
             r = resize_strip(img, pl["w"], pl["h"])
             page[pl["y"]:pl["y"] + pl["h"], pl["x"]:pl["x"] + pl["w"]] = r
-        if p.get("header") or p.get("page_number") or p.get("markers") or p.get("appendix"):
+        page_seams = [m for m in seam_marks if m.get("page") == p.get("index")]
+        if p.get("header") or p.get("page_number") or p.get("markers") or p.get("appendix") or page_seams:
             pil = Image.fromarray(cv2.cvtColor(page, cv2.COLOR_BGR2RGB))
             draw = ImageDraw.Draw(pil)
             if p.get("header"):
@@ -600,6 +760,16 @@ def render_pages(plan: Dict[str, Any], strips: Dict[str, np.ndarray], *, header:
                 xy = (rl.MARGIN_X - bbox[0], y)
                 _draw_generated(draw, generated, page_index, "page_number", {"number": p["page_number"], "text": text, "xy": list(xy)},
                                 lambda d: d.text(xy, text, font=num_font, fill=MUTED_COLOR))
+            if page_seams:
+                # rejected jump join: margin marks beside the lines and one note in the bottom margin
+                placed = {pl["system_id"]: pl for pl in p["placements"]}
+                for mk in page_seams:
+                    if mk["line_id"] not in placed:
+                        continue
+                    op, inputs = _seam_mark_ops(draw, mk, placed[mk["line_id"]])
+                    _draw_generated(draw, generated, page_index, "review_notice", dict(inputs, kind="rejected_seam_mark"), op)
+                op, inputs = _seam_note_ops(draw, header, p)
+                _draw_generated(draw, generated, page_index, "review_notice", dict(inputs, kind="rejected_seam_note"), op)
             page = cv2.cvtColor(np.asarray(pil), cv2.COLOR_RGB2BGR)
         pages.append(page)
     return pages

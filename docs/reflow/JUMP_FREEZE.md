@@ -35,3 +35,9 @@
 - **Config hash:** `69bcc239ec48df9b`. Not a frozen held-out change: made after the rc1 holdouts were opened (RnY5 is now a regression video).
 - **Rule:** see DECISIONS.md "Jump-view seam resolution", bullet "Sparse overlaps".
 - **Checked** on RnY5, SHvfn, Z4eb, _7gP, qA-M and Pxt9 (same frames, -3 vs -4): two seams change, RnY5 ep-0007→0008 (dx 1311, residual 16.5, 534 ink px) and Z4eb ep-0016→0017 (dx 1313, residual 2.3, 428 ink px), both resolved by typical jump + cursor prior and checked by eye. No other seam changes.
+
+## Sparse-overlap rivals, reflow_jump-5 (2026-10-11)
+
+- **Config hash:** `755d547c7a39aaa4` (new keys `low_ink_rival_gaps2` 0.75, `low_ink_rival_win_gaps` 0.5, `bar_min_gaps` 3.0; display records also carry `staff_y`).
+- **Rule:** see DECISIONS.md "Jump-view seam resolution", bullet "Sparse-overlap rivals". Requested by an outside review of -4: the window-only ≥ 4× test could accept a one-bar-off alignment of repeated rest bars.
+- **Checked** on RnY5 and Z4eb (dashboard, HEAD + this change only): RnY5 ep-0007→0008 is unverified again (rival dx 1384 = one bar on, residual 12.07, 187 ink px, vs 16.47 at dx 1311), so bars 42–43 print twice and the job carries `JUMP_SEAM_UNVERIFIED`; Z4eb ep-0016→0017 still resolves to dx 1313 (best rival dx 1382, residual 93.8, ratio 22). All other seams of both videos are unchanged; Z4eb, 0MiL, S1nl and 01Mr pages are byte-identical to rc2check.

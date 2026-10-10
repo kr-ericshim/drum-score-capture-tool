@@ -2145,14 +2145,25 @@ def _compose_header(header: Dict[str, Any], coverage: Optional[Dict[str, Any]],
     system after starts from its end (MISSING_MARKER_TOLERANCE_SEC). Otherwise ``before_ids`` is
     None and the interval is named on page 1 only (reflow_render.layout_markers). The stored
     document header is never changed. Source-clipped systems are passed separately as
-    ``source_clipped`` so their local marks/summary never manufacture missing intervals."""
+    ``source_clipped`` so their local marks/summary never manufacture missing intervals.
+    Composed jump systems that start or end at a seam where both views are kept (the seam stayed
+    unverified, or the user marked it wrong) are passed as ``rejected_seams`` for the PDF's margin
+    marks and note: measures may repeat there."""
     out = dict(header or {})
     clipped = [{"system_id": s["id"], **(s.get("source_clipped") or {})} for s in composed
                if "SOURCE_CLIPPED" in (s.get("issues") or []) or s.get("source_clipped")]
     if clipped:
         out["source_clipped"] = clipped
+    rejected = []
+    for s in composed:
+        info = (s.get("strip") or {}).get("jump") or {}
+        for key, boundary in (("unverified_seam_before", "start"), ("unverified_seam_after", "end")):
+            if info.get(key):
+                rejected.append({"system_id": s["id"], "boundary": boundary, "seam_id": info[key]})
+    if rejected:
+        out["rejected_seams"] = rejected
     if not isinstance(coverage, dict) or coverage.get("status") != "incomplete" or not coverage.get("unresolved"):
-        return out if clipped else header
+        return out if clipped or rejected else header
     tol = MISSING_MARKER_TOLERANCE_SEC
     markers = []
     for start, end in coverage["unresolved"]:

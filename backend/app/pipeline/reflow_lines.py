@@ -61,7 +61,7 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-LINES_VERSION = "reflow_lines-4"
+LINES_VERSION = "reflow_lines-5"  # 5: a line whose overhang would cross the page margin at the edge is not justified there
 # Spread justification: a user-requested change of the brief's 8%/3% per-line default (2026-10-06:
 # the user disliked both ragged right edges and a few visibly wide gaps). The extra width goes
 # into many gaps proportionally to their natural width; the caps below are per gap.
@@ -113,6 +113,7 @@ RAGGED_INSUFFICIENT_SLACK = "INSUFFICIENT_SLACK"  # no break choice between two 
 RAGGED_LOCKED_SPAN = "LOCKED_SPAN"  # unsplittable content (locked group, whole system, one long measure) with too little whitespace
 RAGGED_SEGMENT_TOO_SHORT = "SEGMENT_TOO_SHORT"  # all content between two forced breaks is shorter than a line can stretch
 RAGGED_PREFIX_CONSTRAINT = "PREFIX_CONSTRAINT"
+RAGGED_OVERHANG_AT_MARGIN = "OVERHANG_AT_MARGIN"  # at this edge the line's overhang ink (a "Fine" box) would cross the page margin
 
 
 def slot_caps(natural_px: float, gap_px: float) -> Tuple[float, float]:
@@ -345,6 +346,15 @@ def _line_eval(atoms: Sequence[Dict[str, Any]], i: int, j: int, width: int, fina
         delta = max(-c_wide, min(0, max_width - natural - overhang))
         justified = False
         ragged = RAGGED_INSUFFICIENT_SLACK
+    # caps reported for this line (edge votes, records) are those of the tier that reaches ``width``
+    cap_tier, cap_delta = tier, delta
+    overhang_blocked = False
+    if justified and width + overhang > max_width:
+        # the staff would end at the edge and its overhang ink (a "Fine" box) cross the page margin: the
+        # line cannot be justified to this edge; it keeps natural spacing (contracted only as far as the
+        # printable line needs), like any line that cannot reach the edge
+        delta = max(-c_wide, min(0, max_width - natural - overhang))
+        justified, ragged, tier, overhang_blocked = False, RAGGED_OVERHANG_AT_MARGIN, 1, True
     # the per-gap stretch ratio (every gap that can take it grows or shrinks by this fraction)
     grow_w = w3 if tier == 3 else w2 if tier == 2 else we
     shrink_w = wk if tier == 2 else wc
@@ -379,9 +389,9 @@ def _line_eval(atoms: Sequence[Dict[str, Any]], i: int, j: int, width: int, fina
     joins = sum(1 for a in atoms[i + 1:j] if a.get("break_before") == "system_start")
     cost += COST_JOIN * joins
     return {"start": i, "end": j, "natural": natural, "overhang": overhang, "replica_width": replica,
-            "expand_cap": e_free if tier == 3 else e_wide if tier == 2 else e_cap, "expand_cap_normal": e_cap,
-            "expand_cap_wide": e_wide, "expand_cap_free": e_free,
-            "contract_cap": c_wide if tier == 2 and delta < 0 else c_cap, "contract_cap_wide": c_wide, "stretch_ratio": stretch, "section_end": section_end, "tier": tier, "final": final,
+            "expand_cap": e_free if cap_tier == 3 else e_wide if cap_tier == 2 else e_cap, "expand_cap_normal": e_cap,
+            "expand_cap_wide": e_wide, "expand_cap_free": e_free, "overhang_blocked": overhang_blocked,
+            "contract_cap": c_wide if cap_tier == 2 and cap_delta < 0 else c_cap, "contract_cap_wide": c_wide, "stretch_ratio": stretch, "section_end": section_end, "tier": tier, "final": final,
             "delta": delta, "justified": justified, "ragged": ragged, "measure_count": count, "cost": cost, "ragged_cost": ragged_cost,
             "tier3_stretch_cost": tier3_stretch_cost,
             "slot_ids": [s["id"] for s in slots], "fill": fill, "joins": joins}
@@ -395,6 +405,9 @@ def _ragged_reason(atoms: Sequence[Dict[str, Any]], ev: Dict[str, Any], width: i
     """Why the line [start, end) cannot reach the edge: its unsplittable content, the content between
     the forced breaks around it, or no break choice there that fills every line."""
     i, j = ev["start"], ev["end"]
+    if ev.get("overhang_blocked"):
+        return {"reason": RAGGED_OVERHANG_AT_MARGIN, "final_line": bool(ev["final"]), "segment_atoms": [atoms[i]["id"], atoms[j - 1]["id"]],
+                "forced_break_after": None}
     s = i
     while s > 0 and not _must_break_static(atoms[s]):
         s -= 1

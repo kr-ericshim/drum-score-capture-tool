@@ -473,5 +473,95 @@ class JitteredStrokePipelineProbeTest(unittest.TestCase):
             self.assertEqual(rec["ink_restored"]["px"], 0, k)
             self.assertNotIn(rs.OVERLAY_COVERS_NOTATION, rec["issues"], k)
 
+def _gray_bar(img):
+    img[40:150, 700:708] = 135  # a static mid-gray playhead / icon over the notation
+
+
+def _color_line(img):
+    cv2.line(img, (900, 45), (960, 140), (40, 120, 230), 2, cv2.LINE_AA)  # a thin static colored line across a stem
+
+
+def _lyric(img, y=170):
+    m = np.zeros(img.shape[:2], np.uint8)
+    cv2.putText(m, "la la love you", (300, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, 255, 2, cv2.LINE_8)
+    ring = (cv2.dilate(m, np.ones((3, 3), np.uint8)) > 0) & (m == 0)
+    img[ring] = (110, 170, 235)  # a warm sub-pixel fringe around black lyric glyphs
+    img[m > 0] = (25, 25, 25)
+
+
+class StaticCoveredContentTest(unittest.TestCase):
+    """A pixel the overlay mask covers in every member, and that never changes, is exempt from
+    OVERLAY_UNRECOVERED only when it looks like the strip's own print: neutral paper, neutral ink,
+    or a thin fringe next to that ink (lyric text). A static gray playhead / icon or a thin colored
+    line over the notation keeps the warning: covered the same way in every frame does not mean the
+    notation under it was seen."""
+
+    def _compose(self, mark):
+        base = staff(notes=(200, 300, 400, 500, 600))
+        members = []
+        for x in (100, 450, 650, 750):
+            img = base.copy()
+            mark(img)
+            members.append(with_cursor(img, x))
+        return rs.compose_members(members, float(GAP))
+
+    def test_static_gray_bar_over_notation_stays_unrecovered(self):
+        def bar(img):
+            img[30:160, 303:311] = 140
+        _out, info = self._compose(bar)
+        self.assertGreater(info["unrecovered_px"], 0)
+
+    def test_thin_static_colored_line_across_a_stem_stays_unrecovered(self):
+        for w in (1, 2):
+            _out, info = self._compose(lambda img: cv2.line(img, (380, 40), (440, 150), (40, 120, 230), w))
+            self.assertGreater(info["unrecovered_px"], 0, w)
+        _out, info = self._compose(lambda img: cv2.line(img, (405, 30), (405, 150), (40, 120, 230), 2))
+        self.assertGreater(info["unrecovered_px"], 0)
+
+    def test_warm_fringe_around_lyric_glyphs_is_not_unrecovered(self):
+        _out, info = self._compose(lambda img: _lyric(img, y=185))
+        self.assertEqual(info["unrecovered_px"], 0)
+        self.assertGreater(info["static_covered_px"], 0)
+
+
+class StaticCoveredPipelineTest(unittest.TestCase):
+    """The same through tracker -> occurrences -> build_strip: display 1 has a static gray bar over
+    the notation in every frame, display 2 a thin colored line across a stem, display 3 lyrics with
+    a warm fringe. ``unrecovered_columns`` > 0 is what reflow_pipeline turns into OVERLAY_UNRECOVERED."""
+
+    @classmethod
+    def setUpClass(cls):
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from app.pipeline import reflow_occurrences as ro
+        from app.pipeline import system_tracking as st
+        from reflow_fixture import build, loader, show, strip
+
+        marks = [_gray_bar, _color_line, _lyric, None]
+        frames = []
+        for k, (bars, slots) in enumerate([(4, 8), (3, 8), (5, 8), (3, 6)]):
+            for t, img in show(strip(4, bars_per_system=bars, slots_per_bar=slots), k * 8.0, 8.0, seed=k + 1):
+                img = img.copy()
+                if marks[k] is not None:
+                    marks[k](img)
+                frames.append((t, img))
+        manifest, images = build(frames)
+        load = loader(images)
+        tracking = st.build_episodes(manifest, load)
+        occ = ro.build_occurrences(tracking, manifest, load)
+        chrome, _info = rs.job_screen_chrome(manifest, load)
+        cls.recs = [rs.build_strip(s, manifest, load, chrome=chrome if chrome is not None else False)[1]
+                    for s in occ["systems"] if s["included"]]
+
+    def test_static_overlays_over_notation_warn_and_lyric_fringes_do_not(self):
+        self.assertEqual(len(self.recs), 4)
+        self.assertGreater(self.recs[0]["unrecovered_columns"], 0)  # gray bar
+        self.assertGreater(self.recs[1]["unrecovered_columns"], 0)  # thin colored line
+        self.assertEqual(self.recs[2]["unrecovered_columns"], 0)  # lyric fringe
+        self.assertGreater(self.recs[2]["static_covered_px"], 0)
+        self.assertEqual(self.recs[3]["unrecovered_columns"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

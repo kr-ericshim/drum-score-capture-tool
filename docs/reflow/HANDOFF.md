@@ -60,8 +60,18 @@ Open item 1 of the block below is built (committed with the small review fixes l
 4. Freeze rc2 and write the ChatGPT Pro checkpoint prompt + attachments (memory: pro-checkpoints).
    **Written 2026-10-11:** [FREEZE_RC2.md](FREEZE_RC2.md) (build, changes since rc1, 17-video baseline: clean 8, usable 7,
    unsupported 2; holdout protocol draft) and [PRO_CHECKPOINT_RC2.md](PRO_CHECKPOINT_RC2.md) (attachments
-   `~/Documents/drum-score-corpus/advice_pack_7/`, 11 files). **Waiting on the Pro reply**; fix the holdout protocol from it.
-5. New sealed holdout set (one frame per video checked for a real score, channels balanced), one run, grade by the rubric.
+   `~/Documents/drum-score-corpus/advice_pack_7/`, 11 files). **Pro replied** ([PRO_REPLY_RC2.md](PRO_REPLY_RC2.md)): hold
+   the freeze for five items, then a sealed 8 + 2 holdout.
+   **Pre-freeze items done 2026-10-11** (Opus reflow-workers, Codex tokens short; details in FREEZE_RC2 "Changes"):
+   (1) TeoV fallback → measure reflow (`reflow_lines-5`, overhang at the margin); (2) ⇄ margin marks + note for every
+   both-views join, header without a count, review "판단하기 어려워요" and an amber "연결 미확정" tag; (3) full read of the
+   repaired RnY5 (all bars once, in order; RnY5 graded not usable for the clipped tuplet numerals); (4) `reflow_jump-5`
+   low-ink rival check (RnY5 0007→0008 back to both views, marked) and the narrowed overlay exemption; (5) rubric, ship bar,
+   assistance budget, build hash in FREEZE_RC2. Baseline now usable 13/17. Regression `eval_v1/prefreeze_dashboard`,
+   packaged check `eval_v1/seamcheck_prefreeze`. Not done: J's repaired chart read; the "hard to tell" button clicked in the
+   packaged GUI (files byte-identical to source).
+5. New sealed holdout set per FREEZE_RC2 "Next holdout protocol" (8 supported + 2 refusal tests, seeded selection, 15 s at
+   10/50/90 %, two-pass grading), one run in the packaged app, grade by the rubric.
 
 ## Start here (2026-10-10 late night: join check in the review screen)
 

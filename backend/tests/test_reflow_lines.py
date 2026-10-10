@@ -143,5 +143,40 @@ class LineBreaking(unittest.TestCase):
         self.assertTrue(all(ln["justified"] and ln["achieved_width"] == edge["width"] for ln in plan["lines"]))
 
 
+class OverhangAtTheMargin(unittest.TestCase):
+    """A line's overhang ink (a "Fine" box past the last staff end) must stay inside the page: a line
+    justified to an edge whose overhang would cross the margin made the page plan invalid (TeoV line-013,
+    whole-systems fallback). Such a line is not justified to that edge."""
+
+    def test_a_line_whose_overhang_would_cross_the_margin_is_not_justified_there(self):
+        a = atoms([500] * 4)
+        a[-1]["overhang"] = 30
+        plan = rlines.plan_lines(a, 2040)
+        self.assertTrue(plan["valid"])
+        (ln,) = plan["lines"]
+        self.assertFalse(ln["justified"])
+        self.assertEqual(ln["ragged_reason"], rlines.RAGGED_OVERHANG_AT_MARGIN)
+        self.assertLessEqual(ln["achieved_width"] + ln["overhang_px"], 2040)
+        self.assertEqual(plan["ragged_exceptions"][0]["reason"], rlines.RAGGED_OVERHANG_AT_MARGIN)
+        # without the overhang the same line is justified to the margin as before
+        b = atoms([500] * 4)
+        (ln,) = rlines.plan_lines(b, 2040)["lines"]
+        self.assertTrue(ln["justified"])
+        self.assertEqual(ln["achieved_width"], 2040)
+
+    def test_an_edge_that_leaves_room_for_the_overhang_is_used(self):
+        a = atoms([500] * 4)
+        a[-1]["overhang"] = 30
+        # an edge inside the margin with room for the overhang: the line is justified there
+        (ln,) = rlines.plan_lines(a, 2010, max_width=2040)["lines"]
+        self.assertTrue(ln["justified"])
+        self.assertEqual(ln["achieved_width"] + ln["overhang_px"], 2040)
+        plan = rlines.plan_document(a, 2040)
+        self.assertTrue(plan["valid"])
+        for ln in plan["lines"]:
+            self.assertLessEqual(ln["achieved_width"] + ln["overhang_px"], 2040, ln)
+        self.assertTrue(plan["lines"][0]["justified"])
+
+
 if __name__ == "__main__":
     unittest.main()

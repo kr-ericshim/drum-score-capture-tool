@@ -110,6 +110,15 @@ test("answers show progress, and a bad join points to a problem report", async (
   assert.match(html, /data-action="open-bug-report"/);
   await controller.handleAction("review-seam-answer", "seam-ep-0003-ep-0004|maybe");
   assert.equal(box.state.review.lineCheck.answers["seam-ep-0003-ep-0004"], "bad");
+  // "hard to tell" stays unchecked: not counted, not taken for a fine join, and asks to compare again
+  await controller.handleAction("review-seam-answer", "seam-ep-0003-ep-0004|unsure");
+  html = renderReviewScreen(box.state);
+  assert.match(html, /0 of 1 checked/);
+  assert.match(html, /review-seam-check is-unsure/);
+  assert.match(html, /class="review-seam-done is-unconfirmed">Not checked</);
+  assert.match(html, /This place stays unchecked/);
+  assert.match(html, /\|unsure" aria-pressed="true">Hard to tell</);
+  assert.equal(pendingSeamRejections(box.state), null, "only a wrong join is rebuilt");
 });
 
 test("with every join verified it opens on the full list; with no seams it waits to be asked", async () => {
@@ -218,7 +227,7 @@ test("a rebuilt join shows both printed lines and says both views were kept, in 
   assert.equal(checks.length, 1, "one card per join, not per printed end");
   assert.deepEqual(checks[0].around.map(line => line.id), ["line-002", "line-003"]);
   assert.equal(checks[0].jump, 27.4);
-  for (const [locale, note] of [["ko", "앞뒤 화면을 모두 남겼어요"], ["en", "Both views are kept"]]) {
+  for (const [locale, note, tag] of [["ko", "앞뒤 화면을 모두 남겼어요", "연결 미확정 · 양쪽 화면 보존"], ["en", "so it kept both", "Join unconfirmed · both views kept"]]) {
     const state = reviewState(locale, rebuilt);
     state.review.reflow = deriveReflowInfo({ output_model: "clean_reflow_v1", source_video_path: "/src/v.webm",
       reflow: { revision: 2, line_review: rebuilt, rejected_seam_ids: ["seam-ep-0003-ep-0004"] } });
@@ -226,6 +235,8 @@ test("a rebuilt join shows both printed lines and says both views were kept, in 
     state.review.lineCheck = { answers: { "seam-ep-0003-ep-0004": "bad" } };
     const html = renderReviewScreen(state);
     assert.match(html, new RegExp(note));
+    // kept, not fixed: the tag reads as unconfirmed, not as done
+    assert.match(html, new RegExp(`class="review-seam-done is-unconfirmed">${tag}<`));
     assert.doesNotMatch(html, /data-action="review-seam-answer"/, "no question on a join already rebuilt");
     assert.equal(pendingSeamRejections(state), null);
   }

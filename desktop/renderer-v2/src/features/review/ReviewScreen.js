@@ -298,7 +298,9 @@ function renderSeamCheck(check, index, lineCheck, pagePath, roiCrop, videoUrl, l
       <header class="review-line-head">
         <strong id="seamCheck${index}">${tt("checkTitle", { index: index + 1 })}</strong>
         <span class="review-line-meta">${where}</span>
-        ${answer === "ok" ? `<span class="review-seam-done">${tt("answeredOk")}</span>` : repaired ? `<span class="review-seam-done">${tt("repairedTag")}</span>` : ""}
+        ${answer === "ok" ? `<span class="review-seam-done">${tt("answeredOk")}</span>`
+          : repaired ? `<span class="review-seam-done is-unconfirmed">${tt("repairedTag")}</span>`
+          : answer === "unsure" ? `<span class="review-seam-done is-unconfirmed">${tt("answeredUnsure")}</span>` : ""}
       </header>
       <p class="review-seam-label">${tt("pdfLabel")}</p>
       <div class="review-seam-printed">${printed}</div>
@@ -313,7 +315,9 @@ function renderSeamCheck(check, index, lineCheck, pagePath, roiCrop, videoUrl, l
       <div class="review-seam-answers" role="group" aria-label="${tt("checkTitle", { index: index + 1 })}">
         <button type="button" class="button ${answer === "ok" ? "button-primary" : "button-secondary"}" data-action="review-seam-answer" data-value="${escapeHtml(seam.id)}|ok" aria-pressed="${answer === "ok"}">${tt("answerOk")}</button>
         <button type="button" class="button button-secondary" data-action="review-seam-answer" data-value="${escapeHtml(seam.id)}|bad" aria-pressed="${answer === "bad"}">${tt("answerBad")}</button>
+        <button type="button" class="button button-secondary" data-action="review-seam-answer" data-value="${escapeHtml(seam.id)}|unsure" aria-pressed="${answer === "unsure"}">${tt("answerUnsure")}</button>
       </div>
+      ${answer === "unsure" ? `<p class="review-reflow-note" role="status">${tt("unsureNote")}</p>` : ""}
       ${answer === "bad" ? `<div class="review-reflow-note is-warning" role="status"><p>${tt("badNote")}</p>
         <button type="button" class="button button-secondary" data-action="open-bug-report">${tt("report")}</button></div>` : ""}`}
     </article>`;
@@ -325,7 +329,8 @@ function renderLineCheck(lines, lineCheck, outputPages, roiCrop, videoUrl, local
   const tt = (key, replacements = {}) => escapeHtml(t(`review.lines.${key}`, { locale, replacements }));
   const seams = lines.flatMap(line => line.seams);
   const checks = seamChecks(lines);
-  const answered = checks.filter(check => check.seam.userRejected || lineCheck?.answers?.[check.seam.id]).length;
+  // "hard to tell" leaves the place unchecked
+  const answered = checks.filter(check => check.seam.userRejected || ["ok", "bad"].includes(lineCheck?.answers?.[check.seam.id])).length;
   const pagePath = page => outputPages.find(item => item.index === page)?.path || "";
   // nothing to check: the full list is the content
   const showAll = typeof lineCheck?.showAll === "boolean" ? lineCheck.showAll : !checks.length;

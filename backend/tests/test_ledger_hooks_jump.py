@@ -382,7 +382,7 @@ class JumpLedgerHookTests(unittest.TestCase):
         json.dumps(jump, allow_nan=False)
 
     def test_frozen_jump_config_hash(self):
-        self.assertEqual(rj.config_hash(), "69bcc239ec48df9b")  # reflow_jump-4 (was 2e5887c559828797, milestone 2)
+        self.assertEqual(rj.config_hash(), "755d547c7a39aaa4")  # reflow_jump-5 (was 69bcc239ec48df9b at -4, 2e5887c559828797 at milestone 2)
 
 
 if __name__ == "__main__":
