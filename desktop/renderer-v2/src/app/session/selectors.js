@@ -716,7 +716,37 @@ export function deriveReflowInfo(result = {}) {
     measureReflow: deriveMeasureReflow(result.measure_reflow),
     // a dense chart laid out by measure at a smaller staff size than chosen (null otherwise)
     autoStaff: deriveAutoStaff(result.measure_reflow),
+    // one entry per printed line: where it sits on its page, which part of the video it came
+    // from and the view-jump seams inside it (reflow.line_review; empty for older jobs)
+    lines: deriveLineReview(reflow.line_review),
+    sourceVideoPath: String(result.source_video_path || ""),
   };
+}
+
+const LINE_SEAM_STATUSES = new Set(["verified", "resolved", "unverified"]);
+
+/** Printed lines for the line-by-line check; malformed entries are dropped. */
+export function deriveLineReview(raw) {
+  if (!Array.isArray(raw)) return [];
+  const finite = value => (Number.isFinite(Number(value)) ? Number(value) : null);
+  return raw.flatMap((line, index) => {
+    const rect = Array.isArray(line?.rect) ? line.rect.map(Number) : [];
+    const size = Array.isArray(line?.page_size) ? line.page_size.map(Number) : [];
+    const page = Math.trunc(Number(line?.page));
+    if (rect.length !== 4 || size.length !== 2 || !rect.every(Number.isFinite) || !(size[0] > 0 && size[1] > 0)
+      || !(rect[2] > 0 && rect[3] > 0) || !(page >= 1)) return [];
+    const sources = (Array.isArray(line.sources) ? line.sources : [])
+      .map(source => ({ systemId: String(source?.system_id || ""), display: source?.display ? String(source.display) : "",
+        tStart: finite(source?.t_start), tEnd: finite(source?.t_end) }))
+      .filter(source => source.tStart !== null && source.tEnd !== null && source.tEnd >= source.tStart);
+    const seams = (Array.isArray(line.seams) ? line.seams : [])
+      .filter(seam => LINE_SEAM_STATUSES.has(String(seam?.status)))
+      .map(seam => ({ id: String(seam.id || ""), status: String(seam.status), lowInk: Boolean(seam.low_ink),
+        xFrac: Math.min(1, Math.max(0, finite(seam.x_frac) ?? 0)) }));
+    const attention = ["seam_inferred", "seam_unverified"].includes(line.attention) ? line.attention : "";
+    return [{ id: String(line.line_id || `line-${index + 1}`), page, rect, pageSize: size,
+      measures: finite(line.measures), sources, seams, attention }];
+  });
 }
 
 function deriveReviewRequired(result, reflow, systems) {

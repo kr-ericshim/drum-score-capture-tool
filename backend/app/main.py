@@ -2176,6 +2176,7 @@ def _execute_reflow_job(
     from app.pipeline import reflow_layout
     from app.pipeline import reflow_pipeline
     from app.pipeline.export import ExportVerificationError, export_composed_pages, verify_composed_export
+    from app.pipeline.reflow_line_review import load_line_review
 
     artifact_dir = Path(job.artifact_dir)
     options = payload.options
@@ -2318,6 +2319,7 @@ def _execute_reflow_job(
     export_result = _rewrite_export_result_paths(export_result=export_result, staged_workspace=staged,
                                                  target_workspace=export_workspace)
     reflow["page_plan"] = plan
+    reflow["line_review"] = load_line_review(plan, reflow, logger=lambda msg: _append(job_id, msg))
     reflow["export_verification"] = reflow_pipeline.json_safe(verified)
     reflow["dependencies"] = plan.get("dependencies", {})
     _log_dependencies(job_id, reflow["dependencies"])
@@ -2479,6 +2481,7 @@ def _review_export_reflow(job: Job, job_id: str, payload: JobReviewExportRequest
     from app.pipeline import reflow_layout
     from app.pipeline import reflow_pipeline
     from app.pipeline.export import ExportVerificationError, export_composed_pages, verify_composed_export
+    from app.pipeline.reflow_line_review import load_line_review
 
     inputs = _reflow_export_inputs(job, payload)
     result, reflow, systems = inputs["result"], inputs["reflow"], inputs["systems"]
@@ -2581,6 +2584,7 @@ def _review_export_reflow(job: Job, job_id: str, payload: JobReviewExportRequest
         reflow["systems"] = order
         reflow["user_excluded_system_ids"] = sorted(user_excluded)
         reflow["page_plan"] = plan
+        reflow["line_review"] = load_line_review(plan, reflow, logger=lambda msg: _append(job_id, msg))
         reflow["export_verification"] = reflow_pipeline.json_safe(verified)
         reflow.pop("layout_conflict", None)
         reflow["dependencies"] = plan.get("dependencies", {})
@@ -2610,6 +2614,7 @@ def _review_export_reflow(job: Job, job_id: str, payload: JobReviewExportRequest
             "selected_pages": [],
             "system_order": [s["strip_path"] for s in order],
             "measure_reflow": measure_summary,
+            "line_review": reflow["line_review"],
         }
         job_store.set_state(job_id, JobStatus.DONE, 1.0, "done", "review export finished", result=result, error_code=None)
     except Exception as exc:

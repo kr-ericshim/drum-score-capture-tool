@@ -1,6 +1,7 @@
 import { APP_REVIEW_CODES, reviewListPages } from "../../app/session/selectors.js";
 import { normalizeAssetPath } from "../../lib/paths.js";
 import { describeError } from "../../lib/i18n.js";
+import { lineCheckOpen, lineSourceTimes, releaseFrameUrl, seamChecks } from "./lineCheck.js";
 
 const HYPOTHESIS_PAGE = 100;
 
@@ -101,6 +102,56 @@ export function createReviewController({ getState, setState, api, mountEditor, r
       });
     }
   }
+  // The video frames shown next to a printed line, loaded on first open and kept for the job.
+  async function toggleLineSource(lineId) {
+    const state = getState();
+    const line = (state.review.reflow?.lines || []).find(item => item.id === lineId);
+    if (!line) return;
+    const opening = !state.review.lineCheck?.sourceOpen?.[lineId];
+    const filePath = state.review.reflow?.sourceVideoPath || state.source.filePath;
+    const wanted = opening && filePath && typeof api.requestPreviewFrame === "function"
+      ? lineSourceTimes(line).filter(time => !["loading", "ready"].includes(state.review.lineCheck?.frames?.[time.toFixed(1)]?.status)) : [];
+    const currentJob = state.exportConfig.jobId;
+    setState(next => {
+      const check = next.review.lineCheck || (next.review.lineCheck = {});
+      check.sourceOpen = { ...(check.sourceOpen || {}), [lineId]: opening };
+      check.frames = { ...(check.frames || {}) };
+      for (const time of wanted) check.frames[time.toFixed(1)] = { status: "loading" };
+      if (opening && !filePath) for (const time of lineSourceTimes(line)) check.frames[time.toFixed(1)] = { status: "error" };
+      return next;
+    });
+    await Promise.all(wanted.map(async time => {
+      let frame;
+      try {
+        const preview = await api.requestPreviewFrame({ filePath, startSec: time });
+        frame = { status: "ready", url: preview.imagePath };
+      } catch (_) {
+        frame = { status: "error" };
+      }
+      if (getState().exportConfig.jobId !== currentJob) { releaseFrameUrl(frame.url); return; }
+      setState(next => {
+        const check = next.review.lineCheck || (next.review.lineCheck = {});
+        check.frames = { ...(check.frames || {}), [time.toFixed(1)]: frame };
+        return next;
+      });
+    }));
+  }
+  // The clip around a view jump plays in place (the DOM owns playback, so a re-render only
+  // resets it): from its start, paused at its end; the same button pauses it.
+  function playSeamClip(seamId) {
+    const video = [...(root.querySelectorAll?.("video[data-seam-video]") || [])].find(item => item.dataset.seamVideo === seamId);
+    const button = [...(root.querySelectorAll?.('[data-action="review-seam-play"]') || [])].find(item => item.dataset.value === seamId);
+    if (!video) return;
+    const start = Number(video.dataset.start) || 0, end = Number(video.dataset.end) || 0;
+    const label = playing => { if (button) button.textContent = playing ? button.dataset.labelPause : button.dataset.labelPlay; };
+    if (!video.paused) { video.pause(); return; }
+    for (const other of root.querySelectorAll?.("video[data-seam-video]") || []) if (other !== video && !other.paused) other.pause();
+    if (!(video.currentTime >= start && video.currentTime < end - 0.2)) video.currentTime = start;
+    video.ontimeupdate = () => { if (video.currentTime >= end) { video.pause(); video.currentTime = start; } };
+    video.onplay = () => label(true);
+    video.onpause = () => label(false);
+    void video.play?.()?.catch?.(() => label(false));
+  }
   async function handleAction(action, value) {
     syncJob();
     const state = getState();
@@ -117,6 +168,23 @@ export function createReviewController({ getState, setState, api, mountEditor, r
       if (!fresh) await loadHypotheses(0);
       return;
     }
+    if (action === "review-lines" || action === "review-lines-all" || action === "review-seam-answer") {
+      setState(next => {
+        const check = next.review.lineCheck || (next.review.lineCheck = {});
+        if (action === "review-lines-all") check.showAll = !(typeof check.showAll === "boolean" ? check.showAll : !seamChecks(next.review.reflow?.lines || []).length);
+        if (action === "review-seam-answer") {
+          const [seamId, answer] = String(value || "").split("|");
+          if (seamId && ["ok", "bad"].includes(answer)) check.answers = { ...(check.answers || {}), [seamId]: answer };
+        }
+        // shown only when no other view (pages, items to check, crop) covers it
+        if (action === "review-lines") check.open = !(lineCheckOpen(next) && !next.review.pagePreview && !next.review.hypotheses?.open && !next.review.cropping);
+        if (check.open) { next.review.pagePreview = false; next.review.compare = false; next.review.cropping = false; next.review.hypotheses.open = false; }
+        return next;
+      });
+      return;
+    }
+    if (action === "review-seam-play") { playSeamClip(value); return; }
+    if (action === "review-line-source") { await toggleLineSource(value); return; }
     if (action === "review-hypotheses-retry") { await loadHypotheses(0); return; }
     if (action === "review-hypotheses-more") { await loadHypotheses(state.review.hypotheses.items.length); return; }
     const pages = reviewListPages(state.review).navigable;

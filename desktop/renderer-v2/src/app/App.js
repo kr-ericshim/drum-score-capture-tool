@@ -2895,6 +2895,8 @@ export function createApp(root, dependencies = {}) {
       setState((next) => {
         next.review.focusedPageId = pageId;
         next.review.cropping = false;
+        // picking a system shows that system, not the printed lines
+        if (next.review.lineCheck) next.review.lineCheck.open = false;
         return next;
       });
       return;

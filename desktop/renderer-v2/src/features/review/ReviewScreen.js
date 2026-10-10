@@ -1,7 +1,8 @@
 import { formatSecondsLabel, isReviewableRun, needsAttention, reviewListPages, summarizeSelection } from "../../app/session/selectors.js";
 import { pickLocalizedText, reflowReviewReasonText, t } from "../../lib/i18n.js";
-import { normalizeAssetPath } from "../../lib/paths.js";
+import { fileUrl, normalizeAssetPath } from "../../lib/paths.js";
 import { thumbShapeFor } from "./thumbShape.js";
+import { lineCheckOpen, lineNumberOnPage, lineSourceTimes, seamChecks } from "./lineCheck.js";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -231,6 +232,137 @@ function renderCollapsedGroup({ pages, expanded, action, idBase, keys }, selecte
     </section>`;
 }
 
+function clock(seconds) {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
+// The applied score region in video pixels, for cropping a full frame (null when unknown).
+function lineRoiCrop(roi) {
+  const points = Array.isArray(roi?.appliedRect) ? roi.appliedRect : [];
+  const frameW = Number(roi?.imageWidth) || 0;
+  if (points.length !== 4 || !(frameW > 0)) return null;
+  const xs = points.map(point => Number(point?.[0])), ys = points.map(point => Number(point?.[1]));
+  if (![...xs, ...ys].every(Number.isFinite)) return null;
+  const x = Math.max(0, Math.min(...xs)), y = Math.max(0, Math.min(...ys));
+  const w = Math.max(...xs) - x, h = Math.max(...ys) - y;
+  return w > 1 && h > 1 ? { x, y, w, h, frameW } : null;
+}
+
+// A crop of the score region from a full video frame (percent geometry, no canvas).
+function renderSourceFrame(frame, time, roiCrop, locale, captionText = "") {
+  const tt = (key, replacements = {}) => escapeHtml(t(`review.lines.${key}`, { locale, replacements }));
+  // the caption comes first: with two frames stacked, a caption below one reads as the next one's title
+  const caption = `<figcaption>${captionText ? escapeHtml(captionText) : tt("sourceAt", { time: clock(time) })}</figcaption>`;
+  if (!frame || frame.status === "loading") return `<figure class="review-line-source is-loading">${caption}<p role="status">${tt("sourceLoading")}</p></figure>`;
+  if (frame.status !== "ready") return `<figure class="review-line-source is-error">${caption}<p role="alert">${tt("sourceFailed")}</p></figure>`;
+  const alt = tt("sourceAlt", { time: clock(time) });
+  if (!roiCrop) return `<figure class="review-line-source">${caption}<div class="review-line-source-frame"><img src="${escapeHtml(frame.url)}" alt="${alt}" /></div></figure>`;
+  const { x, y, w, h, frameW } = roiCrop;
+  return `<figure class="review-line-source">${caption}
+      <div class="review-line-source-frame is-cropped" style="aspect-ratio:${w.toFixed(1)} / ${h.toFixed(1)}">
+        <img style="width:${pct(frameW / w)};margin-left:${pct(-x / w)};margin-top:${pct(-y / w)}" src="${escapeHtml(frame.url)}" alt="${alt}" />
+      </div></figure>`;
+}
+
+function pct(value) {
+  return `${(value * 100).toFixed(3)}%`;
+}
+
+// A window of a printed page: the page image placed so that only [x, y, w, h] shows.
+function renderPageWindow(path, pageW, [x, y, w, h], alt, overlay = "") {
+  return `<div class="review-line-crop" style="aspect-ratio:${w.toFixed(1)} / ${h.toFixed(1)}">
+      ${path ? `<img src="${escapeHtml(normalizeAssetPath(path))}" alt="${escapeHtml(alt)}" loading="lazy" style="width:${pct(pageW / w)};margin-left:${pct(-x / w)};margin-top:${pct(-y / w)}" />` : ""}
+      ${overlay}
+    </div>`;
+}
+
+// One place to check: the printed line(s) around an inferred seam above a clip of the video
+// around the moment the view jumped (score region only, with sound), and one question.
+function renderSeamCheck(check, index, lineCheck, pagePath, roiCrop, videoUrl, lines, locale) {
+  const tt = (key, replacements = {}) => escapeHtml(t(`review.lines.${key}`, { locale, replacements }));
+  const { seam, line, lineNumber, around, clip } = check;
+  const answer = lineCheck?.answers?.[seam.id] || "";
+  const where = tt("checkWhere", { page: line.page, line: lineNumber, time: clock(check.jump) });
+  const printed = around.map(other => {
+    const number = lineNumberOnPage(lines, other);
+    const marker = other === line ? `<span class="review-line-seam is-${seam.status}" style="left:${pct(seam.xFrac)}" role="img" aria-label="${tt(`seam.${seam.status}`)}"></span>` : "";
+    return renderPageWindow(pagePath(other.page), other.pageSize[0], other.rect, t("review.lines.lineAlt", { locale, replacements: { page: other.page, line: number } }), marker);
+  }).join("");
+  const crop = roiCrop ? `style="aspect-ratio:${roiCrop.w.toFixed(1)} / ${roiCrop.h.toFixed(1)}"` : "";
+  const videoStyle = roiCrop ? `style="width:${pct(roiCrop.frameW / roiCrop.w)};margin-left:${pct(-roiCrop.x / roiCrop.w)};margin-top:${pct(-roiCrop.y / roiCrop.w)}"` : "";
+  const clipLabel = clip ? `${clock(clip[0])}–${clock(clip[1])}` : "";
+  return `<article class="review-seam-check ${answer ? `is-${answer}` : ""}" data-seam-id="${escapeHtml(seam.id)}" aria-labelledby="seamCheck${index}">
+      <header class="review-line-head">
+        <strong id="seamCheck${index}">${tt("checkTitle", { index: index + 1 })}</strong>
+        <span class="review-line-meta">${where}</span>
+        ${answer === "ok" ? `<span class="review-seam-done">${tt("answeredOk")}</span>` : ""}
+      </header>
+      <p class="review-seam-label">${tt("pdfLabel")}</p>
+      <div class="review-seam-printed">${printed}</div>
+      ${clip && videoUrl ? `<p class="review-seam-label">${tt("videoLabel", { range: clipLabel })}</p>
+      <div class="review-seam-video ${roiCrop ? "is-cropped" : ""}" ${crop}>
+        <video data-seam-video="${escapeHtml(seam.id)}" data-start="${clip[0].toFixed(2)}" data-end="${clip[1].toFixed(2)}" src="${escapeHtml(`${videoUrl}#t=${clip[0].toFixed(2)}`)}" preload="metadata" playsinline ${videoStyle}></video>
+      </div>
+      <div class="review-seam-play-row">
+        <button type="button" class="button button-primary" data-action="review-seam-play" data-value="${escapeHtml(seam.id)}" data-label-play="${tt("play", { range: clipLabel })}" data-label-pause="${tt("pause")}">${tt("play", { range: clipLabel })}</button>
+      </div>` : `<p class="review-reflow-note" role="status">${tt("videoMissing")}</p>`}
+      <p class="review-seam-question">${tt("question")}</p>
+      <div class="review-seam-answers" role="group" aria-label="${tt("checkTitle", { index: index + 1 })}">
+        <button type="button" class="button ${answer === "ok" ? "button-primary" : "button-secondary"}" data-action="review-seam-answer" data-value="${escapeHtml(seam.id)}|ok" aria-pressed="${answer === "ok"}">${tt("answerOk")}</button>
+        <button type="button" class="button button-secondary" data-action="review-seam-answer" data-value="${escapeHtml(seam.id)}|bad" aria-pressed="${answer === "bad"}">${tt("answerBad")}</button>
+      </div>
+      ${answer === "bad" ? `<div class="review-reflow-note is-warning" role="status"><p>${tt("badNote")}</p>
+        <button type="button" class="button button-secondary" data-action="open-bug-report">${tt("report")}</button></div>` : ""}
+    </article>`;
+}
+
+// The line check: first the few places worth a look (inferred view-jump seams), then, folded,
+// every printed line with the video moments it came from.
+function renderLineCheck(lines, lineCheck, outputPages, roiCrop, videoUrl, locale) {
+  const tt = (key, replacements = {}) => escapeHtml(t(`review.lines.${key}`, { locale, replacements }));
+  const seams = lines.flatMap(line => line.seams);
+  const checks = seamChecks(lines);
+  const answered = checks.filter(check => lineCheck?.answers?.[check.seam.id]).length;
+  const pagePath = page => outputPages.find(item => item.index === page)?.path || "";
+  // nothing to check: the full list is the content
+  const showAll = typeof lineCheck?.showAll === "boolean" ? lineCheck.showAll : !checks.length;
+  const rows = showAll ? lines.map(line => {
+    const number = lineNumberOnPage(lines, line);
+    const times = line.sources.length
+      ? `${clock(Math.min(...line.sources.map(s => s.tStart)))}–${clock(Math.max(...line.sources.map(s => s.tEnd)))}` : "";
+    const open = Boolean(lineCheck?.sourceOpen?.[line.id]);
+    const markers = line.seams.map(seam => `<span class="review-line-seam is-${seam.status}" style="left:${pct(seam.xFrac)}" role="img" aria-label="${tt(`seam.${seam.status}`)}" title="${tt(`seam.${seam.status}`)}"></span>`).join("");
+    // no measure count: a layout unit can hold several measures, so the count under-reads
+    const meta = [tt("position", { page: line.page, line: number }),
+      times ? `<span class="review-line-time">${escapeHtml(times)}</span>` : ""].filter(Boolean).join(" · ");
+    return `<article class="review-line ${line.attention ? "needs-check" : ""}" data-line-id="${escapeHtml(line.id)}">
+        <header class="review-line-head">
+          <span class="review-line-meta">${meta}</span>
+          ${line.sources.length ? `<button type="button" class="button button-secondary review-line-toggle" data-action="review-line-source" data-value="${escapeHtml(line.id)}" aria-expanded="${open}">${tt(open ? "hideSource" : "showSource")}</button>` : ""}
+        </header>
+        ${renderPageWindow(pagePath(line.page), line.pageSize[0], line.rect, t("review.lines.lineAlt", { locale, replacements: { page: line.page, line: number } }), markers)}
+        ${open ? `<div class="review-line-sources">${lineSourceTimes(line).map(time => renderSourceFrame(lineCheck?.frames?.[time.toFixed(1)], time, roiCrop, locale)).join("")}</div>` : ""}
+      </article>`;
+  }).join("") : "";
+  const intro = checks.length ? tt("introChecks", { seams: seams.length, count: checks.length })
+    : seams.length ? tt("introVerified", { seams: seams.length }) : tt("introNoSeams", { lines: lines.length });
+  return `<div class="review-lines">
+      <div class="review-lines-head">
+        <h2>${tt(checks.length ? "titleChecks" : "title")}</h2>
+        ${checks.length ? `<span class="review-seam-progress" role="status">${tt("progress", { done: answered, count: checks.length })}</span>` : ""}
+        <p>${intro}</p>
+      </div>
+      ${checks.map((check, index) => renderSeamCheck(check, index, lineCheck, pagePath, roiCrop, videoUrl, lines, locale)).join("")}
+      <div class="review-lines-all">
+        <button type="button" class="button button-secondary" data-action="review-lines-all" aria-expanded="${showAll}">${tt(showAll ? "hideAll" : "showAll", { count: lines.length })}</button>
+        ${showAll && seams.length ? `<p class="review-lines-legend">${["verified", "resolved", "unverified"].filter(status => seams.some(seam => seam.status === status))
+          .map(status => `<span class="review-line-seam-key is-${status}" aria-hidden="true"></span>${tt(`seam.${status}`)}`).join(" ")}</p>` : ""}
+      </div>
+      ${rows}
+    </div>`;
+}
+
 // Verifier codes and disposition reasons with a plain explanation; any other code shows the generic text.
 const HYPOTHESIS_REASONS = [
   ["SOURCE_FOREGROUND_MISSING_OR_CHANGED", "missing"], ["EQUIVALENCE_CONTAINMENT_FAILED", "onlyInLeftOut"],
@@ -347,6 +479,9 @@ export function renderReviewScreen(state) {
   const hypotheses = state.review.hypotheses || { open: false, items: [], status: "idle" };
   const hypothesesOpen = Boolean(hypotheses.open && !state.review.cropping);
   const pagePreview = Boolean(state.review.pagePreview && outputPages.length && !state.review.cropping && !hypothesesOpen);
+  const reviewLines = state.review.reflow?.lines || [];
+  const linesOpen = Boolean(reviewLines.length && outputPages.length && lineCheckOpen(state) && !state.review.cropping && !hypothesesOpen && !pagePreview);
+  const roiCrop = lineRoiCrop(state.roi);
   const allIndex = focused ? pages.findIndex(page => page.id === focused.id) : -1;
   const focusedSimilar = Boolean(focused?.similarTo?.reason === "looks_similar");
   const reflowInfo = state.review.reflow || null;
@@ -466,6 +601,8 @@ export function renderReviewScreen(state) {
           <div class="review-pages-stack">
             ${outputPages.map(page => `<img class="review-page-image" src="${escapeHtml(normalizeAssetPath(page.path))}" alt="${escapeHtml(t("review.pageAlt", { locale, replacements: { index: page.index } }))}" loading="lazy" />`).join("")}
           </div>
+        </div>` : linesOpen ? `<div class="review-viewer-surface is-lines" tabindex="0" data-focus-key="review-canvas">
+          ${renderLineCheck(reviewLines, state.review.lineCheck, outputPages, roiCrop, fileUrl(state.review.reflow?.sourceVideoPath || state.source.filePath), locale)}
         </div>` : comparing ? `<div class="review-viewer-surface is-comparing" tabindex="0" data-focus-key="review-canvas">
           ${renderCompareStage(focused, compareReference, locale)}
         </div>` : `<div class="review-viewer-surface" tabindex="0" data-focus-key="review-canvas" aria-describedby="reviewShortcutHelp">
@@ -483,6 +620,8 @@ export function renderReviewScreen(state) {
             <button type="button" class="button button-secondary" data-action="review-hypotheses" aria-pressed="${hypothesesOpen}" ${busy ? "disabled" : ""}>${escapeHtml(t(hypothesesOpen ? "review.hypothesis.close" : "review.hypothesis.open", { locale, replacements: { count: reflowInfo.ledger.reviewHypotheses } }))}</button>
           </div>` : ""}
           ${outputPages.length ? `<div class="review-tool-group" role="group" aria-label="${label("pagePreview")}">
+            ${reviewLines.length ? `<button type="button" class="button button-secondary" data-action="review-lines" aria-pressed="${linesOpen}" ${busy ? "disabled" : ""}>${escapeHtml(seamChecks(reviewLines).length ? t("review.lines.toolbarChecks", { locale, replacements: { count: seamChecks(reviewLines).length } })
+              : t("review.lines.toolbar", { locale, replacements: { count: reviewLines.length } }))}</button>` : ""}
             ${control("review-page-preview", pagePreview ? "systemView" : "pagePreview", busy, `aria-pressed="${pagePreview}"`)}
           </div>` : ""}
           <div class="review-tool-group" role="group" aria-label="${label("crop")}">
