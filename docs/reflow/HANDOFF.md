@@ -2,7 +2,7 @@
 
 State of the clean-reflow work for a new session. Read this first, then [DECISIONS.md](DECISIONS.md).
 
-## Start here (2026-10-10 late night: join check in the review screen, uncommitted)
+## Start here (2026-10-10 late night: join check in the review screen)
 
 The rc1 holdout fixes below are **committed** (58f968e code, 52995ed docs). After them the user tried the source app on a new
 jump-view video and found the review screen gave no way to check the joins. This block is that work.
@@ -12,7 +12,7 @@ user cannot check where the app joined the views. A wrong join silently repeats 
 "which captures?" → "the user can't check anything" → "the line list is unfriendly, I don't know what to check" → "stills can't
 show whether measures continue; show the video". The design follows that last point.
 
-**Built (working tree, not committed):**
+**Built (committed on feature/clean-reflow, not pushed):**
 - Backend `backend/app/pipeline/reflow_line_review.py` (Codex): `build_line_review` / `load_line_review` → `result.reflow.line_review`
   (and `result.review_export.line_review`), written after every compose (job export and review export; two 1-line hooks in `main.py`).
   One entry per printed line: `page`, `rect` + `page_size` (2480×3508 page px), `sources` (each owner display of a jump strip that
@@ -43,7 +43,6 @@ show whether measures continue; show the video". The design follows that last po
    default selection leaves exclusion candidates unticked (`App.js` ~1203). Cause unknown: the user may have ticked it; asked, no answer.
 3. The floating inspector bar covers the line-check heading when scrolled (same as other views).
 4. Still open from HOLDOUT_RC1: the next sealed holdout set (pick by one frame per video, balance channels).
-5. Commit this work when the user says so (docs/DESIGN.md already notes the join check).
 
 ## Start here (2026-10-10 night: fixes after the rc1 holdouts, committed 58f968e/52995ed)
 
