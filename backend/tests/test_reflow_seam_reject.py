@@ -96,6 +96,15 @@ class OverrideTests(unittest.TestCase):
         self.assertTrue(any(e['retained_overlap_px']>0 and e['retained_display']=='a'
                             for e in ledger['start_trim_evidence']))
 
+    def test_unexplained_repaired_start_cannot_publish_only_an_alternate(self):
+        ledger,coverage=self.trimmed_panel_case((20,25))
+        self.assertEqual(coverage['status'],'incomplete')
+        rec={'jump':{'left_trim_native':80,'unverified_seam_before':'s1',
+                     'owners':[{'display':'b'}],'preservation':ledger}}
+        with self.assertRaises(repair.SeamRepairError) as ctx:
+            repair._require_repaired_start_output([({},rec)])
+        self.assertEqual(ctx.exception.code,'SEAM_REPAIR_INCOMPATIBLE')
+
     def test_split_keeps_original_panel_label_votes_and_real_conflicts(self):
         ids=list('abcde'); comps={};eps={};obs={};covered={};seams=[]
         for i,d in enumerate(ids):
@@ -372,7 +381,8 @@ class RepairExportTests(unittest.TestCase):
     def test_rollback_write_contract_digest_install_metadata_and_cancel(self):
         self.export(self.request()); before=copy.deepcopy(self.job.result)
         old_files={str(p.relative_to(self.artifact/'export')):hashlib.sha256(p.read_bytes()).hexdigest() for p in (self.artifact/'export').rglob('*') if p.is_file()}
-        cases=[('app.pipeline.export.export_composed_pages',RuntimeError('write failed')),('app.pipeline.export.verify_composed_export',RuntimeError('contract failed')),('app.main._verify_reflow_ledger',RuntimeError('digest failed')),('app.main._install_verified_reflow_export',RuntimeError('install failed'))]
+        cases=[('app.pipeline.export.export_composed_pages',RuntimeError('write failed')),('app.pipeline.export.verify_composed_export',RuntimeError('contract failed')),('app.main._verify_reflow_ledger',RuntimeError('digest failed')),('app.main._install_verified_reflow_export',RuntimeError('install failed')),
+               ('app.pipeline.reflow_seam_reject._require_repaired_start_output',repair.SeamRepairError('SEAM_REPAIR_INCOMPATIBLE','unexplained notation in panel trim'))]
         for target,error in cases:
             with self.subTest(target=target),patch(target,side_effect=error),self.assertRaises(HTTPException): self.export(self.request(rejected_seam_ids=[self.seams[0]]))
             self.assertEqual(self.job.result,before)
@@ -398,7 +408,7 @@ class RepairExportTests(unittest.TestCase):
         built=jump.build_jump_systems(j,tr,m,self.artifact/'filtered',composites=comps,covered=covered,load=load,run_indices=[1])
         self.assertTrue(built); self.assertTrue(all(r['jump']['run']==1 and o['id'].startswith('jmp-02-') for o,r in built))
 
-    def test_rejected_chain_uses_original_nonfirst_trim_without_new_run_start_clef(self):
+    def test_rejected_chain_uses_only_panel_trim_and_selects_unique_overlap_notation(self):
         from test_reflow_jump import jump_frames
         score=long_score(bars=12);offsets=list(range(0,score.shape[1]-VIEW_W+1,JUMP))
         manifest,images=build(jump_frames(score,offsets,panel=70))
@@ -412,20 +422,38 @@ class RepairExportTests(unittest.TestCase):
         panel=original['slots'][0]['panel']['right']
         _pano,info=jump.build_panorama(original_ids,pairs,original['_composites'],original['_covered'],panel,14,jump.CONFIG)
         starts={o['display']:o['owned_cols_display'][0] for o in info['owners']}
+        target=original['seams'][1]['b']
+        comp=original['_composites'][target]
+        point=blank_spot(comp,(panel+6,starts[target]-6))
+        self.assertLess(point[0]+3,starts[target])
+        cv2.circle(comp,point,3,(10,10,10),-1)
+        ep=next(e for e in tr['episodes'] if e['id']==target)
+        for oid in ep['observation_ids']:
+            cv2.circle(images[oid],point,3,(10,10,10),-1)
         for count in (1,2):
             rejected=[s['id'] for s in original['seams'][1:1+count]]
             effective=jump.apply_seam_rejections(original,rejected)
             built=jump.build_jump_systems(effective,tr,manifest,self.artifact/f'panel-{count}',
                 composites=original['_composites'],covered=original['_covered'],load=load)
-            for _occ,rec in built:
+            printed=False
+            for occ,rec in built:
                 jrec=rec['jump']
                 if not jrec['unverified_seam_before']: continue
                 owner=jrec['owners'][0];start=owner['strip_cols'][0]-owner['offset_x'];d=owner['display']
-                self.assertEqual(start,max(panel,starts[d]))
-                self.assertEqual(jrec['left_trim_basis'],'original_nonfirst_owner')
+                self.assertEqual(start,panel)
+                self.assertEqual(jrec['left_trim_basis'],'detected_panel')
                 self.assertFalse(jrec['own_clef'])  # only the run's verified clean replica may be added
                 self.assertEqual(owner['panel_columns_used'],0)
                 if len(jrec['owners'])==1:
                     self.assertEqual(owner['strip_cols'][1]-owner['offset_x'],VIEW_W)
+                if d==target:
+                    primary=repair._public_system(dict(occ,index=1),rec)
+                    self.assertTrue(primary['included'])
+                    self.assertNotIn('alternate_of',primary)
+                    image=cv2.imread(primary['strip_path'])
+                    x=point[0]+owner['offset_x'];y=point[1]+owner['offset_y']
+                    self.assertGreater(int((image[y-2:y+3,x-2:x+3].min(axis=2)<80).sum()),10)
+                    printed=True
+            self.assertTrue(printed,'unique overlap notation must be in a selected primary')
 
 if __name__=='__main__': unittest.main()

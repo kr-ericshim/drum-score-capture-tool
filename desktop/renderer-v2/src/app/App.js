@@ -115,7 +115,7 @@ function isSupportedVideoPath(filePath = "") {
 export const EXPORT_INVALID_CODES = ["INVALID_PLACEMENT_PLAN", "EMPTY_EXPORT", "PAGE_COUNT_MISMATCH", "PDF_UNREADABLE"];
 
 /** Review export refusals of a jump-view join rebuild (SEAM_REJECT_DESIGN.md); each has its own message. */
-const SEAM_REPAIR_CODES = ["SEAM_REPAIR_SOURCE_UNAVAILABLE", "SEAM_REPAIR_SELECTION", "STALE_REVISION", "SEAM_UNKNOWN"];
+const SEAM_REPAIR_CODES = ["SEAM_REPAIR_SOURCE_UNAVAILABLE", "SEAM_REPAIR_SELECTION", "SEAM_REPAIR_INCOMPATIBLE", "STALE_REVISION", "SEAM_UNKNOWN"];
 
 /** The user-facing message for a failed job's error code, or "" when the code has no specific one. */
 export function exportErrorCodeMessage(errorCode, locale = "en") {

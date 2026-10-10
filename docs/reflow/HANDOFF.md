@@ -26,6 +26,22 @@ Open item 1 of the block below is built (committed with the small review fixes l
   backend re-saved it).
 - Not done: packaged app, Windows, a second jump-view video, a full notation read of the repaired chart against the video.
 - Dev gotcha: killing the dev Electron with pkill leaves its Python backend on :8000 (still on the old jobs dir); kill it too.
+- Codex adversarial review of 6e0c110 (needs-attention, both accepted, fixed in the next commit): (A) a chain starting at a
+  rejected seam was trimmed at max(panel_right, original owner cut), so overlap notation the user reported missing could stay
+  lost (only in an unselected alternate) → trim by the saved `panel.right` only (J: 83 px, not 120/142); unexplained notation
+  left in the trim stops the rebuild with SEAM_REPAIR_INCOMPATIBLE (KO/EN copy added). J pages change (the overlap is now
+  kept; a faint "鼓" fragment of the panel label remains at those line starts — tolerated). (B) `reflow_revisions/` is
+  preserved by every prune, and ended-job cleanup takes the per-job export lock and rechecks status.
+  New test file `test_reflow_revision_cleanup.py`. Backend 1394 OK (Codex).
+
+**Next (agreed with the user, in order):**
+1. Land the review fixes above (suite + J acceptance), commit.
+2. Regression: rerun the 12-video dev dashboard and the 6 opened rc1 holdouts on one manifest; pages must match the last
+   baselines (step2d2 / seamfix / holdout_rc1_fixes) except where a change is explained. Seam rebuild once more on a second
+   jump-view video (RnY5 or Z4eb).
+3. Packaged macOS build: export, replay untick, cancel, memory, and the seam rebuild (frame recovery needs ffmpeg + source).
+4. Freeze rc2 and write the ChatGPT Pro checkpoint prompt + attachments (memory: pro-checkpoints).
+5. New sealed holdout set (one frame per video checked for a real score, channels balanced), one run, grade by the rubric.
 
 ## Start here (2026-10-10 late night: join check in the review screen)
 

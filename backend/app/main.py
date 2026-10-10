@@ -1461,9 +1461,9 @@ def _run_job(job_id: str, payload: JobCreate, *, legacy_pipeline: bool = False) 
 # no longer needs: they can be decoded again from the source. JSON records and logs stay.
 HEAVY_WORKSPACE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".npy", ".npz",
                             ".mp4", ".mkv", ".webm", ".mov", ".avi", ".raw", ".bin", ".tmp"}
-# the strips and label patches the result lists (review of a pending layout conflict shows them;
-# a fail-closed job keeps them as they were). Small next to the decoded frames, kept in every case.
-REVIEW_WORKSPACE_DIRS = (("reflow", "strips"), ("reflow", "labels"))
+# Result strips, label patches and repair revisions (including unpublished candidates)
+# remain available in every prune mode, including after a failed review export.
+REVIEW_WORKSPACE_DIRS = (("reflow", "strips"), ("reflow", "labels"), ("reflow_revisions",))
 # small diagnostics shown with a failed job (ROI health samples), kept in every case
 KEPT_DIAGNOSTIC_DIRS = (("roi-health",),)
 
@@ -1486,7 +1486,8 @@ def prune_job_workspace(artifact_dir: Path, *, keep_review: bool, keep_ledger: b
     file with a HEAVY_WORKSPACE_SUFFIXES suffix outside ``export/`` and the kept diagnostics, e.g.
     ``reflow/manifest/frames``. The strips and label patches (REVIEW_WORKSPACE_DIRS) stay, so a
     LAYOUT_CONFLICT job (``keep_review``, recorded) remains reviewable and a fail-closed job keeps its
-    strips unchanged. JSON, logs and the job record stay. Returns the sizes."""
+    strips unchanged. Published repair revisions and unpublished candidates stay as well.
+    JSON, logs and the job record stay. Returns the sizes."""
     artifact_dir = Path(artifact_dir).resolve()
     before = _dir_size(artifact_dir) if artifact_dir.is_dir() else 0
     removed = 0
@@ -1535,16 +1536,23 @@ def _cleanup_ended_job_workspace(job_id: str) -> Optional[Dict[str, Any]]:
     job = job_store.get(job_id)
     if not job or job.status not in {JobStatus.ERROR, JobStatus.CANCELLED}:
         return None
-    reflow = (job.result or {}).get("reflow") or {}
-    keep_ledger = job.error_code == "LEDGER_VERIFICATION_FAILED" or reflow.get("state") == "ledger_failed" or reflow.get("ledger_summary",{}).get("status") == "fail"
-    report = prune_job_workspace(Path(job.artifact_dir), keep_review=_layout_conflict_pending(job), keep_ledger=keep_ledger)
-    if report["removed"]:
-        _append(job_id, f"workspace pruned after {job.status.value}: {report['bytes_before'] / 1e6:.1f} MB -> "
-                        f"{report['bytes_after'] / 1e6:.1f} MB ({report['removed']} items)")
-    result = dict(job.result or {})
-    result["workspace_cleanup"] = report
-    job_store.set_state(job_id, job.status, result=result)
-    return report
+    with maintenance_lock:
+        lock = review_locks.setdefault(job_id, RLock())
+    with lock:
+        # A review export can finish after the initial check while cleanup waits.
+        job = job_store.get(job_id)
+        if not job or job.status not in {JobStatus.ERROR, JobStatus.CANCELLED}:
+            return None
+        reflow = (job.result or {}).get("reflow") or {}
+        keep_ledger = job.error_code == "LEDGER_VERIFICATION_FAILED" or reflow.get("state") == "ledger_failed" or reflow.get("ledger_summary",{}).get("status") == "fail"
+        report = prune_job_workspace(Path(job.artifact_dir), keep_review=_layout_conflict_pending(job), keep_ledger=keep_ledger)
+        if report["removed"]:
+            _append(job_id, f"workspace pruned after {job.status.value}: {report['bytes_before'] / 1e6:.1f} MB -> "
+                            f"{report['bytes_after'] / 1e6:.1f} MB ({report['removed']} items)")
+        result = dict(job.result or {})
+        result["workspace_cleanup"] = report
+        job_store.set_state(job_id, job.status, result=result)
+        return report
 
 
 def _execute_job(job_id: str, payload: JobCreate, *, legacy_pipeline: bool = False) -> None:

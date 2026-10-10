@@ -2188,26 +2188,19 @@ def build_jump_systems(jump: Dict[str, Any], tracking: Dict[str, Any], manifest:
             continue
         panel_right = panel_of.get(run["slot_id"], 0)
         analysis_context = {}
-        analysis_starts = {}
         original_pairs = {}
         run_members = {d for c in run["panorama_chains"] for d in c["displays"]}
         if any(s.get("user_rejected") and s["a"] in run_members and s["b"] in run_members for s in seam_of.values()):
-            # Retain the original comparison population and original incoming
-            # owner boundary. Reusing recorded offsets is not seam registration.
+            # Retain the original panel comparison population. A rejected
+            # join's ownership cut cannot authorize discarding its overlap.
             original_seams = [dict(s, user_rejected=False) for s in jump.get("seams", [])]
             original_pairs = {(s["a"], s["b"]): s for s in original_seams}
             for original_chain in panorama_chains(run, original_seams):
                 members = original_chain["displays"]
-                gap = float(np.median([float(eps[d]["staff_gap_px"]) for d in members]))
-                _original_pano, original_info = build_panorama(members, original_pairs, composites, covered,
-                                                               panel_right, gap, cfg)
                 votes = _panel_label_votes(members, composites, covered, eps, obs_by, panel_right, cfg, PRESERVE_CONFIG,
                                            include_panel=True)
-                for owner in original_info["owners"]:
-                    d = owner["display"]
+                for d in members:
                     analysis_context[d] = (members, votes)
-                    analysis_starts[d] = owner["owned_cols_display"][0]
-                del _original_pano
         clef: Optional[Dict[str, Any]] = None
         clef_source: Optional[Dict[str, Any]] = None
         clef_info: Dict[str, Any] = {"verified": False, "reason": "not_checked"}
@@ -2220,8 +2213,7 @@ def build_jump_systems(jump: Dict[str, Any], tracking: Dict[str, Any], manifest:
             rejected_start = bool(chain.get("break_before") and
                                   next((s.get("user_rejected") for s in seam_of.values()
                                         if s["id"] == chain["break_before"]), False))
-            left_trim = max(panel_right, analysis_starts.get(disp[0], panel_right)) \
-                if rejected_start and panel_right > 0 else 0
+            left_trim = panel_right if rejected_start else 0
             pano, info = build_panorama(disp, seam_of, composites, covered, panel_right, gap, cfg, left_trim=left_trim)
             if not info["owner_map_complete"]:
                 raise ValueError(f"panorama owner map incomplete for {disp[0]}..{disp[-1]}")
@@ -2350,7 +2342,7 @@ def build_jump_systems(jump: Dict[str, Any], tracking: Dict[str, Any], manifest:
                 h = img.shape[0]
                 jrec = {
                     "run": ri, "chain": ci, "chunk": k, "chunks_in_chain": len(edges) - 1,
-                    **({"left_trim_native": left_trim, "left_trim_basis": "original_nonfirst_owner"} if left_trim else {}),
+                    **({"left_trim_native": left_trim, "left_trim_basis": "detected_panel"} if left_trim else {}),
                     "chain_displays": [disp[0], disp[-1]], "pano_cols": [int(x0), int(x1)],
                     "owners": [{"display": o["display"], "strip_cols": [int(max(x0, o["pano_cols"][0]) - x0 + prefix_w),
                                                                          int(min(x1, o["pano_cols"][1]) - x0 + prefix_w)],

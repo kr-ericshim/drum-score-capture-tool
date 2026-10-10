@@ -97,6 +97,27 @@ def _public_system(occ, rec):
             "strip": {k: v for k, v in rec.items() if k not in ("path", "ledger")}}
 
 
+def _require_repaired_start_output(built):
+    """A repaired start may not publish missing notation only as an alternate."""
+    for _occ, rec in built:
+        info = rec.get("jump") or {}
+        trim = int(info.get("left_trim_native") or 0)
+        if not trim or not info.get("unverified_seam_before"):
+            continue
+        first = info["owners"][0]["display"]
+        preservation = info.get("preservation") or {}
+        evidence = {(e["display"], tuple(e["box_crop"])): e
+                    for e in preservation.get("start_trim_evidence", [])}
+        for conflict in preservation.get("conflicts", []):
+            if conflict["display"] != first or conflict["box_crop"][0] >= trim:
+                continue
+            item = evidence.get((first, tuple(conflict["box_crop"])))
+            if item is None or item["unexplained_px"] > jump.PRESERVE_CONFIG["min_foreign_px"]:
+                raise SeamRepairError("SEAM_REPAIR_INCOMPATIBLE",
+                                      f"{first}: unexplained notation inside the repaired start's panel trim; "
+                                      "the previous export is kept")
+
+
 def rebuild_jump_runs(reflow, repair, order, composed, revision_dir, *, checkpoint, progress, logger):
     """Return a deep candidate and migrated order/selection. Never edit committed files."""
     from app.pipeline import reflow_pipeline as pipeline
@@ -171,6 +192,7 @@ def rebuild_jump_runs(reflow, repair, order, composed, revision_dir, *, checkpoi
                             composites=composites, covered=covered, load=load, checkpoint=checkpoint,
                             run_indices=changed_runs, logger=logger, ledger=ledger,
                             evidence_dir=revision_dir / "ledger_evidence" if ledger else None)
+            _require_repaired_start_output(built)
             if ledger:
                 # Dev-ledger raw obligations must remain independently resolvable after
                 # temporary source recovery is removed. Normal jobs keep no raw cache.
