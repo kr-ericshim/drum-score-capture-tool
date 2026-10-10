@@ -47,6 +47,8 @@ The existing Apple and Vercel reference files under docs/design are historical i
 | Create files | Crop/output preview | Confirm formats and start generation | Output path, progress, error detail |
 | Review and save | Large score image beside capture list | Decide inclusion/crop and rebuild output | Suspicion flags, page count, output location |
 
+Join check (2026-10-10): for a jump-view chart the viewer opens on "이음새 확인", one card per join the app inferred. A card shows the printed line with the join marked, a playable clip of the source around the jump (score region only, with sound) and one question with two answers. Stills alone did not let the user judge whether measures continue, so the clip is the main evidence. Every printed line stays available, folded, under "전체 줄 보기". The left list keeps its meaning (inclusion), and picking a system there leaves the join check.
+
 Within review, the checkbox means inclusion and the focused frame means currently viewed. They must remain distinguishable. A suggested ROI enters an editable draft; only the apply action makes it the capture region. Late automatic results must not overwrite user edits.
 
 ## States that must be designed

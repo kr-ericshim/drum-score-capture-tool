@@ -2,7 +2,50 @@
 
 State of the clean-reflow work for a new session. Read this first, then [DECISIONS.md](DECISIONS.md).
 
-## Start here (2026-10-10 night: fixes after the rc1 holdouts, uncommitted)
+## Start here (2026-10-10 late night: join check in the review screen, uncommitted)
+
+The rc1 holdout fixes below are **committed** (58f968e code, 52995ed docs). After them the user tried the source app on a new
+jump-view video and found the review screen gave no way to check the joins. This block is that work.
+
+**Why:** a jump-view chart is one long stitched strip, so the review list shows "줄 1" (the whole song) plus "다른 순간" and the
+user cannot check where the app joined the views. A wrong join silently repeats or drops measures (RnY5). User feedback, in order:
+"which captures?" → "the user can't check anything" → "the line list is unfriendly, I don't know what to check" → "stills can't
+show whether measures continue; show the video". The design follows that last point.
+
+**Built (working tree, not committed):**
+- Backend `backend/app/pipeline/reflow_line_review.py` (Codex): `build_line_review` / `load_line_review` → `result.reflow.line_review`
+  (and `result.review_export.line_review`), written after every compose (job export and review export; two 1-line hooks in `main.py`).
+  One entry per printed line: `page`, `rect` + `page_size` (2480×3508 page px), `sources` (each owner display of a jump strip that
+  the line's units cover, with episode `t_start`/`t_end`; other systems: their own times), `seams` (stitch inside the line: `status`
+  verified/resolved/unverified, `evidence`, `low_ink`, `x_frac` mapped through the renderer audit), `attention`
+  (`seam_inferred`/`seam_unverified`). Never fails a job: malformed → `[]` + one log line. Plans, PNGs, PDFs unchanged.
+  Tests `backend/tests/test_reflow_line_review.py` (12).
+- Renderer (`features/review/lineCheck.js`, `ReviewScreen.js` `renderLineCheck`/`renderSeamCheck`, `reviewController.js`,
+  `selectors.deriveLineReview` → `reflowInfo.lines` + `sourceVideoPath`, i18n `review.lines.*` KO/EN, CSS at the end of
+  `review-workbench.css`): toolbar "이음새 확인 N" (or "줄별 확인 N"). Opens by itself when the chart has jump seams. Content:
+  one card per inferred/unverified seam (`seamChecks`): the printed line(s) around it with an orange marker (the neighbouring line
+  too when the seam is in the outer 25%), a **video clip** of the source (jump −5 s … +5 s, score region cropped by CSS from
+  `state.roi.appliedRect`, with sound; `review-seam-play` plays from the start and pauses at the end, DOM-owned so a re-render only
+  resets it), the question "주황 선 앞뒤에서 같은 마디가 두 번 나오거나 빠졌나요?", answers 문제없어요 / 마디가 겹치거나 빠졌어요
+  (progress "N곳 중 M곳 확인"; answers live in `state.review.lineCheck.answers`, not persisted). "Bad" only offers 문제 보고.
+  "전체 줄 보기" unfolds every printed line with its time range and an on-demand still per display (`/preview/frame`).
+  Clicking a system in the left list closes the view (App.js `focus-review-page`). No measure count is shown: a layout unit can
+  hold several measures, so counts under-read.
+- Tests: `renderer-v2/src/tests/review-line-check.test.js` (7). Renderer verify 351 OK; backend suite 1366 OK (12 skipped).
+- Seen by the user in the source app (dev Electron, job `b7424442…`, 7 Mindgames, 18 seams: 16 verified, 2 resolved on p1 lines 4–5):
+  the check view opens and the clip plays ("되네"). Not exercised: 1440×960 / 1120×840 screenshots, keyboard focus through the
+  cards, a job whose source file moved (the card says the video is missing), Windows, the packaged app.
+
+**Open:**
+1. "마디가 겹치거나 빠졌어요" has no fix yet. Next: rebuild with that seam treated as unverified (keep both sides). Needs the jump
+   strips re-cut, which happens in analysis today (frames are pruned) — design it before promising it.
+2. On job `b7424442…` the user's list showed "다른 순간 1" ticked (선택 2/2) and a rebuild included it (17 lines, revision 3); the
+   default selection leaves exclusion candidates unticked (`App.js` ~1203). Cause unknown: the user may have ticked it; asked, no answer.
+3. The floating inspector bar covers the line-check heading when scrolled (same as other views).
+4. Still open from HOLDOUT_RC1: the next sealed holdout set (pick by one frame per video, balance channels).
+5. Commit this work when the user says so (docs/DESIGN.md already notes the join check).
+
+## Start here (2026-10-10 night: fixes after the rc1 holdouts, committed 58f968e/52995ed)
 
 Read [HOLDOUT_RC1.md](HOLDOUT_RC1.md) first (ship bar not met). Three of its lessons are worked on here. The six holdouts are
 opened and are now a regression set. Diagnosis images and scripts: `~/Documents/drum-score-corpus/eval_v1/holdout_rc1_fixes/`.
