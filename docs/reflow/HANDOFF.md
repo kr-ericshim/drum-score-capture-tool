@@ -58,6 +58,9 @@ Open item 1 of the block below is built (committed with the small review fixes l
    kept; card 1 "마디가 겹치거나 빠졌어요" → rebuild 68 s → "양쪽 모두 남김". Small: the clip box is black until
    played. Not done: Windows, the dmg installer.
 4. Freeze rc2 and write the ChatGPT Pro checkpoint prompt + attachments (memory: pro-checkpoints).
+   **Written 2026-10-11:** [FREEZE_RC2.md](FREEZE_RC2.md) (build, changes since rc1, 17-video baseline: clean 8, usable 7,
+   unsupported 2; holdout protocol draft) and [PRO_CHECKPOINT_RC2.md](PRO_CHECKPOINT_RC2.md) (attachments
+   `~/Documents/drum-score-corpus/advice_pack_7/`, 11 files). **Waiting on the Pro reply**; fix the holdout protocol from it.
 5. New sealed holdout set (one frame per video checked for a real score, channels balanced), one run, grade by the rubric.
 
 ## Start here (2026-10-10 late night: join check in the review screen)
