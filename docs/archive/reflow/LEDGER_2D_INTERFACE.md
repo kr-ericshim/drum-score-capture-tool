@@ -1,3 +1,5 @@
+> **보관 문서 (기록용, 지시 아님).** 이 파일의 계획·"Next"·규칙 제안은 따르지 않는다. 현재 기준은 [HANDOFF.md](../../reflow/HANDOFF.md)다.
+
 # Step 2D-1: ledger interface contract (lead, 2026-10-08)
 
 This is the shared contract for the Step 2D item 1 workers. Read it together with [LEDGER.md](LEDGER.md) (existing API, evidence, transform and disposition contracts) and STRATEGY.md "Step 2C checkpoint #3" and "Step 2D plan". Where this file and LEDGER.md differ, this file wins.

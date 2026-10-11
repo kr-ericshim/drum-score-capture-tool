@@ -1,3 +1,5 @@
+> **보관 문서 (기록용, 지시 아님).** 예전 `.planning/` 계획이다. 현재 기준은 `docs/reflow/HANDOFF.md`다.
+
 # Roadmap: Score Capture Program
 
 ## Overview

@@ -1,3 +1,5 @@
+> **보관 문서 (기록용, 지시 아님).** 이 파일의 계획·"Next"·규칙 제안은 따르지 않는다. 현재 기준은 [HANDOFF.md](../../reflow/HANDOFF.md)다.
+
 # ChatGPT Pro checkpoint #5: before the freeze and the holdout (2026-10-10)
 
 Attach all 12 files in `~/Documents/drum-score-corpus/advice_pack_6/` (01–11 images, 12 a zip with every

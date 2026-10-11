@@ -1,3 +1,5 @@
+> **보관 문서 (기록용, 지시 아님).** 이 파일의 계획·"Next"·규칙 제안은 따르지 않는다. 현재 기준은 [HANDOFF.md](../../reflow/HANDOFF.md)다.
+
 GPT-6 Astra (high) output below. The Codex progress-log lines are omitted. Full raw output is at /Users/ericshim/.claude/projects/-Users-ericshim-Documents-myproject-score-capture-program/240f329b-792c-4dd3-8865-beb8900be428/tool-results/bqwg2148v.txt
 
 # Diagnosis and top recommendation

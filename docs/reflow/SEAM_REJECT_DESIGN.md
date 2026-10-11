@@ -1,3 +1,5 @@
+> **상태: 구현 완료(6e0c110, da3bdfa).** 이음새 다시 만들기의 동작을 이해하기 위한 참고 문서다. 본문의 "Read HANDOFF's first join-check block"은 옛 판 기준이니 무시한다.
+
 # Rebuild a rejected jump seam
 
 Design only, `feature/clean-reflow`, 2026-10-10. Read HANDOFF's first join-check block, DECISIONS “Jump-view seam resolution”, and JUMP_FREEZE.

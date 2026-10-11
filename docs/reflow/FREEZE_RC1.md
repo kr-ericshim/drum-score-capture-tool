@@ -1,3 +1,5 @@
+> **rc2로 대체됨.** 현재 빌드는 [FREEZE_RC2.md](FREEZE_RC2.md)다. FREEZE_RC2가 이 파일의 "Rules and defaults in force"와 "Grading" 절을 참조하므로 그 두 절만 유효하다. 나머지는 기록이다.
+
 # Freeze record: checkpoint5-rc1
 
 Written 2026-10-10 after Pro checkpoint #5 (STRATEGY.md "Step 2D checkpoint #5"). This file fixes what the

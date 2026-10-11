@@ -1,3 +1,5 @@
+> **보관 문서 (기록용, 지시 아님).** 이 파일의 계획·"Next"·규칙 제안은 따르지 않는다. 현재 기준은 [HANDOFF.md](../../reflow/HANDOFF.md)다.
+
 # ChatGPT Pro checkpoint: delivered-PDF verifier design (Step 2D)
 
 Attach: `~/Documents/drum-score-corpus/reflow/spotcheck_2d1/check_10.png` (10 items the verifier flagged; left = source video frame, right = delivered result. NOTE: the white vertical breaks in tiles 6 and 8 are an artifact of our review-crop builder, not of the PDF).

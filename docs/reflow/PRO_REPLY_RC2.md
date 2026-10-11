@@ -1,6 +1,6 @@
 # Pro checkpoint #6 reply (2026-10-11): summary and decisions
 
-Reply to [PRO_CHECKPOINT_RC2.md](PRO_CHECKPOINT_RC2.md), relayed by the user. Summary in our words; verified items marked.
+Reply to [PRO_CHECKPOINT_RC2.md](../archive/reflow/PRO_CHECKPOINT_RC2.md), relayed by the user. Summary in our words; verified items marked.
 
 ## Verdict
 

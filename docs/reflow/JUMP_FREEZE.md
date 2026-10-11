@@ -1,3 +1,5 @@
+> **참고 문서.** jump view 임계값과 config hash의 동결 기록이다(최신 `reflow_jump-5`). 규칙 자체는 [DECISIONS.md](DECISIONS.md) "Jump-view seam resolution"에 있다.
+
 # Jump-view thresholds: freeze note (milestone 1, 2026-10-07)
 
 - **Frozen:** 2026-10-07 02:47 KST, before the held-out video was run.

@@ -1,3 +1,5 @@
+> **보관 문서 (기록용, 지시 아님).** 이 파일의 계획·"Next"·규칙 제안은 따르지 않는다. 현재 기준은 [HANDOFF.md](../../reflow/HANDOFF.md)다.
+
 # Jump-view support: plan (Fable, 2026-10-07)
 
 **Status:** approved by the user on 2026-10-07. Milestone 1 done. Milestone 2 done (2026-10-07), with seam resolution pulled forward from milestone 4 and the KO/EN review warning from milestone 3: jump-view runs now become panorama strips and go through the measure layout (HANDOFF "Jump view, milestone 2"). Lines on `_7gPeY5Lcrk` held one measure each at 1.5 mm; since 2026-10-07 the automatic staff size (DECISIONS "Automatic staff size for dense charts") lays it out at 1.3 mm, two measures per line (HANDOFF "Automatic staff size").

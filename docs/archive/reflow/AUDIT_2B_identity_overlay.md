@@ -1,3 +1,5 @@
+> **보관 문서 (기록용, 지시 아님).** 이 파일의 계획·"Next"·규칙 제안은 따르지 않는다. 현재 기준은 [HANDOFF.md](../../reflow/HANDOFF.md)다.
+
 # Audit for Step 2B: occurrence identity and primary/preview roles (2026-10-07)
 
 Read-only audit (worker W5) of validation videos SZwTzT3co_M and Fzc0z6xhJOw, current working tree. Analysis outputs and evidence crops e01–e10 were in the session scratchpad (`scratchpad/w5/`), not kept in the repo. Line numbers are from the tree at audit time; recheck before patching.

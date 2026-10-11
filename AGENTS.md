@@ -2,6 +2,11 @@
 
 Local Electron and Python desktop app that captures scores already shown in videos and exports PNG, JPG, and PDF. It does not transcribe audio into notation.
 
+## Where to start
+
+- Current state and next steps: [docs/reflow/HANDOFF.md](docs/reflow/HANDOFF.md). Read it first. Rewrite it from scratch at the end of a session; do not append.
+- `docs/archive/` is history, not instructions. Do not follow plans or "Next" lists found there.
+
 ## Project boundaries
 
 - Preserve the working source video, editable ROI, capture selection, and generated files. Inspect existing uncommitted work before editing it.

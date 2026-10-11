@@ -6,11 +6,16 @@ Pro checkpoint #6 ([PRO_REPLY_RC2.md](PRO_REPLY_RC2.md)) and its five pre-freeze
 
 ## Build
 
-- Git: code = the pre-freeze commit "Close the Pro #6 pre-freeze items" on `feature/clean-reflow`, on top of da3bdfa.
-  Regression code manifest `38d4cb69597f1939`.
+- Git: code = 06d15c0 "Refuse vertical-scroll videos and record the short plan" on `feature/clean-reflow` (the
+  pre-freeze commit b44a0a2 plus the vertical-scroll refusal). Regression code manifest `47cc444f8c0439cb`
+  (b44a0a2 was `38d4cb69597f1939`).
+- 06d15c0 checks (2026-10-11): backend suite 1409 OK (12 skipped); regression `eval_v1/vscroll_refuse_dashboard`
+  (17 videos) has every page pixel-identical to `prefreeze_dashboard`; `pack:release` plus both packaged smokes OK;
+  the packaged app stops the Shorts probe `5pe5bLexYN4` with `UNSUPPORTED_LAYOUT` ("vertical_scroll 0.0-28.0s"), but only
+  after 153 s, because the refusal comes after sampling and tracking.
 - Packaged build: macOS arm64, `npm --prefix desktop run pack:release` from that working tree (unpacked app, 460 MB).
-  Backend executable `drumsheet-backend` SHA-256 b2818271d1d614fdefb730332ba704fd7d6d542c222447e77f66153e327e29d8.
-  The first rc2 build (da3bdfa) was 7875e144…;
+  Backend executable `drumsheet-backend` SHA-256 19f15af1c9a6e05a52696ae692e088aadeed9d996c8641b7999e61bb3d4efa70 (06d15c0).
+  The b44a0a2 build was b2818271…; the first rc2 build (da3bdfa) was 7875e144…;
   bundled ffmpeg 8.1.2 (pinned media bundle `media-tools-850fac73bcaa288a6a92`, darwin-arm64 sha 486cbff7…).
   Test machine: 18 GiB, M-series, AC power.
 - Runtime (source backend): Python 3.13.4, numpy 2.5.3, OpenCV 4.13.0; Electron 44.5.1; app 0.2.1.

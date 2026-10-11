@@ -1,3 +1,5 @@
+> **보관 문서 (기록용, 지시 아님).** 이 파일의 계획·"Next"·규칙 제안은 따르지 않는다. 현재 기준은 [HANDOFF.md](../../reflow/HANDOFF.md)다.
+
 # ChatGPT Pro checkpoint after STRATEGY Step 1 (2026-10-07)
 
 - Sent by the user, with the attachments in `~/Documents/drum-score-corpus/advice_pack_2/`.

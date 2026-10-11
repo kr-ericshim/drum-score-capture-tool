@@ -1,14 +1,16 @@
 # Clean reflow: decisions
 
-Design reference: [DESIGN_astra.md](DESIGN_astra.md) (GPT-6 Astra, 2026-10-06). This file records what the user decided and the defaults in force; it overrides the design where they differ.
+> 이 파일은 사용자 결정과 지금 적용 중인 규칙이다. 순서와 할 일은 [HANDOFF.md](HANDOFF.md)에 있다. 아래 일부 절은 날짜별로 덧붙은 것이라, 같은 주제가 두 번 나오면 **더 늦은 날짜의 절이 우선**한다.
+
+Design reference (history): [DESIGN_astra.md](../archive/reflow/DESIGN_astra.md) (GPT-6 Astra, 2026-10-06). This file overrides the design where they differ.
 
 ## Decided by the user (2026-10-06)
 
-- The app's default and only final output is the clean reflowed chart (cleaned source images laid out on A4). OMR re-engraving is shelved; no raw-stitch alternative output.
+- The app's default and only final output is the clean reflowed chart (cleaned source images laid out on A4). OMR re-engraving is shelved. *(Updated 2026-10-11: the user added one alternative, the simple "original screens" fallback in [ORIGINAL_SCREENS_DESIGN.md](ORIGINAL_SCREENS_DESIGN.md). It is still not overlap stitching.)*
 - No footer text, no link-to-source feature.
 - No human timing studies in any evaluation.
 - Horizontal-scroll videos are out of scope (not a later phase): uncommon in the Korean hobbyist YouTube videos the app targets, which usually switch/turn systems. The app shows an explicit unsupported state for them. Corpus videos treated as horizontal: qA-M_f0DMjw, rsUfI3EKAj4, Pxt93gz8jas, waMCMJD7bQk, xft2krEJNBE.
-- Implementation by one Claude Opus agent (not Codex); GPT-6 Astra reviews results and audits the process against the assigned task list.
+- ~~Implementation by one Claude Opus agent (not Codex); GPT-6 Astra audits.~~ Superseded: worker choice follows the user's current rules (memory `codex-workers`, `worker-choice-by-usage`).
 
 ## Reference look (user's teacher PDF, `/Users/ericshim/Downloads/뉴진스-GODS.pdf.pdf`)
 
@@ -21,7 +23,7 @@ Measured from the PDF (A4 595x842 pt, 2 pages):
 
 ## Defaults in force (from the design; change only on user request)
 
-- Order = the order the video shows the systems (decided by Claude on 2026-10-06 after the user found the choice too complex; user may revisit). When the video goes back to an earlier system (repeat/D.S.), it is placed again; nothing is dropped. **Exception (2026-10-09, Pro checkpoint #4 option iii):** an established replay block — at least 3 consecutive systems whose whole cleaned strips (notes, measure numbers, text) match one unique earlier consecutive block in the same order — is left unchecked by default (`REPLAY_COLLAPSED`, `exclusions.replay_blocks`; `reflow_occurrences.collapse_replay_blocks`). Its strips stay in review and can be ticked back in. Single, two-line, ambiguous or out-of-order matches stay placed. The D.S./coda signs themselves are not detected; they stay in the kept earlier systems. Other likely repeats are offered as a one-click "remove duplicate" suggestion, never a blocking question. Export is not blocked by identity questions.
+- Order = the order the video shows the systems (decided by Claude on 2026-10-06 after the user found the choice too complex; user may revisit). When the video goes back to an earlier system (repeat/D.S.), it is placed again; nothing is dropped. **Exception (2026-10-09, Pro checkpoint #4 option iii):** an established replay block — at least 3 consecutive systems whose whole cleaned strips (notes, measure numbers, text) match one unique earlier consecutive block in the same order — is left unchecked by default (`REPLAY_COLLAPSED`, `exclusions.replay_blocks`; `reflow_occurrences.collapse_replay_blocks`). *(Superseded 2026-10-10 by FREEZE_RC1: replay = candidates only. Such blocks are printed and flagged `REPLAY_CANDIDATE`; auto-exclusion only with `REFLOW_REPLAY_AUTO_EXCLUDE`.)* Its strips stay in review and can be ticked back in. Single, two-line, ambiguous or out-of-order matches stay placed. The D.S./coda signs themselves are not detected; they stay in the kept earlier systems. Other likely repeats are offered as a one-click "remove duplicate" suggestion, never a blocking question. Export is not blocked by identity questions.
 - Two pages is a soft target; never shrink below the chosen staff size or drop systems to reach it.
 - Lines justified only within safe slack; otherwise a recorded ragged line. No glyph stretching.
 - All score text is preserved (section labels, tempo, lyrics).
@@ -225,6 +227,8 @@ These rules sharpen the packet instructions in `tools/reflow_boundary_review` fo
 - **Validation set:** monitored, not one-shot; the holdout is the one-shot test.
 
 ## Staged delivered verification (2026-10-09, after the Pro verifier checkpoint)
+
+> **Status:** growth of this system stopped on 2026-10-09 (user: avoid the guardrail spiral). In the app only the PDF contract, byte binding and the cheap B + C checks run; A and the old raw verifier are dev-only (`backend/tools/verify_job.py`). Do not extend it without a product reason.
 
 Context: the v2 raw-fringe projection verifier flagged ~18–20k entries per real dev video (S1, 01Mr); the user's 10-item spot check found nothing missing (mild softening only; memory "legibility-not-pixel-exact"). The v3 mark-level attempt reduced findings but let an erased staff-attached dot and tampered evidence pass. Pro reply: `PRO_CHECKPOINT_2D_VERIFIER.md` (prompt) — adopted with its additions.
 

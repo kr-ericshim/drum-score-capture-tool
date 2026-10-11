@@ -1,3 +1,5 @@
+> **보관 문서 (기록용, 지시 아님).** 이 파일의 계획·"Next"·규칙 제안은 따르지 않는다. 현재 기준은 [HANDOFF.md](../../reflow/HANDOFF.md)다.
+
 # ChatGPT Pro checkpoint: product outcomes after Step 2D-1 (2026-10-09)
 
 Attach the 8 images in `~/Documents/drum-score-corpus/advice_pack_5/` (01 to 08). Captions in 02 are Korean: rows are S1 (clean), SHvfn (gaps), aOED (repeated bars), bF69 (gray smudges), Z4eb (leftover screen text); left = Oct 7 build, right = today.
