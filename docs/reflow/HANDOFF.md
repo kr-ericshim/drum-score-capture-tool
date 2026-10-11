@@ -30,19 +30,17 @@
 - 실제 확인:
   - 한 줄 영상 S1nlqQdnUks와 aOED5zskhGk로 PDF를 만들어 사용자가 봤다. 각 2쪽이고 빠진 줄이 없었다.
   - 개발용 Electron에서 버튼 → 진행률 → 원본 화면 모드 → 체크 해제 후 다시 만들기를 눌러 확인했다. 1440×960과 1120×840, 한국어와 영어로 봤다.
-  - **패키지 앱과 Windows에서는 확인하지 않았다.**
+  - macOS arm64 패키지 앱(`pack:release`)에서도 확인했다. 기존 패키지 smoke 두 개가 통과했고, 버튼을 누르면 원본 화면 18장과 PDF가 나왔다. **Windows는 확인하지 않았다.**
 
 ## 다음 할 일 (순서대로)
 
-1. **fallback 마무리**:
-   - 패키지 앱 smoke(`npm --prefix desktop run pack:release` 후 실행)에서 버튼이 보이고 PDF가 나오는지 한 번 본다.
-2. **holdout 준비**: [FREEZE_RC2.md](FREEZE_RC2.md) "Next holdout protocol"을 따른다.
+1. **holdout 준비**: [FREEZE_RC2.md](FREEZE_RC2.md) "Next holdout protocol"을 따른다.
    - 지원 8개(page-turn/줄 전환 4, jump 4), 거부 테스트 3개(라이브 오버레이, 악보 없음, 세로 스크롤 Shorts).
    - 채널당 2개 이하, 채널 4개 이상, 개발 세트에 없는 채널 1개 이상.
    - jump view 채널은 鼓譜 Drumtabs 하나만 안다. 봉인 전에 하나 더 찾거나, jump 할당을 2로 줄이고 그렇게 적는다.
    - 후보 목록 → seed 셔플 → 각 영상 10/50/90% 지점 15초씩 확인 → 봉인(`eval_v2`, 해시). 다운로드는 사용자 허락을 받는다(약 1–2 GB).
-3. **holdout 실행**: 패키지 앱으로 영상마다 한 번씩 돌리고, [PRO_REPLY_RC2.md](PRO_REPLY_RC2.md) 절차대로 두 번에 나눠 채점한다. fallback은 한 줄 영상에서만 따로 채점한다.
-4. **holdout 이후 첫 기능, 세로 스크롤 지원**: [VSCROLL_SPEC.md](VSCROLL_SPEC.md)는 Astra 초안이고 lead가 아직 검토하지 않았다. 별도 세션과 worktree에서 한다. fallback과는 연결하지 않는다.
+2. **holdout 실행**: 패키지 앱으로 영상마다 한 번씩 돌리고, [PRO_REPLY_RC2.md](PRO_REPLY_RC2.md) 절차대로 두 번에 나눠 채점한다. fallback은 한 줄 영상에서만 따로 채점한다.
+3. **holdout 이후 첫 기능, 세로 스크롤 지원**: [VSCROLL_SPEC.md](VSCROLL_SPEC.md)는 Astra 초안이고 lead가 아직 검토하지 않았다. 별도 세션과 worktree에서 한다. fallback과는 연결하지 않는다.
 
 ## 지금 유효한 문서
 
