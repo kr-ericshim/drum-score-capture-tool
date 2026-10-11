@@ -435,7 +435,15 @@ function renderHypotheses(hypotheses, pages, locale) {
     </div>`;
 }
 
-const REBUILD_STAGES = new Set(["queued", "planning", "sizing", "rendering", "writing"]);
+const REBUILD_STAGES = new Set(["queued", "planning", "sizing", "rendering", "writing", "capturing", "comparing"]);
+
+// Original screens mode (ORIGINAL_SCREENS_DESIGN.md §5): what the files are, and where the captured screens are.
+function renderOriginalNote(original, locale, busy) {
+  return `<div class="review-reflow-notes"><div class="review-reflow-note is-info" role="status" data-review-original>
+      <p>${escapeHtml(t("review.original.notice", { locale }))}</p>
+      <button type="button" class="button button-secondary" data-action="open-original-screens-dir" ${!original.screensDir || busy ? "disabled" : ""}>${escapeHtml(t("review.original.openScreens", { locale }))}</button>
+    </div></div>`;
+}
 
 /**
  * Progress of a running background rebuild (PDF 다시 만들기) and its cancel button. The button stays
@@ -481,7 +489,8 @@ export function renderReviewScreen(state) {
   const comparing = Boolean(state.review.compare && focused?.similarTo && !state.review.cropping && !state.review.hypotheses?.open);
   const compareReference = focused?.similarTo ? pages.find(page => page.id === focused.similarTo.referenceId) : null;
   const isSystems = pages.some(page => page.kind === "system");
-  const reviewTitle = escapeHtml(t(isSystems ? "review.systemsTitle" : "review.title", { locale }));
+  const original = state.review.originalScreens || {};
+  const reviewTitle = escapeHtml(t(original.active ? "review.original.title" : isSystems ? "review.systemsTitle" : "review.title", { locale }));
   const outputPages = Array.isArray(state.review.outputPages) ? state.review.outputPages : [];
   const hypotheses = state.review.hypotheses || { open: false, items: [], status: "idle" };
   const hypothesesOpen = Boolean(hypotheses.open && !state.review.cropping);
@@ -494,7 +503,7 @@ export function renderReviewScreen(state) {
   const reflowInfo = state.review.reflow || null;
   const measureReflow = state.exportConfig.measureReflow !== false;
   // A job made before clean charts keeps its files but cannot be rebuilt here.
-  const legacyJob = hasPages && !isSystems && !reflowInfo;
+  const legacyJob = hasPages && !isSystems && !reflowInfo && !original.active;
   // the current files are an incomplete chart: never shown as an ordinary saved result
   const incomplete = Boolean(reflowInfo?.incomplete) && state.exportConfig.runStatus === "done";
   const reviewRequired = Boolean(reflowInfo?.reviewRequired) && state.exportConfig.runStatus === "done";
@@ -549,7 +558,8 @@ export function renderReviewScreen(state) {
         <div class="review-list-summary">
           <span class="review-summary-pill">${summaryLabel}</span><span class="review-format-label">${escapeHtml(formats.join(" · ").toUpperCase())}</span>
         </div>
-        ${legacyJob ? `<p class="review-reflow-note is-warning" role="status">${escapeHtml(t("review.legacyJob", { locale }))}</p>` : renderReflowNotes(reflowInfo, locale, busy)}
+        ${legacyJob ? `<p class="review-reflow-note is-warning" role="status">${escapeHtml(t("review.legacyJob", { locale }))}</p>`
+          : original.active ? renderOriginalNote(original, locale, outputBusy) : renderReflowNotes(reflowInfo, locale, busy)}
         ${list.main.length || list.fragments.length || list.alternates.length
           ? list.grouped || list.alternatesGrouped ? `<div class="review-list-scroll">
               ${list.main.length ? `<div class="review-grid" role="list" aria-label="${reviewTitle}" data-thumb-shape="${thumbShapeFor(list.main.map(page => normalizeAssetPath(page.previewPath)))}">
@@ -570,6 +580,7 @@ export function renderReviewScreen(state) {
             <input type="checkbox" data-action="toggle-measure-reflow" ${measureReflow ? "checked" : ""} ${outputBusy ? "disabled" : ""} aria-describedby="reviewMeasureReflowHint" />
             <span>${escapeHtml(t("export.layout.measure", { locale }))}<small id="reviewMeasureReflowHint">${label("measureHint")}</small></span>
           </label>` : ""}
+          ${original.available && !original.active ? `<button type="button" class="button button-secondary review-original-rebuild" data-action="rebuild-original-screens" ${outputBusy || !hasFormats || !isReviewableRun(state) ? "disabled" : ""}>${escapeHtml(t("review.original.rebuild", { locale }))}</button>` : ""}
           <p id="reviewSaveHint" class="review-save-hint">${saveHint}</p>
           ${state.review.outputDir ? `<div class="review-output-path"><span title="${escapeHtml(state.review.outputDir)}">${escapeHtml(state.review.outputDir)}</span><button type="button" class="button button-secondary" data-action="copy-output-dir">${escapeHtml(t("rail.copyPath", { locale }))}</button></div>` : ""}
         </div>
@@ -631,10 +642,10 @@ export function renderReviewScreen(state) {
               : t("review.lines.toolbar", { locale, replacements: { count: reviewLines.length } }))}</button>` : ""}
             ${control("review-page-preview", pagePreview ? "systemView" : "pagePreview", busy, `aria-pressed="${pagePreview}"`)}
           </div>` : ""}
-          <div class="review-tool-group" role="group" aria-label="${label("crop")}">
+          ${original.active ? "" : `<div class="review-tool-group" role="group" aria-label="${label("crop")}">
             ${control("review-crop", "crop", !focused || busy || focused.selectionMode === "pages" || focused.kind === "system")}
             ${control("review-reset-crop", "resetCrop", !focused?.cropRect || busy)}
-          </div>
+          </div>`}
         </div>
         <p id="reviewShortcutHelp" class="review-keyboard-help">${label("shortcutHelp")}</p>
       </section>

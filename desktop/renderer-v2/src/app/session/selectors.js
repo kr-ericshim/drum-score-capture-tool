@@ -351,6 +351,8 @@ export function createInitialSessionState() {
       pagePreview: false,
       // Clean reflow job facts the review screen reports (deriveReflowInfo).
       reflow: null,
+      // Original screens fallback: { active, screensDir, available } (deriveOriginalScreens).
+      originalScreens: { active: false, screensDir: "", available: false },
       // A running background rebuild: { jobId, taskId, state, stage, progress, cancelRequested }.
       exportTask: null,
       // Ledger hypotheses of the last delivered export that need a look (LEDGER_2D_INTERFACE §10).
@@ -657,8 +659,11 @@ export function deriveLedgerSummary(summary, shownCodes = APP_REVIEW_CODES) {
   return { status: String(summary.status || ""), reviewHypotheses: shown };
 }
 
+/** Output models whose A4 pages the review screen previews (clean chart, original screens). */
+const PAGED_OUTPUT_MODELS = new Set(["clean_reflow_v1", "original_screens_v1"]);
+
 export function deriveOutputPages(result = {}) {
-  if (result.output_model !== "clean_reflow_v1") return [];
+  if (!PAGED_OUTPUT_MODELS.has(result.output_model)) return [];
   const previews = Array.isArray(result.preview_images) ? result.preview_images : [];
   // a rebuild rewrites the same file names: the revision keeps the browser from showing the old pages
   const revision = Number(result.reflow?.revision ?? result.revision);
@@ -834,7 +839,7 @@ function deriveMeasureReflow(record) {
 
 /** Review revision a saved draft belongs to (reflow revision, else review-export revision). */
 export function jobRevision(result = {}) {
-  if (result.output_model === "clean_reflow_v1") return Number(result.reflow?.revision || 0);
+  if (PAGED_OUTPUT_MODELS.has(result.output_model)) return Number(result.reflow?.revision || 0);
   return Number(result.review_export?.revision || 0);
 }
 
@@ -882,6 +887,7 @@ export function reviewListPages(review = {}) {
  */
 export function localizePageTitle(page = {}, locale = "en") {
   const index = Number(page.index) || 0;
+  if (page.kind === "screen") return t("selector.screenTitle", { locale, replacements: { index } });
   if (page.kind !== "system") return t("selector.pageTitle", { locale, replacements: { index } });
   const titleNumber = systemNumber(page.systemId, index);
   const otherMoment = alternateNumber(page.systemId);
@@ -890,7 +896,70 @@ export function localizePageTitle(page = {}, locale = "en") {
     : t("selector.systemTitle", { locale, replacements: { index: titleNumber } });
 }
 
+/** The original-screens fallback works only for one-line videos (ORIGINAL_SCREENS_DESIGN.md §2). */
+export const ORIGINAL_SCREENS_MIN_ASPECT = 2.25;
+
+/** Width / height of the box around an ROI's points (0 when unknown). */
+export function roiAspect(points) {
+  if (!Array.isArray(points) || points.length !== 4) return 0;
+  const xs = points.map(point => Number(point?.[0])), ys = points.map(point => Number(point?.[1]));
+  if (![...xs, ...ys].every(Number.isFinite)) return 0;
+  const height = Math.max(...ys) - Math.min(...ys);
+  return height > 0 ? (Math.max(...xs) - Math.min(...xs)) / height : 0;
+}
+
+/**
+ * Original screens facts for the review screen: ``active`` when the job's files are the original
+ * screens (with the folder of the captured screens), ``available`` when a clean chart may be rebuilt
+ * as original screens (a one-line video: the applied ROI is at least 2.25 times wider than tall).
+ */
+export function deriveOriginalScreens(result = {}, fallbackRoi = null) {
+  const active = result.output_model === "original_screens_v1";
+  const record = result.original_screens && typeof result.original_screens === "object" ? result.original_screens : {};
+  const roi = Array.isArray(result.reflow?.applied_roi) ? result.reflow.applied_roi : fallbackRoi;
+  return {
+    active,
+    screensDir: active ? String(record.screens_dir || "") : "",
+    available: result.output_model === "clean_reflow_v1" && roiAspect(roi) >= ORIGINAL_SCREENS_MIN_ASPECT,
+  };
+}
+
+/** Review rows of an original-screens result: every saved screen in time order, candidates flagged. */
+function deriveOriginalScreenPages(result, locale) {
+  const screens = Array.isArray(result.original_screens?.screens) ? result.original_screens.screens : [];
+  return screens.filter(screen => screen && screen.path).map((screen, index) => {
+    const reasons = Array.isArray(screen.reasons) ? screen.reasons.map(value => String(value || "").trim()).filter(Boolean) : [];
+    const candidate = screen.candidate === true;
+    const seconds = Number(screen.t);
+    return {
+      id: `${index + 1}`,
+      index: index + 1,
+      kind: "screen",
+      systemId: "",
+      timeLabel: Number.isFinite(seconds) ? formatClockLabel(seconds) : "",
+      title: localizePageTitle({ kind: "screen", index: index + 1 }, locale),
+      capturePath: String(screen.path),
+      previewPath: normalizeAssetPath(String(screen.path)),
+      cropRect: null,
+      outputPreviewPath: normalizeAssetPath(String(screen.path)),
+      previewKind: "capture",
+      selectionMode: "captures",
+      exportLocked: false,
+      suspicious: candidate,
+      warningReason: reasons[0] || "",
+      diagnosticCodes: [],
+      recommendedAction: candidate ? "exclude" : "keep",
+      autoExcludeCandidate: candidate,
+      transitionFragment: false,
+      minorityAlternate: false,
+      diagnostics: {},
+      similarTo: null,
+    };
+  });
+}
+
 export function deriveCapturePages(result = {}, locale = "en") {
+  if (result.output_model === "original_screens_v1") return deriveOriginalScreenPages(result, locale);
   const pageDiagnostics = Array.isArray(result.page_diagnostics) ? result.page_diagnostics : [];
   const similarPairs = buildSimilarPairIndex(result);
   const droppedPages = Array.isArray(result.dropped_pages) ? result.dropped_pages : [];

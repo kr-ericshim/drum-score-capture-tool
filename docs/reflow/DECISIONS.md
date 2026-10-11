@@ -6,7 +6,7 @@ Design reference (history): [DESIGN_astra.md](../archive/reflow/DESIGN_astra.md)
 
 ## Decided by the user (2026-10-06)
 
-- The app's default and only final output is the clean reflowed chart (cleaned source images laid out on A4). OMR re-engraving is shelved. *(Updated 2026-10-11: the user added one alternative, the simple "original screens" fallback in [ORIGINAL_SCREENS_DESIGN.md](ORIGINAL_SCREENS_DESIGN.md). It is still not overlap stitching.)*
+- The app's default and only final output is the clean reflowed chart (cleaned source images laid out on A4). OMR re-engraving is shelved. *(Updated 2026-10-11: the user added one alternative, the simple "original screens" fallback in [ORIGINAL_SCREENS_DESIGN.md](ORIGINAL_SCREENS_DESIGN.md). It is for one-line videos only (applied ROI width/height >= 2.25); page-turn and scroll videos are not supported by it. It is still not overlap stitching.)*
 - No footer text, no link-to-source feature.
 - No human timing studies in any evaluation.
 - Horizontal-scroll videos are out of scope (not a later phase): uncommon in the Korean hobbyist YouTube videos the app targets, which usually switch/turn systems. The app shows an explicit unsupported state for them. Corpus videos treated as horizontal: qA-M_f0DMjw, rsUfI3EKAj4, Pxt93gz8jas, waMCMJD7bQk, xft2krEJNBE.

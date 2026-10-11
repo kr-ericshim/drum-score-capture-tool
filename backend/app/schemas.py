@@ -279,9 +279,19 @@ class JobReviewExportRequest(BaseModel):
     # Full desired override set. None keeps the committed set; [] clears it.
     rejected_seam_ids: Optional[List[str]] = None
     base_revision: Optional[int] = Field(default=None, ge=0)
+    # Original screens fallback (docs/reflow/ORIGINAL_SCREENS_DESIGN.md): rebuild the job as whole
+    # screens. Without keep_captures it captures from the source video; with keep_captures it
+    # rebuilds from the saved screens with exactly those. Omitted: the clean reflow export above.
+    output_model: Optional[Literal["original_screens_v1"]] = None
 
     @model_validator(mode="after")
     def validate_selection_mode(self):
+        if self.output_model == "original_screens_v1":
+            clean_only = [name for name in ("system_order", "staff_gap_mm", "staff_gap_mm_explicit", "measure_reflow",
+                                            "rejected_seam_ids", "keep_images") if name in self.model_fields_set]
+            if clean_only:
+                raise ValueError(f"original_screens_v1 does not take clean reflow fields: {', '.join(clean_only)}")
+            return self
         if self.keep_captures and self.keep_images:
             raise ValueError("keep_captures and keep_images cannot be used together")
         if not self.keep_captures and not self.keep_images:

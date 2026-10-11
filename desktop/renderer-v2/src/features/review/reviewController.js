@@ -20,7 +20,10 @@ export function createReviewController({ getState, setState, api, mountEditor, r
     order: state.review.pages.map(page => page.id),
   });
   function syncJob() {
-    const nextId = getState().exportConfig.jobId;
+    // the history belongs to one job and one kind of rows: rebuilding a clean chart as original
+    // screens keeps the job id, but its rows are other images with the same ids
+    const state = getState();
+    const nextId = `${state.exportConfig.jobId}|${state.review.originalScreens?.active ? "original" : "clean"}`;
     if (nextId !== jobId) { jobId = nextId; undo = []; redo = []; }
   }
   function mark(next) {

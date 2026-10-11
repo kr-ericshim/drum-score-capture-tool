@@ -10,6 +10,7 @@ import {
   deriveCapturePages,
   createReviewHypothesesState,
   deriveOutputPages,
+  deriveOriginalScreens,
   deriveReflowInfo,
   localizePageTitle,
   isLayoutConflictPending,
@@ -1206,6 +1207,10 @@ export function createApp(root, dependencies = {}) {
       next.review.pages = pages;
       next.review.jobRevision = jobRevision(job.result || {});
       next.review.reflow = deriveReflowInfo(job.result || {});
+      const wasOriginal = Boolean(next.review.originalScreens?.active);
+      next.review.originalScreens = deriveOriginalScreens(job.result || {}, next.roi?.appliedRect);
+      // other rows now (clean systems <-> original screens): the review controller drops its history too
+      if (wasOriginal !== next.review.originalScreens.active) { next.review.canUndo = false; next.review.canRedo = false; }
       // hypotheses belong to one delivered export: another job or a rebuild reloads them
       if (next.review.hypotheses?.jobId !== job.job_id || next.review.hypotheses?.revision !== next.review.jobRevision) {
         next.review.hypotheses = createReviewHypothesesState();
@@ -1213,8 +1218,9 @@ export function createApp(root, dependencies = {}) {
       next.review.outputPages = deriveOutputPages(job.result || {});
       if (!next.review.outputPages.length) next.review.pagePreview = false;
       const preferredPageIds = pages.filter((page) => !page.autoExcludeCandidate).map((page) => page.id);
-      const savedSelection = job.result?.review_export?.selected_captures?.length
-        ? job.result.review_export.selected_captures : job.result?.review_export?.selected_pages;
+      const savedSelection = next.review.originalScreens.active ? job.result?.original_screens?.selected
+        : job.result?.review_export?.selected_captures?.length
+          ? job.result.review_export.selected_captures : job.result?.review_export?.selected_pages;
       const restoredDraft = Boolean(draft);
       next.review.selectedPageIds = savedSelection?.length
         ? pages.filter(page => savedSelection.includes(page.capturePath)).map(page => page.id)
@@ -1234,7 +1240,7 @@ export function createApp(root, dependencies = {}) {
       next.review.outputDir = String(job.result?.output_dir || "");
       next.review.pdfPath = String(job.result?.pdf || "");
       next.review.keptCount = Number(job.result?.review_export?.kept_count || pages.length || 0);
-      next.review.status = restoredDraft ? "idle" : job.result?.review_export ? "applied" : "idle";
+      next.review.status = restoredDraft ? "idle" : job.result?.review_export || next.review.originalScreens.active ? "applied" : "idle";
       next.review.error = "";
       // Recoverable failures retain the systems for review and rebuilding.
       if (isReviewableRun(next) && pages.length) {
@@ -1554,7 +1560,7 @@ export function createApp(root, dependencies = {}) {
             activeSuggestionPoll = setTimeout(() => pollSuggestions(jobId, jobHandle), 1500);
           }
           // a PDF rebuild may still be running from before a reload: follow it
-          if (job.result?.output_model === "clean_reflow_v1") void resumeReviewExport(jobId);
+          if (["clean_reflow_v1", "original_screens_v1"].includes(job.result?.output_model)) void resumeReviewExport(jobId);
         }
         return;
       }
@@ -2384,6 +2390,8 @@ export function createApp(root, dependencies = {}) {
     if (detail.startsWith("LEGACY_JOB:")) return t("review.legacyJob", { locale });
     if (detail.startsWith("UNCUT_STRIP_UNAVAILABLE:")) return t("review.uncutStripUnavailable", { locale });
     if (detail.startsWith("EXPORT_INTERRUPTED:")) return t("review.exportInterrupted", { locale });
+    if (detail.startsWith("SOURCE_VIDEO_MISSING:")) return t("review.original.sourceMissing", { locale });
+    if (detail.startsWith("ORIGINAL_SCREENS_NOT_ONE_LINE:")) return t("review.original.notOneLine", { locale });
     // a join rebuild that could not run: the previous files are kept
     const seamCode = SEAM_REPAIR_CODES.find(code => error?.code === code || new RegExp(`^${code}\\b`).test(detail));
     if (seamCode) return t(`review.seamRepair.${seamCode}`, { locale });
@@ -2596,6 +2604,11 @@ export function createApp(root, dependencies = {}) {
     }
     const usePageSelection = selectedPages.every((page) => page.selectionMode === "pages");
     const selected = selectedPages.map((page) => page.capturePath);
+    if (state.review.originalScreens?.active) {
+      // original screens: rebuild from the saved screens the user kept (no new capture)
+      await runOriginalScreensExport({ keepCaptures: selected, formats });
+      return;
+    }
     // Clean reflow: the list order is the output order.
     const systemOrder = state.review.pages.some((page) => page.kind === "system")
       ? state.review.pages.map((page) => page.capturePath) : [];
@@ -2633,6 +2646,50 @@ export function createApp(root, dependencies = {}) {
     } catch (error) {
       await failReviewExport(error, { jobId, previousRevision, previousStatus, sourceSessionToken });
     }
+  }
+
+  /**
+   * Rebuild the job as original screens (ORIGINAL_SCREENS_DESIGN.md): without ``keepCaptures`` the
+   * backend captures the video again; with them it uses only those saved screens. Same background
+   * task, progress, cancel and error handling as the clean rebuild; the previous files stay on failure.
+   */
+  async function runOriginalScreensExport({ keepCaptures = [], formats }) {
+    const state = store.getState();
+    if (!state.exportConfig.jobId || ["running", "editing"].includes(state.review.status) || state.ui.savingPdfAs) return;
+    const sourceSessionToken = runtimeGuards.captureSourceSession();
+    const previousRevision = Number(state.review.jobRevision || 0);
+    const previousStatus = state.review.status;
+    const jobId = state.exportConfig.jobId;
+    setState((next) => {
+      next.review.status = "running";
+      next.review.error = "";
+      next.review.exportTask = { jobId, taskId: "", state: "queued", stage: "queued", progress: 0, cancelRequested: false };
+      return next;
+    });
+    try {
+      await runtimeApi.reviewExport(jobId, { outputModel: "original_screens_v1", keepCaptures, formats }, {
+        onTask: (task) => trackExportTask(jobId, task, sourceSessionToken),
+        shouldStop: () => destroyed || !runtimeGuards.isCurrentSourceSession(sourceSessionToken),
+      });
+      if (!runtimeGuards.isCurrentSourceSession(sourceSessionToken)) return;
+      await finishReviewExport(jobId, sourceSessionToken);
+    } catch (error) {
+      await failReviewExport(error, { jobId, previousRevision, previousStatus, sourceSessionToken });
+    }
+  }
+
+  async function rebuildAsOriginalScreens() {
+    const state = store.getState();
+    if (!state.review.originalScreens?.available || !isReviewableRun(state)) return;
+    const formats = Array.isArray(state.exportConfig.formats) ? state.exportConfig.formats : [];
+    if (!formats.length) {
+      setState((next) => {
+        next.review.error = t("export.formatsRequiredError", { locale: next.ui.locale });
+        return next;
+      });
+      return;
+    }
+    await runOriginalScreensExport({ formats });
   }
 
   async function handleOpenPath(targetPath, label) {
@@ -2927,6 +2984,15 @@ export function createApp(root, dependencies = {}) {
     }
     if (action === "cancel-review-export") {
       await cancelRunningReviewExport();
+      return;
+    }
+    if (action === "rebuild-original-screens") {
+      await rebuildAsOriginalScreens();
+      return;
+    }
+    if (action === "open-original-screens-dir") {
+      const locale = store.getState().ui.locale || "en";
+      await handleOpenPath(store.getState().review.originalScreens?.screensDir, t("review.original.screensDir", { locale }));
       return;
     }
     if (action === "open-output-dir") {

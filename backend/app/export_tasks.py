@@ -29,6 +29,8 @@ STAGE_RANGES = {
     "recovering": (0.01, 0.06),
     "rebuilding": (0.06, 0.15),
     "planning": (0.02, 0.30),
+    "capturing": (0.02, 0.50),  # original screens: frames from the source video
+    "comparing": (0.50, 0.60),  # original screens: dropping repeated screens
     "sizing": (0.30, 0.60),
     "rendering": (0.60, 0.80),
     "writing": (0.80, 0.99),

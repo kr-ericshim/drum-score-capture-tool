@@ -328,7 +328,12 @@ function exportTaskError(task) {
   });
 }
 
-function reviewExportBody({ keepCaptures = [], keepImages = [], formats = [], systemOrder = [], staffGapMm = null, staffGapMmExplicit = null, measureReflow = null, rejectedSeamIds = null, baseRevision = null } = {}) {
+function reviewExportBody({ keepCaptures = [], keepImages = [], formats = [], systemOrder = [], staffGapMm = null, staffGapMmExplicit = null, measureReflow = null, rejectedSeamIds = null, baseRevision = null, outputModel = "" } = {}) {
+  if (outputModel === "original_screens_v1") {
+    // Original screens: no selection captures from the video; a selection rebuilds from the saved
+    // screens. Clean reflow fields (and empty selections) are never sent: the backend refuses them.
+    return JSON.stringify({ output_model: outputModel, formats, ...(keepCaptures.length ? { keep_captures: keepCaptures } : {}) });
+  }
   return JSON.stringify({
     keep_captures: keepCaptures,
     keep_images: keepImages,

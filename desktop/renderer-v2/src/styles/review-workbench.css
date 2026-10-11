@@ -213,6 +213,8 @@
 .screen-review .review-layout-option:has(input:disabled) { color: var(--text-2); cursor: default; }
 .screen-review .review-layout-option span { min-width: 0; overflow-wrap: anywhere; }
 .screen-review .review-layout-option small { display: block; margin-top: 1px; font-size: 11.5px; font-weight: 400; color: var(--text-2); }
+/* original screens fallback: a quiet secondary action under the layout option (ORIGINAL_SCREENS_DESIGN.md §5) */
+.screen-review .review-original-rebuild { display: block; width: calc(100% - 28px); margin: 10px 14px 0; padding: 6px 12px; min-height: 32px; white-space: normal; line-height: 1.35; text-align: center; }
 .screen-review .review-reflow-code { display: block; margin-top: 2px; font-size: 11px; font-family: var(--mono); opacity: 0.85; }
 .screen-review .review-grid-shell .review-empty { padding: 24px 16px; }
 /* Short transition displays (page curls, brief flashes): one collapsed group under the systems.

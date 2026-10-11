@@ -87,6 +87,14 @@ from yt_dlp.version import __version__ as YTDLP_VERSION
 # The app's only final output (docs/reflow/DECISIONS.md). Reflow modules are imported
 # lazily inside the functions that use them.
 REFLOW_OUTPUT_MODEL = "clean_reflow_v1"
+ORIGINAL_SCREENS_OUTPUT_MODEL = "original_screens_v1"
+ORIGINAL_SCREENS_NOT_ONE_LINE_DETAIL = (
+    "ORIGINAL_SCREENS_NOT_ONE_LINE: 원본 화면 모드는 악보가 한 줄씩 나오는 영상에서만 쓸 수 있습니다 "
+    "/ Original screens work only for videos that show the score one line at a time."
+)
+SOURCE_VIDEO_MISSING_DETAIL = (
+    "SOURCE_VIDEO_MISSING: 원본 영상을 찾을 수 없어 다시 만들 수 없습니다 / The source video is missing, so this can't be rebuilt."
+)
 PREVIEW_SOURCE_CACHE_NAMESPACE = YOUTUBE_DOWNLOAD_STRATEGY_VERSION
 PREVIEW_FRAME_WORKSPACE_KEEP = 2
 PREVIEW_FRAME_WORKSPACE_TTL_SECONDS = 30 * 60
@@ -994,14 +1002,22 @@ def review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExpo
 
 
 def _review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExportResponse:
-    job = _require_reflow_export_job(job_id)
+    job = _require_reflow_export_job(job_id, payload)
+    return _review_export_any(job, job_id, payload)
+
+
+def _review_export_any(job: Job, job_id: str, payload: JobReviewExportRequest) -> JobReviewExportResponse:
+    if payload.output_model == ORIGINAL_SCREENS_OUTPUT_MODEL:
+        return _review_export_original_screens(job, job_id, payload)
     return _review_export_reflow(job, job_id, payload)
 
 
-def _require_reflow_export_job(job_id: str) -> Job:
+def _require_reflow_export_job(job_id: str, payload: Optional[JobReviewExportRequest] = None) -> Job:
     job = job_store.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="job not found")
+    if payload is not None and payload.output_model == ORIGINAL_SCREENS_OUTPUT_MODEL:
+        return _require_original_screens_job(job)
     if job.status != JobStatus.DONE and not (_layout_conflict_pending(job) or _ledger_failure_pending(job)):
         if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
             raise HTTPException(status_code=409, detail="job is still running")
@@ -1031,8 +1047,11 @@ def start_review_export(job_id: str, payload: JobReviewExportRequest) -> ReviewE
     formats answer as before). Only one export per job runs at a time: another request meanwhile
     is refused with 409 EXPORT_IN_PROGRESS (the running task is not superseded; poll it or cancel
     it). Poll GET /jobs/{id}/review-export/{task_id}; cancel with POST .../{task_id}/cancel."""
-    job = _require_reflow_export_job(job_id)
-    _reflow_export_inputs(job, payload)  # selection and format errors answer now, not as a failed task
+    job = _require_reflow_export_job(job_id, payload)
+    if payload.output_model == ORIGINAL_SCREENS_OUTPUT_MODEL:
+        _original_screens_inputs(job, payload)  # a missing source video or bad formats answer now
+    else:
+        _reflow_export_inputs(job, payload)  # selection and format errors answer now, not as a failed task
     revision = int(((job.result or {}).get("reflow") or {}).get("revision", 1)) + 1
     try:
         task = export_task_store.begin(job_id, job.artifact_dir, revision)
@@ -1104,8 +1123,8 @@ def _run_review_export_task(job_id: str, task_id: str, payload: JobReviewExportR
         with lock, operation_scope(cancel), progress_scope(on_progress):
             export_task_store.update(job_id, task_id, state=xt.RUNNING, stage="planning", message="planning",
                                      progress=xt.stage_progress("planning", 0.0))
-            job = _require_reflow_export_job(job_id)  # read again: suggestions or a crop may have changed it
-            response = _review_export_reflow(job, job_id, payload)
+            job = _require_reflow_export_job(job_id, payload)  # read again: suggestions or a crop may have changed it
+            response = _review_export_any(job, job_id, payload)
     except OperationCancelled:
         export_task_store.update(job_id, task_id, state=xt.CANCELLED, stage="cancelled", message="cancelled",
                                  error_code=xt.EXPORT_CANCELLED)
@@ -1497,7 +1516,7 @@ def prune_job_workspace(artifact_dir: Path, *, keep_review: bool, keep_ledger: b
                 shutil.rmtree(child, ignore_errors=True)
                 removed += 1
         keep_dirs = ([artifact_dir.joinpath(*parts) for parts in KEPT_DIAGNOSTIC_DIRS + REVIEW_WORKSPACE_DIRS]
-                     + [artifact_dir / "export"])
+                     + [artifact_dir / "export", artifact_dir / "original_screens"])
         if keep_ledger:
             keep_dirs.extend(artifact_dir.rglob("ledger_evidence"))
             for ledger_path in artifact_dir.rglob("ledger_base.json"):
@@ -2697,6 +2716,175 @@ def _compose_review_export_reflow(job: Job, job_id: str, payload: JobReviewExpor
         revision=int(reflow.get("revision") or 0) or None,
         review_required=bool(result.get("review_required")),
         review_reasons=list(result.get("review_reasons") or []),
+    )
+
+
+def _require_original_screens_job(job: Job) -> Job:
+    """Original screens may rebuild a finished clean chart (or one waiting on a layout or ledger
+    decision) or an earlier original-screens result, and only a one-line video (ROI aspect >= 2.25).
+    A refused job (UNSUPPORTED_LAYOUT, ...) is not accepted."""
+    from app.pipeline import original_screens
+
+    if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
+        raise HTTPException(status_code=409, detail="job is still running")
+    model = (job.result or {}).get("output_model")
+    done = job.status == JobStatus.DONE and model in {REFLOW_OUTPUT_MODEL, ORIGINAL_SCREENS_OUTPUT_MODEL}
+    pending = model == REFLOW_OUTPUT_MODEL and (_layout_conflict_pending(job) or _ledger_failure_pending(job))
+    if not (done or pending):
+        raise HTTPException(status_code=409, detail="job must be a finished clean chart before rebuilding as original screens")
+    roi = ((job.options if isinstance(job.options, dict) else {}).get("detect") or {}).get("roi")
+    if not isinstance(roi, list) or len(roi) != 4:
+        raise HTTPException(status_code=409, detail="the job has no applied score region")
+    if not original_screens.is_one_line_roi(roi):
+        raise HTTPException(status_code=409, detail=ORIGINAL_SCREENS_NOT_ONE_LINE_DETAIL)
+    return job
+
+
+def _original_screens_inputs(job: Job, payload: JobReviewExportRequest) -> Dict[str, Any]:
+    """What the build needs: the saved source video, ROI and capture range (first build), or the
+    saved screens and the selection (rebuild), plus the header and formats. Raises HTTPException
+    for a stale revision, a missing source video, an unknown screen or no format."""
+    from app.pipeline import original_screens
+
+    result = job.result or {}
+    revision = int((result.get("reflow") or {}).get("revision", 1))
+    if payload.base_revision is not None and payload.base_revision != revision:
+        raise HTTPException(status_code=409, detail=f"STALE_REVISION: expected revision {revision}, received {payload.base_revision}")
+    options = job.options if isinstance(job.options, dict) else {}
+    export_config = _resolve_job_export_options(job)
+    requested = payload.formats if payload.formats is not None else list(export_config.formats)
+    formats = _normalize_requested_export_formats(requested)
+    if not formats:
+        raise HTTPException(status_code=400, detail="formats must include at least one export format")
+    header_source = export_config.document_header.model_dump() if export_config.document_header is not None \
+        else (result.get("reflow") or {}).get("header")
+    inputs: Dict[str, Any] = {"formats": formats, "revision": revision,
+                              "header": original_screens.document_header(header_source)}
+    if "keep_captures" in payload.model_fields_set and not payload.keep_captures:
+        raise HTTPException(status_code=400, detail="no screens selected")
+    if payload.keep_captures:
+        saved = result.get("original_screens") or {}
+        is_original = result.get("output_model") == ORIGINAL_SCREENS_OUTPUT_MODEL
+        screens = (saved.get("screens") or []) if is_original else []
+        known = {}
+        for screen in screens:
+            try:
+                known[str(Path(screen["path"]).resolve())] = screen
+            except Exception:
+                continue
+        chosen = set()
+        for raw in payload.keep_captures:
+            try:
+                key = str(Path(str(raw)).resolve())
+            except Exception:
+                key = ""
+            if key not in known:
+                raise HTTPException(status_code=400, detail=f"unknown screen: {raw}")
+            chosen.add(key)
+        screens_dir = Path(str(saved.get("screens_dir") or ""))
+        if not screens_dir.is_dir():
+            raise HTTPException(status_code=409, detail="the saved screens are missing; rebuild as original screens again")
+        # time order, whatever order the request lists them in
+        inputs["selected_names"] = [Path(s["path"]).name for s in screens if str(Path(s["path"]).resolve()) in chosen]
+        inputs["screens"], inputs["screens_dir"] = screens, screens_dir
+        return inputs
+    video = _existing_file_path(result.get("source_video_path"))
+    if video is None:
+        raise HTTPException(status_code=409, detail=SOURCE_VIDEO_MISSING_DETAIL)
+    extract = options.get("extract") or {}
+    inputs.update(video=video, roi=(options.get("detect") or {}).get("roi"),
+                  start_sec=extract.get("start_sec"), end_sec=extract.get("end_sec"))
+    return inputs
+
+
+def _review_export_original_screens(job: Job, job_id: str, payload: JobReviewExportRequest) -> JobReviewExportResponse:
+    """Build (capture from the source) or rebuild (the user's selection of the saved screens) the
+    original-screens chart into ``original_screens/`` (staged, then installed).
+
+    The job's result points at the new folder only when everything is written; a failure or a
+    cancel leaves the previous result and files as they were. The clean ``export/`` stays."""
+    from app.pipeline import original_screens
+
+    inputs = _original_screens_inputs(job, payload)
+    previous_result = copy.deepcopy(job.result or {})
+    # set_state changes the in-memory job before it persists it: a rollback needs these values, not ``job``'s
+    previous_state = dict(status=job.status, progress=job.progress, current_step=job.current_step, message=job.message,
+                          error_code=job.error_code)
+    artifact_dir = Path(job.artifact_dir)
+    target = artifact_dir / "original_screens"
+    staged = _create_staged_export_workspace(target_workspace=target)
+    work_dir = None
+    logger = lambda msg: _append(job_id, msg)  # noqa: E731
+    try:
+        if "selected_names" in inputs:
+            built = original_screens.rebuild(screens_dir=inputs["screens_dir"], selected_names=inputs["selected_names"],
+                                             header=inputs["header"], formats=inputs["formats"], workspace=staged,
+                                             logger=logger)
+        else:
+            work_dir = Path(tempfile.mkdtemp(prefix="original_screens_work_", dir=str(artifact_dir)))
+            built = original_screens.build(video_path=inputs["video"], roi=inputs["roi"], start_sec=inputs["start_sec"],
+                                           end_sec=inputs["end_sec"], header=inputs["header"], formats=inputs["formats"],
+                                           workspace=staged, work_dir=work_dir, logger=logger)
+        checkpoint()  # last cancel point before the new folder is installed
+        commit = _install_staged_export_workspace(staged_workspace=staged, target_workspace=target)
+    except OperationCancelled:
+        shutil.rmtree(staged, ignore_errors=True)
+        raise
+    except Exception as exc:
+        shutil.rmtree(staged, ignore_errors=True)
+        detail = _export_failure_detail(exc)
+        try:
+            _append(job_id, detail)
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=detail)
+    finally:
+        if work_dir is not None:
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+    def moved(path: object) -> str:
+        return str(_rewrite_export_result_path(path, staged_workspace=staged, target_workspace=target))
+
+    try:
+        export_result = _rewrite_export_result_paths(export_result=built["export"], staged_workspace=staged,
+                                                     target_workspace=target)
+        result = copy.deepcopy(job.result or {})
+        if "screens" in built:
+            record = {"screens": [dict(s, path=moved(s["path"])) for s in built["screens"]],
+                      "frames_captured": built["frames_captured"], "blank_dropped": built["blank_dropped"],
+                      "interval_sec": built["interval_sec"]}
+        else:
+            record = dict(result.get("original_screens") or {})
+        record["screens_dir"] = str(target / "screens")
+        record["selected"] = [moved(p) for p in built["selected"]]
+        reflow = dict(result.get("reflow") or {})
+        reflow["revision"] = inputs["revision"] + 1
+        result["reflow"] = reflow
+        result["output_model"] = ORIGINAL_SCREENS_OUTPUT_MODEL
+        result["reflow_state"] = "original_screens"
+        result["original_screens"] = record
+        result["images"] = export_result.get("images", [])
+        result["pdf"] = export_result.get("pdf")
+        result["preview_images"] = export_result.get("preview_images", [])
+        result["output_dir"] = str(target)
+        job_store.set_state(job_id, JobStatus.DONE, 1.0, "done", "original screens finished", result=result, error_code=None)
+    except Exception as exc:
+        try:
+            # a pending layout conflict or ledger failure stays pending (status ERROR with its code)
+            job_store.set_state(job_id, previous_state["status"], previous_state["progress"], previous_state["current_step"],
+                                previous_state["message"], result=previous_result, error_code=previous_state["error_code"])
+        except Exception:
+            pass
+        _revert_after_metadata_failure(job_id, commit, previous_result, exc, previous_status=previous_state["status"])
+    commit.finalize()
+    _append(job_id, f"original screens: {len(record['selected'])} of {len(record.get('screens') or [])} screens "
+                    f"on {export_result.get('page_count')} pages (revision {reflow['revision']})")
+    return JobReviewExportResponse(
+        images=[str(p) for p in export_result.get("images", [])],
+        pdf=str(export_result.get("pdf")) if export_result.get("pdf") else None,
+        output_dir=str(target),
+        kept_count=len(record["selected"]),
+        revision=reflow["revision"],
     )
 
 
