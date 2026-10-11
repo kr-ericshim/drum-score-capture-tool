@@ -11,11 +11,10 @@
 
 ## 현재 상태
 
-- clean reflow: 브랜치 `feature/clean-reflow`, 코드 기준 rc2 freeze `06d15c0`. 빌드, 수치, 알려진 결함은 [FREEZE_RC2.md](FREEZE_RC2.md)에 있다.
+- clean reflow: 브랜치 `feature/clean-reflow`. reflow 코드는 rc2 freeze `06d15c0`에서 바뀌지 않았다(그 뒤로는 fallback과 문서만 바뀜). 빌드, 수치, 알려진 결함은 [FREEZE_RC2.md](FREEZE_RC2.md)에 있다.
   - 지원: page-turn/줄 전환 화면, jump view. 거부(`UNSUPPORTED_LAYOUT`): 가로 스크롤, 세로 스크롤, 라이브 오버레이.
   - 17개 회귀 영상 기준 usable 13/17.
-- **원본 화면 fallback: 구현 완료, 커밋함(push 안 함, `feature/clean-reflow`에 아직 안 합침).**
-  - worktree `../score_capture_os2`, 브랜치 `feature/original-screens-simple`(`3a293b7`에서 시작, 이 문서가 들어 있는 커밋).
+- **원본 화면 fallback: 구현 완료, `feature/clean-reflow`에 합침(`9d73aa9`, push 안 함).**
   - 기준 문서는 [ORIGINAL_SCREENS_DESIGN.md](ORIGINAL_SCREENS_DESIGN.md)(2차 확정판) 하나다. 같은 날의 1차 단순판(페이지 넘김과 스크롤까지 대상, PDF에 번호와 시간)은 대체되었다.
   - 백엔드: `backend/app/pipeline/original_screens.py`, `main._review_export_original_screens`. 요청은 `JobReviewExportRequest.output_model="original_screens_v1"`이다.
   - 렌더러:
@@ -35,7 +34,7 @@
 
 ## 다음 할 일 (순서대로)
 
-1. **fallback 마무리**: `feature/clean-reflow`에 합칠지 사용자에게 묻는다.
+1. **fallback 마무리**:
    - 패키지 앱 smoke(`npm --prefix desktop run pack:release` 후 실행)에서 버튼이 보이고 PDF가 나오는지 한 번 본다.
 2. **holdout 준비**: [FREEZE_RC2.md](FREEZE_RC2.md) "Next holdout protocol"을 따른다.
    - 지원 8개(page-turn/줄 전환 4, jump 4), 거부 테스트 3개(라이브 오버레이, 악보 없음, 세로 스크롤 Shorts).
@@ -82,7 +81,7 @@ npm --prefix desktop run pack:release
 
 ## 주의할 점
 
-- worktree에는 `backend/.venv`와 `desktop/node_modules`가 없다.
+- 새 worktree에는 `backend/.venv`와 `desktop/node_modules`가 없다.
   - Python은 메인 저장소의 `backend/.venv/bin/python`을 쓴다.
   - node_modules는 확인할 때만 심볼릭 링크를 만들고, 끝나면 지운다.
 - dev Electron을 띄울 때는 `DRUMSHEET_PYTHON_BIN`과 `DRUMSHEET_JOBS_DIR`(scratch)을 지정한다.
