@@ -51,8 +51,8 @@ Rules implemented here:
   kept as ``continuity_candidates`` (separate displays; the assembly offers
   them as "looks similar" suggestions) so identical-looking rows are never
   merged on appearance alone.
-* Layout is classified per interval: bottom_bar, page, vertical_scroll,
-  horizontal_scroll (unsupported) or non_score.
+* Layout is classified per interval: bottom_bar, page, vertical_scroll
+  (unsupported), horizontal_scroll (unsupported) or non_score.
 
 No location merging happens here (see score_assembly.py).
 """
@@ -70,7 +70,10 @@ from app.pipeline import minority_content as mc
 from app.pipeline import page_diff
 from app.pipeline import system_detect
 
-TRACKING_VERSION = "system_tracking-1"
+TRACKING_VERSION = "system_tracking-2"  # 2: vertical scroll is unsupported (refused like horizontal scroll)
+
+# layouts the tracker labels but the reflow refuses (reflow_pipeline.layout_gate)
+UNSUPPORTED_LAYOUTS = {"horizontal_scroll": "UNSUPPORTED_HORIZONTAL_SCROLL", "vertical_scroll": "UNSUPPORTED_VERTICAL_SCROLL"}
 
 REGISTRATION_TOL_GAPS = 0.5
 CONFIRM_MIN_OBS = 3
@@ -812,7 +815,9 @@ def classify_layout(manifest: Dict[str, Any], episodes: List[Dict[str, Any]], lo
       >= 2 content changes are horizontal translations and they make up >= 50%
       of all content changes (jump scrolling).
     * vertical_scroll: >= 3 vertical moves of >= 0.5 gap in the window with
-      content overlap (alignment found) -> continuous vertical scroll.
+      content overlap (alignment found) -> continuous vertical scroll -> unsupported
+      (2026-10-11: a multi-line block scrolling up re-captures every line it moves;
+      refused until it has its own path).
     * page: >= 3 rows, or 2 rows whose episodes change together.
     * bottom_bar: 1-2 rows otherwise. non_score: no rows.
     """
@@ -876,9 +881,9 @@ def classify_layout(manifest: Dict[str, Any], episodes: List[Dict[str, Any]], lo
                 merged.append(iv)
         intervals = merged
     for iv in intervals:
-        iv["supported"] = iv["kind"] not in ("horizontal_scroll",)
-        if iv["kind"] == "horizontal_scroll":
-            iv["issue"] = "UNSUPPORTED_HORIZONTAL_SCROLL"
+        iv["supported"] = iv["kind"] not in UNSUPPORTED_LAYOUTS
+        if iv["kind"] in UNSUPPORTED_LAYOUTS:
+            iv["issue"] = UNSUPPORTED_LAYOUTS[iv["kind"]]
     return intervals
 
 

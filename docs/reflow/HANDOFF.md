@@ -2,6 +2,43 @@
 
 State of the clean-reflow work for a new session. Read this first, then [DECISIONS.md](DECISIONS.md).
 
+## Start here (2026-10-11 midday: vertical scroll refused; short plan)
+
+**Vertical scroll probe.** The user's example of the common portrait format is `5pe5bLexYN4` (Joshua Pang Drums Shorts,
+1080×1920, 60 fps, 28 s). It has live video on the top half and a 5-line block on the bottom half that moves up one line
+every 2–3 s with a short animation. Files: `~/Documents/drum-score-corpus/probe_vscroll/` (dev probe, not a holdout).
+- Packaged backend, auto ROI: all `vertical_scroll`. It took 188 s and produced 3 pages with about 45 bars for an 18-bar
+  piece: bars printed 2–3 times, plus staff fragments.
+- None of the 17 regression videos has a vertical_scroll interval, so this path was never tested.
+- **User decision 2026-10-11: vertical scroll is unsupported in this version.**
+  - `system_tracking-2`: `UNSUPPORTED_VERTICAL_SCROLL`, refused by `layout_gate` like horizontal scroll.
+  - The refusal message names both kinds.
+  - New test `test_vertical_scroll_is_unsupported`. `test_system_tracking` 13 OK, renderer 355 OK.
+- **Not finished when the user stopped the session:**
+  - The full backend suite and the 17-video regression (`eval_v1/vscroll_refuse_dashboard`, partial) were cut off.
+  - No packaged rebuild with this change.
+  - Run all three first.
+
+**Short plan, in order:**
+1. **Verify the refusal commit.**
+   - Full backend suite.
+   - Regression `rc2check_spec.json` → every page equal to `prefreeze_dashboard` (no video has vertical scroll).
+   - `pack:release` + both smokes.
+   - Packaged probe on `5pe5bLexYN4` must stop with `UNSUPPORTED_LAYOUT` (script `scratchpad/probe_packaged.py`;
+     copy it into `reflow/tools/` if the scratchpad is gone).
+   - Then update the FREEZE_RC2 build hash and scope.
+2. **Holdout scope and quotas** (FREEZE_RC2 "Next holdout protocol"; drop the 2 scroll slots).
+   - 8 supported: 4 page-turn / line-switch + 4 jump view.
+   - Refusal tests: 1 live overlay, 1 no score, 1 vertical-scroll Shorts.
+   - Channels: ≤ 2 per channel, ≥ 4 channels, ≥ 1 not in the dev set.
+   - We know only one jump-view channel (鼓譜 Drumtabs). Find at least one more before sealing, or lower the jump quota
+     to 2 and say so.
+3. **Candidate lists → seeded shuffle → 15 s at 10/50/90 % → seal** (manifest `eval_v2`, hashes). Downloads need the user's
+   OK (yt-dlp, about 1–2 GB).
+4. **Holdout run** in the packaged app, then grading in two passes per PRO_REPLY_RC2.
+5. **After the holdout, first feature: vertical-scroll support** (the user says it is the usual portrait format). Track the
+   block by vertical registration like the jump view, keep each line once, and refuse when the registration is unsure.
+
 ## Start here (2026-10-10 near midnight: "a measure repeats or is missing" now rebuilds the join)
 
 Open item 1 of the block below is built (committed with the small review fixes listed there). Design and the

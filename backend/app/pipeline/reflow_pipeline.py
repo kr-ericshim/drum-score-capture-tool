@@ -52,12 +52,12 @@ PIPELINE_VERSION = "reflow_pipeline-1"
 
 
 class UnsupportedLayoutError(RuntimeError):
-    """The source shows a layout this slice does not reflow (horizontal scroll)."""
+    """The source shows a layout this slice does not reflow (horizontal or vertical scroll)."""
 
     def __init__(self, intervals: List[Dict[str, Any]]):
         self.intervals = intervals
-        spans = ", ".join(f"{iv['start']:.1f}-{iv['end']:.1f}s" for iv in intervals)
-        super().__init__(f"horizontal-scroll score is not supported ({spans})")
+        spans = ", ".join(f"{iv.get('kind', 'unsupported')} {iv['start']:.1f}-{iv['end']:.1f}s" for iv in intervals)
+        super().__init__(f"scrolling score is not supported ({spans})")
 
 
 class NoSystemsError(RuntimeError):
@@ -504,7 +504,7 @@ def source_review_reasons(source_cls: Dict[str, Any], systems: Sequence[Dict[str
 
 
 def layout_gate(tracking: Dict[str, Any], jump: Optional[Dict[str, Any]]) -> None:
-    """Without a jump-view run, any unsupported tracker interval (horizontal scroll) refuses the
+    """Without a jump-view run, any unsupported tracker interval (horizontal or vertical scroll) refuses the
     job (``UnsupportedLayoutError``), before any occurrence or strip work."""
     runs = (jump or {}).get("runs") or []
     if not runs:

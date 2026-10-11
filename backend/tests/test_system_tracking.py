@@ -4,6 +4,7 @@ import unittest
 
 import numpy as np
 
+from app.pipeline import reflow_pipeline
 from app.pipeline import system_tracking as st
 from reflow_fixture import STEP, build, frame, loader, page, show, strip
 
@@ -133,6 +134,18 @@ class LayoutTest(unittest.TestCase):
         hs = [iv for iv in out["layout_intervals"] if iv["kind"] == "horizontal_scroll"][0]
         self.assertFalse(hs["supported"])
         self.assertEqual(hs["issue"], "UNSUPPORTED_HORIZONTAL_SCROLL")
+
+    def test_vertical_scroll_is_unsupported(self):
+        # a multi-line block that moves up by a line every 2 s (portrait shorts): refused like horizontal scroll
+        feats = [{"t": 0.5 * i, "rows": 5, "gap": 10.0, "h": 0.0, "v": 40.0 if i % 4 == 0 else 0.0, "hx": None,
+                  "changed": i % 4 == 0} for i in range(60)]
+        out = st.classify_layout({"observations": []}, [], lambda _o: None, features=feats)
+        self.assertEqual([iv["kind"] for iv in out], ["vertical_scroll"])
+        self.assertFalse(out[0]["supported"])
+        self.assertEqual(out[0]["issue"], "UNSUPPORTED_VERTICAL_SCROLL")
+        with self.assertRaises(reflow_pipeline.UnsupportedLayoutError) as ctx:
+            reflow_pipeline.layout_gate({"layout_intervals": out}, None)
+        self.assertIn("vertical_scroll", str(ctx.exception))
 
     def test_clean_content_removes_translucent_background(self):
         a = strip(4)

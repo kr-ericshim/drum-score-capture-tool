@@ -109,8 +109,10 @@ Was 15/17 before Pro #6. Single reviewer (the lead), not blind.
 ## Next holdout protocol (fixed after Pro checkpoint #6, see [PRO_REPLY_RC2.md](PRO_REPLY_RC2.md))
 
 1. **Scope, declared before selection.** Supported: page-turn views, jump views, and the scroll kinds this build supports
-   (vertical scroll only; continuous horizontal scroll is classed `UNSUPPORTED_HORIZONTAL_SCROLL` and is not picked as a
-   scroll input). Mac arm64 only, packaged app.
+   No scroll kinds: continuous horizontal scroll (`UNSUPPORTED_HORIZONTAL_SCROLL`) and, from 2026-10-11, vertical scroll
+   (`UNSUPPORTED_VERTICAL_SCROLL`, user decision after the `5pe5bLexYN4` probe) are refused. The 2 scroll slots in item 2
+   become page-turn / jump slots, and a vertical-scroll Shorts joins the refusal tests (see HANDOFF short plan).
+   Mac arm64 only, packaged app.
 2. **Set: 8 supported + 2 refusal tests, kept apart.** Supported: 3 page-turn, 2 scroll, 3 jump; at most 2 per channel,
    at least 4 channels, at least one channel or display style not in the dev set. Refusal tests: 1 live-overlay video,
    1 video without a score.
