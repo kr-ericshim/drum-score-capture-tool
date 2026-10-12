@@ -61,11 +61,11 @@ import numpy as np
 
 import cv2
 
-from app.pipeline import page_diff, system_detect, reflow_ledger as rl
+from app.pipeline import minority_content as mc, page_diff, system_detect, reflow_ledger as rl
 from app.pipeline.system_tracking import (WINDOW_ABOVE_GAPS, clean_content, compare_content, comparable_windows, region_window,
                                           window_extent)
 
-OCCURRENCES_VERSION = "reflow_occurrences-2"  # 2: whole-span identity for split joins
+OCCURRENCES_VERSION = "reflow_occurrences-5"  # 5: pale boxes masked again (-4 compared ink under them); clear repeats only on certain numbers
 MIN_OCCURRENCE_SEC = 1.5
 VIEW_CLUSTER_SEC = 1.5
 RESET_JOIN_SEC = 1.0
@@ -83,6 +83,9 @@ NUMBER_AREA_LEFT_GAPS = 4.0    # measure-number area starts this far left of the
 NUMBER_AREA_RIGHT_GAPS = 8.0   # ... and reaches this far into the staff (above the top line)
 NUMBER_AREA_MIN_AREA_GAPS = 0.02
 NUMBER_AREA_MIN_PX = 4
+# Positive-change (span/gap, ink/gap^2), with WRITTEN_MIN_AREA_PX floor:
+# DEQ's 42 px, 11x16 digit passes; 4-6 px, 5x9/6x6 residue fails.
+NUMBER_CHANGE_MIN_PIECE_GAPS = (0.5, 0.04)
 CURSOR_MIN_HEIGHT_GAPS = 2.5   # a cursor mark spans most of the staff
 CURSOR_X_TOL_GAPS = 1.0        # ... and lies this close to the playhead reading
 CURSOR_MAX_WIDTH_GAPS = 0.5    # ... and is narrow (a notehead is wider)
@@ -97,7 +100,7 @@ WRITTEN_MIN_AREA_PX = 8
 # comparison is trusted only where the paper is clearly lighter than the written-ink threshold
 # and the number area is not hidden under a colored overlay; otherwise the split is kept.
 RAW_PAPER_MIN = WRITTEN_INK_THRESHOLD + 20
-NUMBER_AREA_MAX_MASKED = 0.25  # share of number-area columns under an overlay that still allows a verdict
+NUMBER_AREA_MAX_MASKED = 0.25  # share of glyph columns under an overlay that still allows a verdict
 NUMBER_AREA_SHIFT_TOL_PX = 1   # registration tolerance around the whole-window shift
 
 ImageLoader = Callable[[Dict[str, Any]], np.ndarray]
@@ -221,17 +224,47 @@ def _ink_split(win: np.ndarray, gap: float) -> Tuple[np.ndarray, np.ndarray]:
     return (ink & (1 - lines)).astype(bool), lines.astype(bool)
 
 
-def _overlay_columns_of(win: np.ndarray) -> np.ndarray:
-    """Columns covered by a colored playback overlay in a cleaned window (ink that is
-    clearly colored); those columns cannot be judged and are skipped."""
+def _overlay_columns_of(win: np.ndarray, gap: Optional[float] = None) -> np.ndarray:
+    """Colored overlay columns, including filled pale boxes tinted relative to paper."""
     if win.ndim != 3:
         return np.zeros(win.shape[1], bool)
     hsv = cv2.cvtColor(win, cv2.COLOR_BGR2HSV)
     colored = (hsv[..., 1] > 80) & (hsv[..., 2] > 60)
     cols = colored.sum(axis=0) >= 3
+    if gap is not None:
+        for x, _y, width, _height in page_diff._tinted_highlight_boxes(hsv, gap=gap):
+            cols[x:x + width] = True
     if cols.any():
         cols = cv2.dilate(cols.astype(np.uint8)[None, :], np.ones((1, 7), np.uint8))[0] > 0
     return cols
+
+
+def _written_images(a: np.ndarray, b: np.ndarray, gap: float, ink_threshold: int, *,
+                    mask_overlays: bool = True) -> Tuple[np.ndarray, np.ndarray]:
+    """Comparison copies with video ink and either side's overlay columns painted white.
+
+    Judge texture before masking staff/overlay pixels, using the same raw-background
+    component evidence as tracking; a real neutral note on paper is still judged.
+
+    Pale highlight boxes are masked column-wide (reflow_occurrences-5). Comparing the ink under
+    them (-4) kept a cursor-highlighted view of the same display apart from the plain view and
+    printed it twice on real videos (C4l line 27, 6MPX line 14). Known limit: two displays that
+    differ only under the highlight columns of both compared views are judged the same.
+    """
+    w = max(a.shape[1], b.shape[1])
+    cols = np.zeros(w, bool)
+    if mask_overlays:
+        cols = _fit(_overlay_columns_of(a, gap)[None, :], (1, w))[0] | _fit(_overlay_columns_of(b, gap)[None, :], (1, w))[0]
+    out = []
+    for im in (a, b):
+        gray = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY) if im.ndim == 3 else im
+        ink = gray < ink_threshold
+        on_paper, _removed = mc.drop_on_video_background(ink, mc.background_texture(im, gap))
+        copy = im.copy()
+        copy[ink & ~on_paper] = 255
+        copy[:, cols[:im.shape[1]]] = 255
+        out.append(copy)
+    return out[0], out[1]
 
 
 def _cover_mask(win: np.ndarray, gap: float) -> np.ndarray:
@@ -415,23 +448,19 @@ def same_written_display(a: Tuple, b: Tuple) -> Tuple[bool, Dict[str, Any]]:
     """Two windows (``_window_of`` tuples) show the same written display: every ink element
     beyond the staff lines - notation, measure numbers, text - is drawn by both
     (``_same_whole_display``). Staff-line rows are masked (their rendering drift is never
-    content) and so are the columns under a colored playback overlay in either window."""
+    content), as are video-background ink and columns under solid or pale colored overlays."""
     wa, ea, ga, _ra = a
     wb, eb, gb, _rb = b
     if abs(ga - gb) > DUPLICATE_GAP_TOL * max(ga, gb):
         return False, {"reason": "staff_size_differs"}
     x, y = comparable_windows(wa, ea, wb, eb, ga)
     h = min(x.shape[0], y.shape[0])
-    x, y = x[:h].copy(), y[:h].copy()
-    w = max(x.shape[1], y.shape[1])
-    # the overlay columns of either window are blanked in both: a moving highlight is not content
-    cols = _fit(_overlay_columns_of(x)[None, :], (1, w))[0] | _fit(_overlay_columns_of(y)[None, :], (1, w))[0]
+    x, y = _written_images(x[:h], y[:h], ga, WRITTEN_INK_THRESHOLD)
     rows = _fit(_window_staff_rows(a)[:, None], (h, 1))[:, 0] | _fit(_window_staff_rows(b)[:, None], (h, 1))[:, 0]
     for im in (x, y):
         im[rows] = 255
-        im[:, cols[:im.shape[1]]] = 255
     same, info = _same_whole_display(x, y, ga, ink_threshold=WRITTEN_INK_THRESHOLD, min_area_gaps=WRITTEN_MIN_AREA_GAPS,
-                                     min_area_px=WRITTEN_MIN_AREA_PX)
+                                     min_area_px=WRITTEN_MIN_AREA_PX, prepared=True)
     if not same:
         return same, info
     # every ink component (a digit of a measure number, a radius-2 dot) drawn by the other window;
@@ -477,7 +506,9 @@ def _staff_start_x(wt: Tuple) -> int:
     return int(cols[0]) if cols.size else 0
 
 
-def measure_number_area_differs(a: Tuple, b: Tuple, shift: Sequence[float] = (0.0, 0.0)) -> Optional[Dict[str, Any]]:
+def measure_number_area_differs(a: Tuple, b: Tuple, shift: Sequence[float] = (0.0, 0.0), *,
+                               require_uncovered_glyphs: bool = False,
+                               require_digit_scale: bool = False) -> Optional[Dict[str, Any]]:
     """Ink in the measure-number area of two windows that only one draws, or no confident verdict.
 
     ``a`` / ``b``: raw polarity-normalized windows (``_raw_window_of``; a cleaned window has lost
@@ -490,15 +521,24 @@ def measure_number_area_differs(a: Tuple, b: Tuple, shift: Sequence[float] = (0.
     is used: staff drift and re-rendering move a number by a pixel, a changed digit stays).
     Staff-line rows and colored overlay columns are masked.
 
-    Returns ``None`` only when the areas agree with confidence. Evidence of a difference has
+    With ``require_digit_scale``, sub-digit residue in the best comparison, or a difference
+    without identifier glyphs in both views, returns ``None`` for split/notice decisions. The
+    default remains the strict join veto.
+    Otherwise returns ``None`` only when the areas agree with confidence. Evidence of a difference has
     reason ``measure_number_area_differs``; ``number_area_uncertain`` when the area cannot be
-    compared (paper not clearly lighter than the ink threshold, or the area mostly under a
+    compared (paper not clearly lighter than the ink threshold, or the glyph columns mostly under a
     colored overlay) - never a reason to join."""
     wa, ea, ga, _ra = a
     wb, eb, gb, _rb = b
     x, y = comparable_windows(wa, ea, wb, eb, ga)
     h, w = min(x.shape[0], y.shape[0]), max(x.shape[1], y.shape[1])
     cols = _fit(_overlay_columns_of(x)[None, :], (1, w))[0] | _fit(_overlay_columns_of(y)[None, :], (1, w))[0]
+    identifier_overlays = cols.copy()
+    if require_uncovered_glyphs:
+        for im in (x, y):
+            if im.ndim == 3:
+                for bx, _by, bw, _bh in page_diff._tinted_highlight_boxes(cv2.cvtColor(im, cv2.COLOR_BGR2HSV), gap=ga):
+                    identifier_overlays[bx:bx + bw] = True
     rows = _fit(_window_staff_rows(a)[:, None], (h, 1))[:, 0] | _fit(_window_staff_rows(b)[:, None], (h, 1))[:, 0]
     top = int(round(WINDOW_ABOVE_GAPS * ga))      # the top staff line row of the window
     x0 = min(_staff_start_x(a), _staff_start_x(b))
@@ -517,8 +557,42 @@ def measure_number_area_differs(a: Tuple, b: Tuple, shift: Sequence[float] = (0.
         gg = np.full((h, w), 255, np.uint8)
         gg[:, :g.shape[1]] = g[:h, :w]
         grays.append(gg)
+    number_present = []
     if xr > xl:
-        masked = float(cols[xl:xr].mean())
+        # A nearby playback box need not hide the printed identifier. Judge
+        # coverage on either view's actual glyph columns, with half-gap margin;
+        # an empty number area retains the search-area uncertainty rule.
+        glyph_cols = np.zeros(w, bool)
+        for im, gg in zip((x, y), grays):
+            glyph_ink = gg < WRITTEN_INK_THRESHOLD
+            _n, labels, stats, _centres = cv2.connectedComponentsWithStats(glyph_ink.astype(np.uint8), connectivity=8)
+            outside = np.union1d(np.unique(labels[glyph_ink & (~area | rows[:, None])]), labels[0])
+            # Isolated note dots/edge residue are not printed digit glyphs.
+            # If no glyph remains, coverage falls back to the old search area.
+            small = np.flatnonzero(stats[:, cv2.CC_STAT_HEIGHT] < max(2, int(np.ceil(0.5 * ga))))
+            outside = np.union1d(outside, small)
+            if im.ndim == 3:
+                hsv = cv2.cvtColor(im, cv2.COLOR_BGR2HSV)
+                # A bright colored box is background, not an identifier glyph;
+                # dark strokes beneath a translucent tint still count as ink.
+                colored_paper = (hsv[..., 1] > 80) & (hsv[..., 2] >= WRITTEN_INK_THRESHOLD)
+                glyph_ink[:, :im.shape[1]] &= ~colored_paper[:h, :w]
+            # Stems/beams that merely pass through the search area are notation,
+            # not identifier glyphs. This affects coverage only, never the ink
+            # compared below. All area ink is still checked for differences.
+            glyph = (glyph_ink & area & ~np.isin(labels, outside)).any(axis=0)
+            number_present.append(bool(glyph.any()))
+            glyph_cols |= glyph
+        if glyph_cols.any():
+            radius = max(1, int(round(0.5 * ga)))
+            glyph_cols = cv2.dilate(glyph_cols.astype(np.uint8)[None, :],
+                                   np.ones((1, 2 * radius + 1), np.uint8))[0] > 0
+            glyph_cols &= area.any(axis=0)
+            if require_uncovered_glyphs and identifier_overlays[glyph_cols].any():
+                return {"reason": "number_area_uncertain", "why": "overlay_covers_number_glyphs"}
+            masked = float(cols[glyph_cols].mean())
+        else:
+            masked = float(cols[xl:xr].mean())
         if masked > NUMBER_AREA_MAX_MASKED:
             return {"reason": "number_area_uncertain", "why": "overlay_covers_number_area", "masked_share": round(masked, 3)}
     judged = area & ~rows[:, None] & ~cols[None, :]
@@ -539,6 +613,7 @@ def measure_number_area_differs(a: Tuple, b: Tuple, shift: Sequence[float] = (0.
     r = max(1, int(round(0.15 * ga)))
     min_area = max(NUMBER_AREA_MIN_PX, int(round(NUMBER_AREA_MIN_AREA_GAPS * ga * ga)))
     best: Optional[Dict[str, Any]] = None
+    best_digit_scale = False
     t = NUMBER_AREA_SHIFT_TOL_PX
     for dy in range(by - t, by + t + 1):
         for dx in range(bx - t, bx + t + 1):
@@ -561,8 +636,23 @@ def measure_number_area_differs(a: Tuple, b: Tuple, shift: Sequence[float] = (0.
                 best = {"reason": "measure_number_area_differs", "pieces": len(big), "px": px,
                         "only_a_px": int((sel & (only_a > 0)).sum()), "only_b_px": int((sel & (only_b > 0)).sum()),
                         "box": [int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1], "staff_start_x": x0,
-                        "shift": [dx, dy]}
-    return best
+                        "shift": [dx, dy], "number_present": number_present}
+                if require_digit_scale:
+                    span_gaps, area_gaps = NUMBER_CHANGE_MIN_PIECE_GAPS
+                    best_digit_scale = False
+                    for piece in big:
+                        if sizes[piece - 1] < max(WRITTEN_MIN_AREA_PX, area_gaps * ga * ga):
+                            continue
+                        py, pxs = np.nonzero((lab == piece) & (residue > 0))
+                        if max(int(pxs.max() - pxs.min()) + 1, int(py.max() - py.min()) + 1) >= span_gaps * ga:
+                            best_digit_scale = True
+                            break
+    if require_digit_scale and best is not None and number_present != [True, True]:
+        # a changed identifier needs one in both views: a difference where neither or only one
+        # view prints a number is notation or a hand-over frame (Q8: 1-10k px at x 120-190 with
+        # no number on either side flagged ordinary 9 s displays), not a measure-number step
+        return None
+    return best if not require_digit_scale or best_digit_scale else None
 
 
 def _playhead_px(wt: Tuple, frac: Optional[float]) -> Optional[float]:
@@ -606,10 +696,6 @@ def differs_only_by_cursor(info: Dict[str, Any], a: Tuple, b: Tuple, xa: Optiona
     return bool(span) and all((hi - lo) >= CURSOR_MIN_HEIGHT_GAPS * gap for lo, hi in span.values())
 
 
-# listed like a minority-content alternate ("other moment"), described as another state of its system
-CONTENT_STEP_ALTERNATE_ISSUES = ["MINORITY_ALTERNATE", "CONTENT_STEP_STATE"]
-
-
 def _family_of(c: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """The content-step family (system_tracking) of a candidate: its id and the best score of its parts."""
     if c.get("family"):
@@ -619,30 +705,6 @@ def _family_of(c: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return None
     fid = fams[0]["id"]
     return {"id": fid, "score": max(f["score"] for f in fams if f["id"] == fid)}
-
-
-def content_step_alternates(occ: Sequence[Dict[str, Any]], listed: Sequence[Dict[str, Any]]) -> Dict[str, str]:
-    """Candidates that are another state of a placed display split at content steps -> the root of
-    the placed state. Per family, the placed state is the kept display (long enough to place) that
-    shows the most of the steps' ink (``score``: the steps at which it is the state with the ink, so
-    a mark added for good places the later state and one removed for good the earlier); a tie goes
-    to the later state. Every other kept or listed state of the family is its alternate. A family
-    with no kept display is left alone (its states stay listed short displays)."""
-    fam: Dict[str, List[Tuple[Dict[str, Any], bool, int]]] = {}
-    for c, kept in [(c, True) for c in occ] + [(c, False) for c in listed]:
-        f = _family_of(c)
-        if f:
-            fam.setdefault(f["id"], []).append((c, kept, f["score"]))
-    out: Dict[str, str] = {}
-    for parts in fam.values():
-        kept = [(c, sc) for c, k, sc in parts if k]
-        if len(parts) < 2 or not kept:
-            continue
-        primary = max(kept, key=lambda x: (x[1], x[0]["t_start"]))[0]
-        for c, _k, _sc in parts:
-            if c["root"] != primary["root"]:
-                out[c["root"]] = primary["root"]
-    return out
 
 
 def build_occurrences(
@@ -1070,21 +1132,10 @@ def build_occurrences(
             f["hiding_unproven"] = not (f["first"] or f["terminal"])
             listed.append(f)
 
-    # 4b. parts of one display split at content steps (system_tracking content_family) are one
-    #     written system in different states: one is placed, the others are listed unchecked
-    #     right after it as alternates ("other moments"), never as a second placed system.
-    alt_of = content_step_alternates(occ, listed)
-    # the placed state is ordered where its display was first shown (its earliest state), so a
-    # later state stays above the rows of its page view that appeared with the earlier one
-    for c in occ + listed:
-        p = alt_of.get(c["root"])
-        if p is None:
-            continue
-        prim = next(x for x in occ + listed if x["root"] == p)
-        prim["order_t"] = min(prim["order_t"], c["order_t"])
-
+    # 4b. A content family is only a diagnostic hint, never evidence of sameness.
+    # Every kept/listed part follows the ordinary system path and display order.
     # 5. display order: rows that appear together (a page view) top to bottom
-    placed = [(c, True) for c in occ if c["root"] not in alt_of] + [(c, False) for c in listed if c["root"] not in alt_of]
+    placed = [(c, True) for c in occ] + [(c, False) for c in listed]
     placed.sort(key=lambda ci: (ci[0]["order_t"], ci[0]["main"]["staff_top_y"]))
     ordered: List[Tuple[Dict[str, Any], bool]] = []
     cluster: List[Tuple[Dict[str, Any], bool]] = []
@@ -1094,35 +1145,23 @@ def build_occurrences(
             cluster = []
         cluster.append(item)
     ordered.extend(sorted(cluster, key=lambda ci: ci[0]["main"]["staff_top_y"]))
-    alt_cands = sorted([c for c in occ + listed if c["root"] in alt_of], key=lambda c: c["t_start"])
-    with_alts: List[Tuple[Dict[str, Any], bool]] = []
-    for c, inc in ordered:
-        with_alts.append((c, inc))
-        with_alts.extend((a, False) for a in alt_cands if alt_of[a["root"]] == c["root"])
-
     systems = []
     root_to_id: Dict[str, str] = {}
-    n_main = 0
-    n_alt: Dict[str, int] = {}
-    for c, included in with_alts:
+    for index, (c, included) in enumerate(ordered, 1):
         members = c["episodes"]
         shown = [m for m in members if m.get("role") != "preview"] or members
         observations = [{"obs_id": o, "region_id": r, "episode_id": m["id"]}
                         for m in (members if c.get("hiding_unproven") else shown)
                         for o, r in zip(m["observation_ids"], m["region_ids"])]
         layouts = sorted({m.get("layout") or "unknown" for m in members})
-        primary = alt_of.get(c["root"])
-        if primary is None:
-            n_main += 1
-            sid, index = f"sys-{n_main:03d}", n_main
-        else:
-            pid = root_to_id[primary]
-            n_alt[pid] = n_alt.get(pid, 0) + 1
-            sid, index = f"{pid}-alt{n_alt[pid]}", int(pid.split("-")[1])
+        sid = f"sys-{index:03d}"
         root_to_id[c["root"]] = sid
-        issues = list(CONTENT_STEP_ALTERNATE_ISSUES) if primary is not None else ([] if included else ["SHORT_DISPLAY"])
+        issues = [] if included else ["SHORT_DISPLAY"]
         if c.get("hiding_unproven"):
             issues.append("UNCERTAIN_MARK_KEPT")
+        if any(m.get("number_step_unresolved") for m in members):
+            issues.append("NUMBER_STEP_UNRESOLVED")
+        family = _family_of(c)
         systems.append({
             "id": sid,
             "occurrence_root": c["root"],
@@ -1142,9 +1181,39 @@ def build_occurrences(
             "first_display": c["first"],
             "terminal_display": c["terminal"],
             "issues": issues,
-            **({"alternate_of": root_to_id[primary], "alternate_kind": "content_step_state",
-                "content_family": _family_of(c)} if primary is not None else {}),
+            **({"content_family": family} if family else {}),
         })
+    previous_by_family: Dict[str, str] = {}
+    for s in sorted(systems, key=lambda s: s["t_start"]):
+        family = s.get("content_family")
+        if family:
+            previous = previous_by_family.get(family["id"])
+            if previous is not None:
+                s["issues"].append("POSSIBLE_SAME_DISPLAY")
+                s["possible_repeat_of"] = previous
+            previous_by_family[family["id"]] = s["id"]
+    sys_by = {s["id"]: s for s in systems}
+    for s in systems:
+        previous = s.get("possible_repeat_of")
+        if previous is None:
+            continue
+        try:
+            a = max((ep_by[eid] for eid in sys_by[previous]["episode_ids"]), key=lambda e: e["t_end"])
+            b = min((ep_by[eid] for eid in s["episode_ids"]), key=lambda e: e["t_start"])
+            wa, wb = ep_raw_window(a, "last"), ep_raw_window(b, "first")
+            _same, identity = same_written_display(wa, wb)
+            if identity.get("reason") in ("unregistered", "staff_size_differs"):
+                continue
+            number = measure_number_area_differs(wa, wb, identity.get("shift") or (0.0, 0.0),
+                                                require_uncovered_glyphs=True, require_digit_scale=True)
+        except Exception as exc:  # unavailable raw evidence keeps the notice
+            logger(f"possible repeat comparison failed: {s['id']}: {exc}")
+            continue
+        if number is not None and number.get("reason") == "measure_number_area_differs" \
+                and number.get("number_present") == [True, True]:
+            s["issues"] = [issue for issue in s["issues"] if issue != "POSSIBLE_SAME_DISPLAY"]
+            s.pop("possible_repeat_of")
+            s["possible_repeat_cleared"] = {"of": previous, "evidence": number}
     sys_of_ep = {e_id: s_["id"] for s_ in systems for e_id in s_["episode_ids"]}
     continuity_suggestions = []
     for lk in similar_links:
@@ -1251,13 +1320,13 @@ def build_occurrences(
     hidden = [r for r in fragments_out if r["hidden"]]
     exclusions = {
         "short_listed_excluded": [s_["id"] for s_ in systems if not s_["included"] and not s_.get("alternate_of")],
-        "content_step_alternates": [s_["id"] for s_ in systems if s_.get("alternate_of")],
+        "content_step_alternates": [],
         "hidden": len(hidden),
         "hidden_by_reason": {k: sum(1 for r in hidden if k in r["reasons"]) for k in sorted({x for r in hidden for x in r["reasons"]})},
         "rule": "hidden only when all raw member observations' non-staff foreground (including gray; colored pixels masked) is drawn by a kept display "
                 "around it, or there is no non-staff ink at all; first/terminal never hidden",
     }
-    self_checks = _self_checks(with_alts, systems, root_to_id, eps, fragments_out, excluded, all_eps, step,
+    self_checks = _self_checks(ordered, systems, root_to_id, eps, fragments_out, excluded, all_eps, step,
                                ep_raw_window, rep_raw_window, logger)
     self_checks["split_joins"] = {"joined": [j for j in joins if j["basis"] == "content_change_same_written_display"],
                                   "families": family_pairs, "kept_apart": split_checks}
@@ -1450,7 +1519,8 @@ def _self_checks(with_alts, systems, root_to_id, eps, fragments, excluded, all_e
 
 
 def _same_whole_display(a: np.ndarray, b: np.ndarray, gap: float, *, ink_threshold: int = 160,
-                        min_area_gaps: float = 0.15, min_area_px: int = 10) -> Tuple[bool, Dict[str, Any]]:
+                        min_area_gaps: float = 0.15, min_area_px: int = 10,
+                        prepared: bool = False) -> Tuple[bool, Dict[str, Any]]:
     """Two cleaned strips show the same whole display: every ink element -
     notation, measure numbers, lyrics, section boxes, text - is present in both.
 
@@ -1462,6 +1532,10 @@ def _same_whole_display(a: np.ndarray, b: np.ndarray, gap: float, *, ink_thresho
             abs(a.shape[1] - b.shape[1]) > max(4, 0.02 * max(a.shape[1], b.shape[1])):
         return False, {"reason": "size_differs"}
     h, w = max(a.shape[0], b.shape[0]), max(a.shape[1], b.shape[1])
+    if not prepared:
+        # Direct cleaned-strip callers still judge colored notation. Raw-window
+        # overlay masking belongs to same_written_display's preparation above.
+        a, b = _written_images(a, b, gap, ink_threshold, mask_overlays=False)
     ink = []
     for im in (a, b):
         g = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY) if im.ndim == 3 else im

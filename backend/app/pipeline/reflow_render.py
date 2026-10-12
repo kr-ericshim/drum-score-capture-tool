@@ -24,6 +24,9 @@ so the three formats share page count, order, header and placements.
   kept with that line, and page 1 says that some notation is cut off in the source (no count:
   a clipped source strip can span several printed lines). This is independent of
   ``incomplete``; combined notices use the same missing-interval appendix.
+* Possible repeats: header ``possible_repeats`` lists ``{"system_id", "of_system_id"}`` pairs.
+  Each line holding the flagged system gets an unboxed double-dagger notice kept with the line,
+  only when both systems are printed. No page-1 notice is added.
 * Rejected jump joins (SEAM_REJECT_DESIGN "Implemented"): header ``rejected_seams`` lists
   ``{"system_id", "boundary": "start"|"end", "seam_id"}`` for composed systems that start or
   end at a seam the user marked wrong (main._compose_header). Every printed line holding such
@@ -294,7 +297,7 @@ def marker_text(header: Optional[Dict[str, Any]], start: float, end: float) -> s
 
 def layout_markers(header: Optional[Dict[str, Any]],
                    unit_systems: Sequence[Tuple[str, Sequence[str]]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Missing-interval markers for reflow_layout.plan_pages, and the record of every interval.
+    """Local notices and missing-interval markers for reflow_layout.plan_pages, with records.
 
     ``unit_systems``: the units in output order, each with the systems whose content it holds. A
     marker goes between units k-1 and k when every unit before k holds only systems placed before
@@ -303,12 +306,32 @@ def layout_markers(header: Optional[Dict[str, Any]],
     markers: List[Dict[str, Any]] = []
     records: List[Dict[str, Any]] = []
     clipped_ids = {r["system_id"] for r in (header or {}).get("source_clipped", [])}
+    composed_ids = {sid for _uid, systems in unit_systems for sid in systems}
+    repeat_ids = {r["system_id"] for r in (header or {}).get("possible_repeats", [])
+                  if r["system_id"] in composed_ids and r["of_system_id"] in composed_ids}
+    number_step_ids = {r["system_id"] for r in (header or {}).get("number_steps_unresolved", [])}
     for uid, systems in unit_systems:
         clipped = [sid for sid in systems if sid in clipped_ids]
         if clipped:
             text = "† Cut off in source video" if _locale(header, {}) == "en" else "† 원본 영상에서 잘림"
             mark = {"id": f"source-clipped-{uid}", "kind": "source_clipped", "after": uid,
                     "keep_with_previous": True, "h": MARKER_H, "text": text, "system_ids": clipped}
+            markers.append(mark)
+            records.append(dict(mark, position="placed"))
+        repeats = [sid for sid in systems if sid in repeat_ids]
+        if repeats:
+            text = ("‡ May repeat the line above — please check" if _locale(header, {}) == "en"
+                    else "‡ 앞 줄과 같은 화면일 수 있음 — 확인 필요")
+            mark = {"id": f"possible-repeat-{uid}", "kind": "possible_repeat", "after": uid,
+                    "keep_with_previous": True, "h": MARKER_H, "text": text, "system_ids": repeats}
+            markers.append(mark)
+            records.append(dict(mark, position="placed"))
+        number_steps = [sid for sid in systems if sid in number_step_ids]
+        if number_steps:
+            text = ("‡ Displays with different measure numbers may be merged here — please check" if _locale(header, {}) == "en"
+                    else "‡ 이 줄에 마디 번호가 다른 화면이 합쳐졌을 수 있음 — 확인 필요")
+            mark = {"id": f"number-step-{uid}", "kind": "number_step", "after": uid,
+                    "keep_with_previous": True, "h": MARKER_H, "text": text, "system_ids": number_steps}
             markers.append(mark)
             records.append(dict(mark, position="placed"))
     records.extend(rejected_seam_records(header, unit_systems))
@@ -407,7 +430,7 @@ def attach_incomplete(plan: Dict[str, Any], header: Optional[Dict[str, Any]], re
     """Record the incomplete-chart notice and markers in the plan (nothing for a complete chart).
     Rejected-join margin marks in ``records`` are recorded too (``attach_rejected_seams``)."""
     attach_rejected_seams(plan, header, records)
-    records = [r for r in records if r.get("kind") != "rejected_seam"]
+    records = [r for r in records if r.get("kind") not in ("rejected_seam", "possible_repeat", "number_step")]
     notice = incomplete_notice_text(header)
     if notice is None:
         return
@@ -731,17 +754,17 @@ def render_pages(plan: Dict[str, Any], strips: Dict[str, np.ndarray], *, header:
             if p.get("markers"):
                 mfont = _resolve_score_header_font(MARKER_PX)
                 for mk in p["markers"]:
-                    source_mark = mk.get("kind") == "source_clipped"
+                    local_notice = mk.get("kind") in ("source_clipped", "possible_repeat", "number_step")
                     text = _truncate_text_to_width(draw, mk["text"], font=mfont, max_width=mk["w"] - 4 * MARKER_BORDER_PX)
                     bbox = draw.textbbox((0, 0), text, font=mfont)
-                    xy = (mk["x"] + (0 if source_mark else (mk["w"] - (bbox[2] - bbox[0])) // 2) - bbox[0],
+                    xy = (mk["x"] + (0 if local_notice else (mk["w"] - (bbox[2] - bbox[0])) // 2) - bbox[0],
                           mk["y"] + (mk["h"] - (bbox[3] - bbox[1])) // 2 - bbox[1])
                     box = [mk["x"], mk["y"], mk["x"] + mk["w"] - 1, mk["y"] + mk["h"] - 1]
                     def marker(d):
-                        if not source_mark:
+                        if not local_notice:
                             d.rectangle(box, outline=TEXT_COLOR, width=MARKER_BORDER_PX)
                         d.text(xy, text, font=mfont, fill=TEXT_COLOR)
-                    _draw_generated(draw, generated, page_index, "source_clipped_notice" if source_mark else "incomplete_marker",
+                    _draw_generated(draw, generated, page_index, f"{mk['kind']}_notice" if local_notice else "incomplete_marker",
                                     {"text": text, "box": box, "xy": list(xy), "marker": dict(mk)}, marker)
             if p.get("appendix"):
                 body_font = _resolve_score_header_font(NOTICE_PX)

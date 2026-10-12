@@ -2259,7 +2259,7 @@ def verify_pages(ledger: dict[str, Any], pages: Sequence[np.ndarray], *, encodin
                     rows = np.array(origin["staff_rows_local"])
                     if not len(rows) or not len(yy) or np.min(abs(yy[:,None]-rows),axis=1).max()>.6:
                         raise ValueError("generated scaffold template contains non-staff ink")
-            elif kind in ("header","page_number","review_notice","incomplete_marker","source_clipped_notice","section_label"):
+            elif kind in ("header","page_number","review_notice","incomplete_marker","source_clipped_notice","possible_repeat_notice","number_step_notice","section_label"):
                 if not origin.get("generator") or not origin.get("inputs"):
                     raise ValueError("generated text requires generator and inputs")
                 if kind=="section_label":

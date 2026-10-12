@@ -414,7 +414,7 @@ class LedgerV2VerifyTests(unittest.TestCase):
 
     def test_9_generated_kinds_and_section_label_source(self):
         template = paper(8,10); template[2:5,3:6] = 0
-        for kind in ("incomplete_marker","source_clipped_notice","section_label"):
+        for kind in ("incomplete_marker","source_clipped_notice","possible_repeat_notice","number_step_notice","section_label"):
             with self.subTest(kind=kind):
                 ledger = control(); out = dot(); out[43:51,60:70] = template
                 origin = {"kind":kind,"page_index":0,"origin":[60,43],"template":rl.pack_crop(template),"generator":"fixture","inputs":{"source":{"observation_id":"obs-0","roi":[1,2,3,4]}}}

@@ -1896,6 +1896,8 @@ REFLOW_ISSUE_REASONS = (
     ("JUMP_OVERLAP_CONTENT_CONFLICT", "겹치는 화면끼리 내용이 달라 다른 버전을 함께 보관했어요 / Overlapping views disagree; the other version is kept as an alternate"),
     ("LAYOUT_CONFLICT", "페이지보다 커서 지금 크기로는 배치할 수 없습니다 / Does not fit the page at this staff size"),
     ("REPLAY_CANDIDATE", "앞에서 이미 나온 줄과 똑같습니다. D.S./반복으로 다시 연주하는 부분이면 체크를 해제해 빼세요 / Identical to lines shown earlier; if it is a D.S./repeat replay, untick it to leave it out"),
+    ("POSSIBLE_SAME_DISPLAY", "앞 줄과 같은 화면일 수 있어요. 같은 줄이면 하나를 빼세요 / May be the same display as the line before; if it is the same line, untick one"),
+    ("NUMBER_STEP_UNRESOLVED", "이 줄에 마디 번호가 다른 화면이 합쳐졌을 수 있어요. 확인이 필요해요 / Displays with different measure numbers may be merged here. Please check"),
     ("LINE_BELOW_MIN_SIZE", "이 줄은 인쇄하기에 작게 축소되었습니다(오선 간격 {mm} mm) / This line is printed below the readable size (staff gap {mm} mm)"),
     ("FORCED_LINE_BREAK", "줄이 너무 길어 마디선에서 나눴습니다. 마디선을 지나던 선(크레셴도 등)이 다음 줄로 이어집니다 / This line was too long, so it was split at a barline; a line crossing it continues on the next line"),
     ("LEDGER_VERIFICATION_FAILED", "PDF 보존 검증에 실패했어요. 선택을 확인하고 다시 만들어 주세요 / PDF preservation verification failed. Check the selection and rebuild"),
@@ -2165,6 +2167,8 @@ def _compose_header(header: Dict[str, Any], coverage: Optional[Dict[str, Any]],
     None and the interval is named on page 1 only (reflow_render.layout_markers). The stored
     document header is never changed. Source-clipped systems are passed separately as
     ``source_clipped`` so their local marks/summary never manufacture missing intervals.
+    ``possible_repeats`` lists flagged pairs only when both systems are composed, for a local
+    notice kept with each printed line holding the later family part.
     Composed jump systems that start or end at a seam where both views are kept (the seam stayed
     unverified, or the user marked it wrong) are passed as ``rejected_seams`` for the PDF's margin
     marks and note: measures may repeat there."""
@@ -2173,6 +2177,18 @@ def _compose_header(header: Dict[str, Any], coverage: Optional[Dict[str, Any]],
                if "SOURCE_CLIPPED" in (s.get("issues") or []) or s.get("source_clipped")]
     if clipped:
         out["source_clipped"] = clipped
+    composed_ids = {s["id"] for s in composed}
+    possible_repeats = [{"system_id": s["id"], "of_system_id": s["possible_repeat_of"]} for s in composed
+                        if "POSSIBLE_SAME_DISPLAY" in (s.get("issues") or [])
+                        and s.get("possible_repeat_of") in composed_ids]
+    out.pop("possible_repeats", None)
+    if possible_repeats:
+        out["possible_repeats"] = possible_repeats
+    number_steps = [{"system_id": s["id"]} for s in composed
+                    if "NUMBER_STEP_UNRESOLVED" in (s.get("issues") or [])]
+    out.pop("number_steps_unresolved", None)
+    if number_steps:
+        out["number_steps_unresolved"] = number_steps
     rejected = []
     for s in composed:
         info = (s.get("strip") or {}).get("jump") or {}
@@ -2182,7 +2198,8 @@ def _compose_header(header: Dict[str, Any], coverage: Optional[Dict[str, Any]],
     if rejected:
         out["rejected_seams"] = rejected
     if not isinstance(coverage, dict) or coverage.get("status") != "incomplete" or not coverage.get("unresolved"):
-        return out if clipped or rejected else header
+        return out if clipped or rejected or possible_repeats or number_steps or any(
+            key in (header or {}) for key in ("possible_repeats", "number_steps_unresolved")) else header
     tol = MISSING_MARKER_TOLERANCE_SEC
     markers = []
     for start, end in coverage["unresolved"]:

@@ -66,7 +66,7 @@ class NoSystemsError(RuntimeError):
 
 class UnsupportedSourceError(RuntimeError):
     """The score is not on an opaque plate (source_class gate): notation composited over live
-    imagery. The opaque-paper adapter would keep the video in the strips, so the job stops
+    imagery or a translucent plate. The opaque-paper adapter would keep the video in the strips, so the job stops
     with the gate's evidence (``source_class``: {class, evidence, version})."""
 
     code = "UNSUPPORTED_SOURCE"
@@ -233,7 +233,9 @@ def analyse_source(
     workspace.mkdir(parents=True, exist_ok=True)
     source_cls = classify_source_class(video_path, roi, start_sec, end_sec, logger=logger)
     _dump(source_cls, workspace / "source_class.json")
-    if source_cls["class"] == scls.CLASS_LIVE:
+    # a translucent plate shows the video through the notation like composited live imagery: the
+    # opaque-paper adapter cannot tell video from ink there, so it is refused too (Pro #8, bF69 included)
+    if source_cls["class"] == scls.CLASS_LIVE or scls.FLAG_TRANSLUCENT in (source_cls.get("flags") or []):
         raise UnsupportedSourceError(source_cls)
     checkpoint()
     mdir = workspace / "manifest"
@@ -368,8 +370,7 @@ def analyse_source(
             "issues": s["issues"] + rec.get("issues", []) + (["OVERLAY_UNRECOVERED"] if rec["unrecovered_columns"] > 0 else []),
             "strip": {k: v for k, v in rec.items() if k != "path"},
             **({"label": label_by[s["id"]]} if s["id"] in label_by else {}),
-            # another state of the system before it (reflow_occurrences content_step_alternates)
-            **({k: s[k] for k in ("alternate_of", "alternate_kind", "content_family") if k in s} if s.get("alternate_of") else {}),
+            **({k: s[k] for k in ("alternate_of", "alternate_kind", "content_family", "possible_repeat_of", "possible_repeat_cleared") if k in s}),
         })
         # minority content the composite leaves out: each alternate is listed right after its
         # system, unchecked, so it can replace (or join) it in review
@@ -381,8 +382,8 @@ def analyse_source(
             _alternate_ledger_chain(base, chains, entry, ledger=ledger)
             systems.append(entry)
             occ_systems.append(occ_entry)
-    # every alternate of a placed system (content-step states numbered first, then minority
-    # moments) is listed after it in number order: sys-001, sys-001-alt1, sys-001-alt2, ...
+    # Minority moments are listed after their system in number order:
+    # sys-001, sys-001-alt1, sys-001-alt2, ...
     order = _alternates_in_number_order(systems)
     if order != list(range(len(systems))):
         systems = [systems[i] for i in order]
@@ -1803,6 +1804,24 @@ def compose_systems(systems: Sequence[Dict[str, Any]], *, header: Optional[Dict[
                if "SOURCE_CLIPPED" in (s.get("issues") or []) or s.get("source_clipped")]
     if clipped:
         header = dict(header or {}, source_clipped=clipped)
+    composed_systems = [d["system"] for d in decided]
+    composed_ids = {s["id"] for s in composed_systems}
+    possible_repeats = [{"system_id": s["id"], "of_system_id": s["possible_repeat_of"]}
+                        for s in composed_systems
+                        if "POSSIBLE_SAME_DISPLAY" in (s.get("issues") or [])
+                        and s.get("possible_repeat_of") in composed_ids]
+    if possible_repeats or (header or {}).get("possible_repeats"):
+        header = dict(header or {})
+        header.pop("possible_repeats", None)
+        if possible_repeats:
+            header["possible_repeats"] = possible_repeats
+    number_steps = [{"system_id": s["id"]} for s in composed_systems
+                    if "NUMBER_STEP_UNRESOLVED" in (s.get("issues") or [])]
+    if number_steps or (header or {}).get("number_steps_unresolved"):
+        header = dict(header or {})
+        header.pop("number_steps_unresolved", None)
+        if number_steps:
+            header["number_steps_unresolved"] = number_steps
     fallback: Optional[Dict[str, Any]] = None
     if measure_reflow:
         from app.pipeline import reflow_measure as rmeas

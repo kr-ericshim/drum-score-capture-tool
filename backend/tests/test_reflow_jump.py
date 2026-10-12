@@ -8,6 +8,7 @@ observation helpers and tracker (reflow_fixture.build, system_tracking).
 
 from __future__ import annotations
 
+import copy
 import json
 import random
 import tempfile
@@ -115,6 +116,16 @@ class JumpViewTests(unittest.TestCase):
         self.assert_jump_run(res, n_displays=len(self.offsets))
         for s in res["seams"]:
             self.assertGreaterEqual(s["overlap_px"], VIEW_W - JUMP - panel["right"] - 2)
+
+    def test_gate_leaves_out_the_left_panel_on_a_narrow_overlap(self) -> None:
+        """reflow_jump-6: a translucent panel over the start of every display covers most of a
+        narrow overlap; the gate's coarse check leaves the panel out as register_seams does."""
+        w = self.score.shape[1]
+        offsets = list(range(0, w - VIEW_W + 1, 760))  # 240 px overlap, about 100 px of it under the panel
+        res, _t = analyse(jump_frames(self.score, offsets, panel=90))
+        self.assertTrue(res["gate"]["attempt"], res["gate"])
+        self.assertEqual(res["gate"]["reason"], "overlapping_displays", res["gate"])
+        self.assertGreater(res["gate"]["panel_right"]["slot-00"], 0, res["gate"])
 
     def test_eased_two_frame_jump_skips_the_mid_jump_frame(self) -> None:
         res, tracking = analyse(jump_frames(self.score, self.offsets, eased=True))
@@ -280,6 +291,33 @@ class SeamResolutionTests(unittest.TestCase):
                     self.assertIn(k, rec)
                 self.assertNotIn(rj.JUMP_SEAM_UNVERIFIED, rec["issues"])
                 self.assertTrue(rec["jump"]["members"])
+
+    def test_unresolved_number_step_reaches_only_contributing_jump_systems_and_markers(self) -> None:
+        from app import main
+        from app.pipeline import reflow_render as rr
+        manifest, _images = build(jump_frames(self.score, self.offsets))
+        tracking = copy.deepcopy(self.tracking)
+        flagged = self.res["runs"][0]["panorama_chains"][0]["displays"][0]
+        next(e for e in tracking["episodes"] if e["id"] == flagged)["number_step_unresolved"] = True
+        with tempfile.TemporaryDirectory() as td:
+            built = rj.build_jump_systems(self.res, tracking, manifest, Path(td), composites=self.res["_composites"],
+                                          covered=self.res["_covered"])
+        systems = [occ for occ, _rec in built]
+        expected = {s["id"] for s in systems if flagged in s["episode_ids"]}
+        self.assertTrue(expected)
+        self.assertEqual({s["id"] for s in systems if "NUMBER_STEP_UNRESOLVED" in s["issues"]}, expected)
+        for locale in ("ko", "en"):
+            header = main._compose_header({"locale": locale}, None, systems)
+            self.assertEqual({r["system_id"] for r in header["number_steps_unresolved"]}, expected)
+            markers, _records = rr.layout_markers(header, [(s["id"], [s["id"]]) for s in systems])
+            self.assertEqual({m["after"] for m in markers if m["kind"] == "number_step"}, expected)
+        unrelated = copy.deepcopy(self.tracking)
+        extra = dict(unrelated["episodes"][0], id="ep-outside-jump", number_step_unresolved=True)
+        unrelated["episodes"].append(extra)
+        with tempfile.TemporaryDirectory() as td:
+            built = rj.build_jump_systems(self.res, unrelated, manifest, Path(td), composites=self.res["_composites"],
+                                          covered=self.res["_covered"])
+        self.assertFalse(any("NUMBER_STEP_UNRESOLVED" in occ["issues"] for occ, _rec in built))
 
     def test_without_enough_verified_jumps_nothing_is_resolved(self) -> None:
         ev = rj.slot_evidence([], 1000, rj.CONFIG)

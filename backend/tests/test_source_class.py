@@ -102,6 +102,25 @@ class SourceClassTest(unittest.TestCase):
         frames = _frames(lambda i: _compose(_texture(i, 30, 250), _notation(i // 4), (0, 0, 0)))
         self.assertClass(frames, sc.CLASS_LIVE)
 
+    def test_ink_polarity_is_the_one_with_the_larger_contrast(self):
+        """source_class-3: when both polarities find a staff (here a faint light-line staff on a
+        gray strip above a dark-ink score; on a colored plate the paper rows between dark lines
+        do the same), the ink polarity is the one whose ink stands out from its plate."""
+        def make(i):
+            f = np.full((H, W, 3), 250, np.uint8)
+            f[0:60] = 120
+            for k in range(5):
+                cv2.line(f, (X0, 8 + k * 10), (X1, 8 + k * 10), (150, 150, 150), 1)
+            ink = _notation(i // 3)
+            ink[:62] = 0
+            return _compose(f, ink, (25, 25, 25))
+        frame = make(0)
+        gray = sc._to_gray(frame)
+        found = {pol: sc._find_staves(sc._line_rows(ink)[0]) for pol, ink in (("light_ink", gray), ("dark_ink", 255 - gray))}
+        self.assertTrue(found["light_ink"] and found["dark_ink"], found)  # both polarities see a staff
+        self.assertEqual(sc.frame_evidence(frame)["polarity"], "dark_ink")
+        self.assertClass(_frames(make), sc.CLASS_LIGHT_PAPER)
+
     def test_paper_with_moving_cursor_and_highlight_band_stays_paper(self):
         mw = (X1 - X0) / MEASURES
 
@@ -204,6 +223,26 @@ class SourceClassVideoTest(unittest.TestCase):
             self.assertEqual(ctx.exception.code, "UNSUPPORTED_SOURCE")
             self.assertEqual(ctx.exception.source_class["class"], sc.CLASS_LIVE)
             self.assertTrue((Path(tmp) / "ws" / "source_class.json").is_file())
+
+    def test_analyse_source_refuses_a_translucent_plate_before_sampling(self):
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+
+        from app.pipeline import observations as ob
+        from app.pipeline import reflow_pipeline as rp
+
+        # the dark-paper class does not override the translucent flag
+        verdict = {"class": sc.CLASS_DARK_PAPER, "flags": [sc.FLAG_TRANSLUCENT], "evidence": {"reason": "test"},
+                   "version": sc.VERSION}
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(sc, "classify_source", return_value=verdict), \
+                mock.patch.object(ob, "build_manifest", side_effect=AssertionError("must not sample")):
+            with self.assertRaises(rp.UnsupportedSourceError) as ctx:
+                rp.analyse_source(video_path=Path(tmp) / "v.mp4", roi=[[0, 0], [10, 0], [10, 10], [0, 10]],
+                                  workspace=Path(tmp) / "ws")
+            self.assertEqual(ctx.exception.code, "UNSUPPORTED_SOURCE")
+            self.assertEqual(ctx.exception.source_class["flags"], [sc.FLAG_TRANSLUCENT])
 
     def test_analyse_source_continues_when_gate_accepts_or_fails(self):
         import tempfile

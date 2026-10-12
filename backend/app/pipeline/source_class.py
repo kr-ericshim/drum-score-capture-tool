@@ -2,8 +2,8 @@
 
 The clean-reflow adapter assumes the notation sits on an opaque plate ("paper"): a flat light
 page with dark ink, or a flat dark page with light ink (dark-theme score). A dark plate may be
-semi-opaque over video (the video shows through dimly); such plates are conditional,
-with a ``translucent_plate`` flag and ``review_required`` evidence.
+semi-opaque over video (the video shows through dimly); such plates get a ``translucent_plate``
+flag and the job is refused like composited live imagery (reflow_pipeline.analyse_source).
 
 Notation composited over live imagery (white notes drawn straight over the camera picture) is a
 different source class: the "paper" between the staff lines is the video itself, with
@@ -17,7 +17,9 @@ margins outside the score therefore do not count.
 Per sampled frame:
 1. Staff detection in both polarities: rows where a thin-horizontal-line response (vertical
    top-hat) covers a large part of the width, grouped into five evenly spaced lines. The
-   polarity whose staves are found is the ink polarity (dark ink = light paper).
+   polarity whose staves are found is the ink polarity (dark ink = light paper). When both
+   polarities find staves (the paper rows between dark lines are thin light "lines" too), the
+   ink polarity is the one with the larger ink-minus-plate contrast inside its staves.
 2. Background plate inside the staves: a median filter about three staff spaces wide removes the
    ink (a minority of pixels inside a staff). ``C`` = ink level minus plate level.
 3. Evidence, all relative to ``C``:
@@ -53,7 +55,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 
-VERSION = "source_class-2"
+VERSION = "source_class-3"  # -3: both polarities with staves -> the larger ink contrast is the ink
 
 CLASS_LIGHT_PAPER = "opaque_light_paper"
 CLASS_DARK_PAPER = "opaque_dark_paper"
@@ -171,20 +173,39 @@ def _staff_columns(mask: np.ndarray, staff: Tuple[int, int, float]) -> Tuple[int
     return int(np.percentile(cols, 1)), int(np.percentile(cols, 99)) + 1
 
 
+def _ink_contrast(ink: np.ndarray, staves: List[Tuple[int, int, float]], mask: np.ndarray) -> float:
+    """Ink level minus plate level inside ``staves`` for one polarity (0 when too small to judge)."""
+    gap = float(np.median([g for _t, _b, g in staves]))
+    plate = cv2.medianBlur(ink, min(_odd(3.0 * gap), 255))
+    region = np.zeros(ink.shape, dtype=bool)
+    for staff in staves:
+        x0, x1 = _staff_columns(mask, staff)
+        region[staff[0]: staff[1] + 1, x0:x1] = True
+    if region.sum() < 50:
+        return 0.0
+    return float(np.percentile(ink[region], 99.0)) - float(np.median(plate[region]))
+
+
 def frame_evidence(frame: np.ndarray) -> Dict[str, Any]:
     """Staves, ink polarity and plate evidence of one ROI frame (BGR or gray)."""
     gray = _to_gray(frame)
-    best: Optional[Dict[str, Any]] = None
+    cands: List[Dict[str, Any]] = []
     for polarity, ink in (("light_ink", gray), ("dark_ink", 255 - gray)):
         prof, mask = _line_rows(ink)
         staves = _find_staves(prof)
         if not staves:
             continue
         strength = float(np.mean([prof[max(0, t): b + 1].max() for t, b, _g in staves]))
-        if best is None or (len(staves), strength) > (len(best["staves"]), best["strength"]):
-            best = {"polarity": polarity, "ink": ink, "mask": mask, "staves": staves, "strength": strength}
-    if best is None:
+        cands.append({"polarity": polarity, "ink": ink, "mask": mask, "staves": staves, "strength": strength,
+                      "ink_contrast": _ink_contrast(ink, staves, mask)})
+    if not cands:
         return {"score": False}
+    if len(cands) == 2 and cands[0]["ink_contrast"] != cands[1]["ink_contrast"]:
+        # the thin paper rows between dark staff lines are "lines" in the other polarity too;
+        # the ink polarity is the one whose ink stands out from its plate
+        best = max(cands, key=lambda c: c["ink_contrast"])
+    else:
+        best = max(cands, key=lambda c: (len(c["staves"]), c["strength"]))
     ink = best["ink"]
     gap = float(np.median([g for _t, _b, g in best["staves"]]))
     k = min(_odd(3.0 * gap), 255)

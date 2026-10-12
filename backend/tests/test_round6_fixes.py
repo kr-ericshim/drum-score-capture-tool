@@ -1,5 +1,4 @@
-"""Fix round 6: content families end at view transitions, and the round-5 paths that had no
-test (tie rule, alternate tails, short families, mixed alternate numbering, start-edge runs)."""
+"""Content families end at view transitions; every family part follows the ordinary path."""
 
 import json
 import tempfile
@@ -49,8 +48,7 @@ def part(start, n, started_by, family="F", score=0):
 
 
 class FamilyAtViewTransitionTest(unittest.TestCase):
-    """A content family is the states of one continuous display: a view transition ends the
-    display, a playhead reset does not."""
+    """Tracker families stop at view transitions and survive resets; they do not prove sameness."""
 
     def test_rekey_starts_a_new_family_at_each_view_transition(self):
         parts = [part(0, 4, "first_observation"), part(6, 4, "view_transition", score=0),
@@ -62,7 +60,7 @@ class FamilyAtViewTransitionTest(unittest.TestCase):
         self.assertEqual([p.family_score for p in parts], [0, 0, 1, 1, 1, 0])  # scores are kept
         self.assertEqual(log[0]["family"], "F-v1")
 
-    def test_content_step_after_a_view_transition_places_one_system_on_each_side(self):
+    def test_content_step_after_a_view_transition_keeps_each_part_in_normal_order(self):
         tracking, occ, recs, td = pipeline(view_transition_frames())
         self.addCleanup(td.cleanup)
         row0 = [e for e in tracking["episodes"] if e["slot_id"] == "slot-00"]
@@ -73,68 +71,67 @@ class FamilyAtViewTransitionTest(unittest.TestCase):
         self.assertEqual(tracking["content_steps"][0]["family"], row0[2]["content_family"]["id"])
         systems = [s for s in occ["systems"] if s["slot_id"] == "slot-00"]
         placed = [s for s in systems if s["included"]]
-        self.assertEqual(len(placed), 2)
-        before, after = placed
+        self.assertEqual(len(placed), 3)
+        before, after, later = placed
         self.assertLess(before["t_end"], 8 * STEP)          # one placed before the transition ...
         self.assertGreaterEqual(after["t_start"], 10 * STEP)  # ... and one after it
         self.assertEqual(before["episode_ids"], [row0[0]["id"]])
-        self.assertEqual(after["episode_ids"], [row0[2]["id"]])  # the state with the stroke
-        alts = [s for s in systems if s.get("alternate_of")]
-        self.assertEqual([(s["episode_ids"], s["alternate_of"]) for s in alts], [([row0[1]["id"]], after["id"])])
+        self.assertEqual(after["episode_ids"], [row0[1]["id"]])
+        self.assertEqual(later["episode_ids"], [row0[2]["id"]])
+        self.assertEqual(later["possible_repeat_of"], after["id"])
+        self.assertNotIn("possible_repeat_of", after)
+        self.assertFalse(any(s.get("alternate_of") for s in systems))
         # no episode is placed twice
         placed_eps = [e for s in occ["systems"] if s["included"] for e in s["episode_ids"]]
         self.assertEqual(len(placed_eps), len(set(placed_eps)))
-        # the placed later state keeps its place in the page view (above row 1 of the same view)
+        # The first part is above row 1 of that page view; the later part is not pulled forward.
         ids = [s["id"] for s in occ["systems"] if not s.get("alternate_of")]
         row1_after = next(s for s in occ["systems"] if s["slot_id"] == "slot-01" and s["t_start"] >= 2.0)
         self.assertLess(ids.index(after["id"]), ids.index(row1_after["id"]))
+        self.assertGreater(ids.index(later["id"]), ids.index(row1_after["id"]))
 
-    def test_playhead_reset_inside_a_family_still_places_one_part(self):
+    def test_playhead_reset_inside_a_family_uses_normal_occurrence_join(self):
         frames = with_marks(show(strip(5), 0.0, 4.0, seed=1) + show(strip(5), 4.0, 4.0, seed=2), range(24, 32), stroke)
         tracking, occ, recs, td = pipeline(frames)
         self.addCleanup(td.cleanup)
         eps = tracking["episodes"]
         self.assertEqual([e["started_by"] for e in eps], ["first_observation", "playhead_reset", "content_step"])
         self.assertEqual(len({e["content_family"]["id"] for e in eps}), 1)  # the reset keeps the family
-        self.assertEqual(sum(s["included"] for s in occ["systems"]), 1)
-        placed = next(s for s in occ["systems"] if s["included"])
-        self.assertEqual(placed["episode_ids"], [eps[2]["id"]])
-        self.assertEqual([s["alternate_of"] for s in occ["systems"] if not s["included"]], [placed["id"]])
+        self.assertEqual(sum(s["included"] for s in occ["systems"]), 2)
+        first, later = occ["systems"]
+        self.assertEqual(first["episode_ids"], [eps[0]["id"], eps[1]["id"]])
+        self.assertEqual(later["episode_ids"], [eps[2]["id"]])
+        self.assertEqual(later["possible_repeat_of"], first["id"])
 
 
 class Round5PathsTest(unittest.TestCase):
-    def test_tie_places_the_later_state(self):
+    def test_family_scores_do_not_change_inclusion_or_video_order(self):
         # a mark removed for good at 2.5 s and another added for good at 5.5 s: the first and the
-        # last state each show one step's ink (score 1 each); the later one is placed
+        # last part each show one step's ink (score 1 each); all three are placed
         frames = with_marks(with_marks(show(strip(4), 0.0, 8.0, seed=1), range(0, 10), stroke), range(22, 32), second)
         tracking, occ, recs, td = pipeline(frames)
         self.addCleanup(td.cleanup)
         self.assertEqual([e["content_family"]["score"] for e in tracking["episodes"]], [1, 0, 1])
         self.assertEqual([(s["id"], s["included"]) for s in occ["systems"]],
-                         [("sys-001", True), ("sys-001-alt1", False), ("sys-001-alt2", False)])
-        self.assertAlmostEqual(occ["systems"][0]["t_start"], 22 * STEP)
-        self.assertEqual([s["t_start"] for s in occ["systems"][1:]], [0.0, 10 * STEP])
+                         [("sys-001", True), ("sys-002", True), ("sys-003", True)])
+        self.assertEqual([s["t_start"] for s in occ["systems"]], [0.0, 10 * STEP, 22 * STEP])
+        self.assertEqual([s.get("possible_repeat_of") for s in occ["systems"]], [None, "sys-001", "sys-002"])
 
-    def test_tie_rule_unit(self):
-        def cand(root, t, score):
-            return {"root": root, "t_start": t, "episodes": [{"content_family": {"id": "F", "score": score}}]}
-        self.assertEqual(ro.content_step_alternates([cand("a", 0.0, 1), cand("b", 5.0, 1)], []), {"a": "b"})
-        self.assertEqual(ro.content_step_alternates([cand("a", 0.0, 2), cand("b", 5.0, 1)], []), {"b": "a"})
-
-    def test_content_step_alternate_keeps_its_preview_tail(self):
+    def test_content_family_parts_use_normal_preview_tail_handling(self):
         cur, nxt = system_image(7), system_image(8)
         frames = with_marks(preview_frames(cur, nxt, n=32), range(16, 32), stroke) + full_frames(nxt, n=32, t0=8)
         tracking, occ, recs, td = pipeline(frames)
         self.addCleanup(td.cleanup)
         self.assertEqual([(s["id"], s["included"]) for s in occ["systems"]],
-                         [("sys-001", True), ("sys-001-alt1", False), ("sys-002", True)])
-        placed, alt = recs[0], recs[1]
-        self.assertTrue(placed["preview_tail"]["cut"])  # the placed state: verified against sys-002
-        self.assertFalse(alt["preview_tail"]["cut"])
-        self.assertEqual(alt["preview_tail"]["reason"], "alternate_keeps_the_tail")
-        self.assertIn("PREVIEW_TAIL_UNVERIFIED", alt["issues"])
-        self.assertNotIn("uncut", alt)
-        self.assertGreater(alt["size"][0], placed["size"][0] + 200)  # the tail is on the alternate's strip
+                         [("sys-001", True), ("sys-002", True), ("sys-003", True)])
+        first, later = recs[0], recs[1]
+        self.assertTrue(later["preview_tail"]["cut"])
+        self.assertEqual(later["preview_tail"]["destination_system_id"], "sys-003")
+        self.assertFalse(first["preview_tail"]["cut"])
+        self.assertEqual(first["preview_tail"]["checks"][0]["system_id"], "sys-002")
+        self.assertFalse(first["preview_tail"]["checks"][0]["verified"])
+        self.assertIn("PREVIEW_TAIL_UNVERIFIED", first["issues"])
+        self.assertGreater(first["size"][0], later["size"][0] + 200)
 
     def test_family_with_no_part_long_enough_stays_listed_short_displays(self):
         tracking, occ, recs, td = pipeline(with_marks(show(strip(4), 0.0, 2.0, seed=1), range(4, 8), stroke))
@@ -142,7 +139,8 @@ class Round5PathsTest(unittest.TestCase):
         self.assertEqual(len(tracking["content_steps"]), 1)
         self.assertEqual(len({e["content_family"]["id"] for e in tracking["episodes"]}), 1)
         self.assertEqual([(s["id"], s["included"], s["issues"]) for s in occ["systems"]],
-                         [("sys-001", False, ["SHORT_DISPLAY"]), ("sys-002", False, ["SHORT_DISPLAY"])])
+                         [("sys-001", False, ["SHORT_DISPLAY"]), ("sys-002", False, ["SHORT_DISPLAY", "POSSIBLE_SAME_DISPLAY"])])
+        self.assertEqual(occ["systems"][1]["possible_repeat_of"], "sys-001")
         self.assertFalse(any(s.get("alternate_of") for s in occ["systems"]))
         self.assertEqual(occ["exclusions"]["content_step_alternates"], [])
         self.assertEqual(occ["exclusions"]["short_listed_excluded"], ["sys-001", "sys-002"])
@@ -163,9 +161,7 @@ class Round5PathsTest(unittest.TestCase):
 
 
 class MixedAlternateNumberingTest(unittest.TestCase):
-    """One placed system with a content-step state and a minority moment: alt1 is the state,
-    alt2 the moment, the same ids in the job record, occurrences.json and the strip files,
-    listed after the system in number order."""
+    """Family parts are ordinary systems; minority moments still belong to their own system."""
 
     @classmethod
     def setUpClass(cls):
@@ -183,20 +179,21 @@ class MixedAlternateNumberingTest(unittest.TestCase):
     def test_ids_and_order(self):
         systems = self.record["systems"]
         self.assertEqual([(s["id"], s["included"], s.get("alternate_of")) for s in systems],
-                         [("sys-001", True, None), ("sys-001-alt1", False, "sys-001"), ("sys-001-alt2", False, "sys-001")])
-        main_s, state, moment = systems
-        self.assertEqual(state.get("alternate_kind"), "content_step_state")
+                         [("sys-001", True, None), ("sys-002", True, None), ("sys-002-alt1", False, "sys-002")])
+        earlier, main_s, moment = systems
+        self.assertEqual(main_s["possible_repeat_of"], earlier["id"])
+        self.assertEqual(main_s["content_family"]["id"], earlier["content_family"]["id"])
         self.assertIn(rp.MINORITY_ALTERNATE, moment["issues"])
         self.assertEqual(moment["alternate_kind"], "uncertain_mark_bundle")
         self.assertTrue(moment["review_bundle"]["evidence_patches"])
-        self.assertLess(state["t_start"], main_s["t_start"])
-        self.assertTrue(Path(state["strip_path"]).name == "strip_sys-001-alt1.png")
-        self.assertTrue(Path(moment["strip_path"]).name == "strip_sys-001-alt2.png")
+        self.assertLess(earlier["t_start"], main_s["t_start"])
+        self.assertTrue(Path(earlier["strip_path"]).name == "strip_sys-001.png")
+        self.assertTrue(Path(moment["strip_path"]).name == "strip_sys-002-alt1.png")
         self.assertTrue(all(Path(s["strip_path"]).is_file() for s in systems))
         ev = main_s["strip"]["minority_content"]["events"]
-        self.assertEqual([e.get("alternate") for e in ev], ["alt2"])
+        self.assertEqual([e.get("alternate") for e in ev], ["alt1"])
         occ = json.loads((Path(self.record["workspace"]) / "occurrences.json").read_text())
-        self.assertEqual([s["id"] for s in occ["systems"]], ["sys-001", "sys-001-alt1", "sys-001-alt2"])
+        self.assertEqual([s["id"] for s in occ["systems"]], ["sys-001", "sys-002", "sys-002-alt1"])
         # the moment shows the dot, the placed strip leaves it out
         box = [598, 28, 603, 33]
         self.assertGreaterEqual(dark_pixels(cv2.imread(moment["strip_path"]), box, moment["strip"]), 8)

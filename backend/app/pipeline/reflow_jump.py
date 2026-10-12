@@ -41,9 +41,11 @@ from app.pipeline import reflow_ledger as rl
 from app.pipeline import reflow_strips as rs
 from app.pipeline import system_detect as sd
 
+# reflow_jump-6: a gate pair that fails the coarse overlap check is checked again without the screen-fixed
+# left panel (detect_panel), as register_seams leaves it out
 # reflow_jump-5: a sparse (low-ink) window offset is dropped when another forward offset over the
 # whole feasible range, or one / two local bar widths away, matches comparably (no new offset is picked)
-JUMP_VERSION = "reflow_jump-5"
+JUMP_VERSION = "reflow_jump-6"
 SCHEMA_VERSION = 1
 
 ImageLoader = Callable[[Dict[str, Any]], np.ndarray]
@@ -1155,37 +1157,57 @@ def gate(tracking: Dict[str, Any], manifest: Dict[str, Any], load: ImageLoader, 
          cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Attempt jump registration only when the tracker saw horizontal motion, or when
     enough consecutive displays overlap horizontally (cheap coarse check on one frame
-    per display). Other videos are not touched."""
+    per display). A pair that does not overlap over the whole width is checked again
+    without the screen-fixed left panel (detect_panel, as register_seams uses it): a
+    translucent panel over the start of every display can spoil a narrow overlap. Other
+    videos are not touched."""
     cfg = cfg or CONFIG
     if any(iv.get("kind") == "horizontal_scroll" for iv in tracking.get("layout_intervals", [])):
         return {"attempt": True, "reason": "tracking_horizontal_motion"}
     obs_by = {o["id"]: o for o in manifest["observations"]}
     pairs = []
-    for _slot, eps in slot_sequences(tracking).items():
+    for slot_id, eps in slot_sequences(tracking).items():
         conf = [e for e in eps if e.get("confirmed")]
-        pairs.extend(zip(conf, conf[1:]))
+        pairs.extend((slot_id, ea, eb) for ea, eb in zip(conf, conf[1:]))
     if not pairs:
         return {"attempt": False, "reason": "no_display_pairs", "pairs_checked": 0}
     pairs = _evenly(pairs, int(cfg["gate_max_pairs"]))
-    hits = 0
-    for ea, eb in pairs:
-        recs = []
-        for e in (ea, eb):
+    recs: Dict[str, Dict[str, Any]] = {}
+
+    def rec(e: Dict[str, Any]) -> Dict[str, Any]:
+        if e["id"] not in recs:
             mid = e["observation_ids"][len(e["observation_ids"]) // 2]
             img = load(obs_by[mid])
+            gap = float(e["staff_gap_px"])
             y0, y1 = _episode_rows(e, obs_by)
-            recs.append({"gap": float(e["staff_gap_px"]), "rows": (y0, y1), "width": int(img.shape[1]),
-                         "features": features(img, float(e["staff_gap_px"]), _episode_staff_y(e, obs_by)), "covered": np.zeros(img.shape[1], dtype=bool)})
-        if recs[0]["features"].shape != recs[1]["features"].shape:
+            y0, y1 = max(0, y0), min(img.shape[0], y1 if y1 > y0 else img.shape[0])
+            norm, _inv = sd.normalize_polarity(img)
+            gray = cv2.cvtColor(norm, cv2.COLOR_BGR2GRAY) if norm.ndim == 3 else norm
+            recs[e["id"]] = {"gap": gap, "rows": (y0, y1), "width": int(img.shape[1]),
+                             "contrast": np.percentile(255 - gray[y0:y1].astype(np.int16), 98, axis=0).astype(np.float32),
+                             "features": features(img, gap, _episode_staff_y(e, obs_by)), "covered": np.zeros(img.shape[1], dtype=bool)}
+        return recs[e["id"]]
+
+    panels: Dict[str, int] = {}
+    for slot_id in dict.fromkeys(s for s, _a, _b in pairs):
+        displays = list({e["id"]: rec(e) for s, ea, eb in pairs if s == slot_id for e in (ea, eb)}.values())
+        panels[slot_id] = int(detect_panel(displays, cfg)["right"])
+    hits = 0
+    for slot_id, ea, eb in pairs:
+        recs_ab = [rec(ea), rec(eb)]
+        if recs_ab[0]["features"].shape != recs_ab[1]["features"].shape:
             continue
-        reg = register_pair(recs[0], recs[1], 0, cfg, coarse_only=True, coarse_gap_px=cfg["gate_coarse_gap_px"])
-        gap = min(recs[0]["gap"], recs[1]["gap"])
-        if (reg.get("dx") is not None and abs(reg["dx"]) >= cfg["no_shift_gaps"] * gap
-                and reg["residual"] <= cfg["resid_max"] and reg["ratio"] >= cfg["ratio_min"]):
-            hits += 1
+        gap = min(recs_ab[0]["gap"], recs_ab[1]["gap"])
+        # the whole width first; when that fails, again without the left panel
+        for panel_right in dict.fromkeys((0, panels[slot_id])):
+            reg = register_pair(recs_ab[0], recs_ab[1], panel_right, cfg, coarse_only=True, coarse_gap_px=cfg["gate_coarse_gap_px"])
+            if (reg.get("dx") is not None and abs(reg["dx"]) >= cfg["no_shift_gaps"] * gap
+                    and reg["residual"] <= cfg["resid_max"] and reg["ratio"] >= cfg["ratio_min"]):
+                hits += 1
+                break
     frac = hits / float(len(pairs))
     return {"attempt": frac >= cfg["gate_pair_fraction"], "reason": "overlapping_displays" if frac >= cfg["gate_pair_fraction"] else "no_horizontal_motion",
-            "pairs_checked": len(pairs), "pairs_overlapping": hits, "fraction": round(frac, 3)}
+            "pairs_checked": len(pairs), "pairs_overlapping": hits, "fraction": round(frac, 3), "panel_right": panels}
 
 
 def _views(ss: Sequence[Dict[str, Any]], cfg: Dict[str, Any]) -> Tuple[List[List[str]], List[Dict[str, Any]]]:
@@ -2595,7 +2617,9 @@ def build_jump_systems(jump: Dict[str, Any], tracking: Dict[str, Any], manifest:
                        "slot_id": run["slot_id"], "staff_top_y_crop": float(eps[ref]["staff_top_y"]), "staff_gap_px": gap,
                        "episode_ids": [o["display"] for o in owned], "main_episode_id": owned[0]["display"],
                        "observations": [{"obs_id": m["obs_id"], "region_id": m["region_id"], "episode_id": m["episode_id"]} for m in members],
-                       "layout": "jump_view", "first_display": chunk_no == 0, "terminal_display": False, "issues": [],
+                       "layout": "jump_view", "first_display": chunk_no == 0, "terminal_display": False,
+                       "issues": ["NUMBER_STEP_UNRESOLVED"] if any(
+                           eps[o["display"]].get("number_step_unresolved") for o in owned) else [],
                        "jump": {"run": ri, "chain": ci, "chunk": k}}
                 results.append((occ, rec))
                 chunk_no += 1

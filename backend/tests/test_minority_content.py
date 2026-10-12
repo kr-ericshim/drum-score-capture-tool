@@ -168,33 +168,33 @@ class MinorityStrokeTest(unittest.TestCase):
         self.assertGreater(dark_pixels(img, [700, 149, 761, 152], alt), 60)
 
     def test_stroke_added_for_good_splits_the_display(self):
-        # round 5: the two states are one written system - the state with the stroke is placed,
-        # the earlier state is listed unchecked right after it as an "other moment", never placed twice
+        # A shared content family cannot prove these are the same written line.
         tracking, occ, recs, td = pipeline(with_marks(show(strip(4), 0.0, 8.0, seed=1), range(20, 32), stroke))
         self.addCleanup(td.cleanup)
         self.assertEqual([e["n_obs"] for e in tracking["episodes"]], [20, 12])
         self.assertEqual(tracking["episodes"][1]["started_by"], "content_step")
         self.assertEqual(tracking["content_steps"][0]["kind"], "added")
         self.assertEqual(tracking["content_steps"][0]["state_with_ink"], "later")
-        self.assertEqual([(s["id"], s["included"]) for s in occ["systems"]], [("sys-001", True), ("sys-001-alt1", False)])
-        later, earlier = occ["systems"]
+        self.assertEqual([(s["id"], s["included"]) for s in occ["systems"]], [("sys-001", True), ("sys-002", True)])
+        earlier, later = occ["systems"]
         self.assertGreater(later["t_start"], earlier["t_start"])
-        self.assertEqual(earlier["alternate_of"], "sys-001")
-        self.assertEqual(earlier["issues"], ["MINORITY_ALTERNATE", "CONTENT_STEP_STATE"])
+        self.assertEqual(later["possible_repeat_of"], earlier["id"])
+        self.assertEqual(later["issues"], ["POSSIBLE_SAME_DISPLAY"])
+        self.assertTrue(all("alternate_of" not in s and "alternate_kind" not in s for s in occ["systems"]))
         self.assertEqual(occ["exclusions"]["short_listed_excluded"], [])
-        self.assertEqual(occ["exclusions"]["content_step_alternates"], ["sys-001-alt1"])
+        self.assertEqual(occ["exclusions"]["content_step_alternates"], [])
         self.assertEqual([r["issues"] for r in recs], [[], []])
-        self.assertGreater(dark_pixels(cv2.imread(recs[0]["path"]), [700, 149, 761, 152], recs[0]), 60)
-        self.assertEqual(dark_pixels(cv2.imread(recs[1]["path"]), [700, 149, 761, 152], recs[1]), 0)
+        self.assertEqual(dark_pixels(cv2.imread(recs[0]["path"]), [700, 149, 761, 152], recs[0]), 0)
+        self.assertGreater(dark_pixels(cv2.imread(recs[1]["path"]), [700, 149, 761, 152], recs[1]), 60)
 
     def test_mark_removed_for_good_splits_the_display(self):
         tracking, occ, recs, td = pipeline(with_marks(show(strip(4), 0.0, 8.0, seed=1), range(0, 10), stroke))
         self.addCleanup(td.cleanup)
         self.assertEqual([e["n_obs"] for e in tracking["episodes"]], [10, 22])
         self.assertEqual(tracking["content_steps"][0]["state_with_ink"], "earlier")
-        # the earlier state (with the mark) is placed; the later one is its alternate
-        self.assertEqual([(s["id"], s["included"]) for s in occ["systems"]], [("sys-001", True), ("sys-001-alt1", False)])
+        self.assertEqual([(s["id"], s["included"]) for s in occ["systems"]], [("sys-001", True), ("sys-002", True)])
         self.assertLess(occ["systems"][0]["t_start"], occ["systems"][1]["t_start"])
+        self.assertEqual(occ["systems"][1]["possible_repeat_of"], "sys-001")
         self.assertGreater(dark_pixels(cv2.imread(recs[0]["path"]), [700, 149, 761, 152], recs[0]), 60)
 
     def test_short_mark_at_the_end_of_a_display_does_not_split_it(self):
@@ -218,24 +218,23 @@ def displays(seeds, seconds=6.0):
 
 
 class Round5Test(unittest.TestCase):
-    """Audit round 5: no system placed twice, specks fixed to the screen, hand-over runs."""
+    """Family parts stay visible; screen-position specks and hand-over runs stay uncertain."""
 
-    def test_three_states_of_one_display_place_one_system(self):
+    def test_three_family_parts_are_all_placed_in_video_order(self):
         def second(img):
             cv2.line(img, (300, 150), (340, 150), (0, 0, 0), 2)
         frames = with_marks(with_marks(show(strip(4), 0.0, 8.0, seed=1), range(10, 32), stroke), range(21, 32), second)
         tracking, occ, recs, td = pipeline(frames)
         self.addCleanup(td.cleanup)
         self.assertGreaterEqual(len(tracking["content_steps"]), 2)
-        self.assertEqual(sum(s["included"] for s in occ["systems"]), 1)
-        placed = next(s for s in occ["systems"] if s["included"])
-        # the latest state shows both marks: it is placed, the earlier states are its alternates
-        self.assertGreaterEqual(placed["t_start"], 21 * STEP - 1e-6)
-        alts = [s for s in occ["systems"] if not s["included"]]
-        self.assertGreaterEqual(len(alts), 2)
-        self.assertTrue(all(s["alternate_of"] == placed["id"] and s["id"].startswith(placed["id"] + "-alt") for s in alts))
-        self.assertGreater(dark_pixels(cv2.imread(recs[0]["path"]), [300, 149, 341, 152], recs[0]), 30)
-        self.assertGreater(dark_pixels(cv2.imread(recs[0]["path"]), [700, 149, 761, 152], recs[0]), 60)
+        systems = occ["systems"]
+        self.assertEqual([(s["id"], s["included"]) for s in systems],
+                         [("sys-001", True), ("sys-002", True), ("sys-003", True)])
+        self.assertEqual([s.get("possible_repeat_of") for s in systems], [None, "sys-001", "sys-002"])
+        self.assertEqual([s["t_start"] for s in systems], sorted(s["t_start"] for s in systems))
+        self.assertGreaterEqual(systems[-1]["t_start"], 21 * STEP - 1e-6)
+        self.assertGreater(dark_pixels(cv2.imread(recs[-1]["path"]), [300, 149, 341, 152], recs[-1]), 30)
+        self.assertGreater(dark_pixels(cv2.imread(recs[-1]["path"]), [700, 149, 761, 152], recs[-1]), 60)
 
     def test_recurrent_screen_position_is_suspicion_not_exclusion(self):
         frames = displays([4, 5, 6])
@@ -384,9 +383,7 @@ class PipelineAlternateTest(unittest.TestCase):
 
 
 class PipelineContentStepStateTest(unittest.TestCase):
-    """Round 5: a display split at a content step is one system placed once; the other state is an
-    "other moment" listed unchecked right after it (job record, diagnostics) and can be placed
-    instead of it or with it."""
+    """Content-family parts remain ordinary systems, with a review warning and local PDF mark."""
 
     @classmethod
     def setUpClass(cls):
@@ -400,28 +397,29 @@ class PipelineContentStepStateTest(unittest.TestCase):
     def tearDownClass(cls):
         cls.td.cleanup()
 
-    def test_one_state_is_placed_and_the_other_is_listed_after_it(self):
+    def test_both_parts_are_placed_with_family_diagnostics_and_review_reason(self):
         systems = self.record["systems"]
-        self.assertEqual([(s["id"], s["included"]) for s in systems], [("sys-001", True), ("sys-001-alt1", False)])
-        main_s, alt = systems
-        self.assertEqual(alt["alternate_of"], "sys-001")
-        self.assertEqual(alt["alternate_kind"], "content_step_state")
-        self.assertIn(rp.MINORITY_ALTERNATE, alt["issues"])
-        self.assertLess(alt["t_start"], main_s["t_start"])
+        self.assertEqual([(s["id"], s["included"]) for s in systems], [("sys-001", True), ("sys-002", True)])
+        earlier, later = systems
+        self.assertEqual(later["possible_repeat_of"], earlier["id"])
+        self.assertEqual(earlier["content_family"]["id"], later["content_family"]["id"])
+        self.assertTrue(all("alternate_of" not in s and "alternate_kind" not in s for s in systems))
+        self.assertLess(earlier["t_start"], later["t_start"])
         fields = main._reflow_capture_fields(rp.public_record(self.record))
-        d_alt = fields["capture_diagnostics"][alt["strip_path"]]
-        self.assertEqual(d_alt["alternate_of"], "sys-001")
-        self.assertIn("MINORITY_ALTERNATE", d_alt["diagnostic_codes"])
-        self.assertEqual(d_alt["warning_reasons"], ["같은 줄의 다른 상태입니다. 표시가 조금 다릅니다 / Another state of the line above; a few marks differ"])
-        self.assertEqual(fields["review_candidates"], [main_s["strip_path"], alt["strip_path"]])
+        diagnostic = fields["capture_diagnostics"][later["strip_path"]]
+        self.assertIn("POSSIBLE_SAME_DISPLAY", diagnostic["diagnostic_codes"])
+        self.assertEqual(diagnostic["warning_reasons"], [dict(main.REFLOW_ISSUE_REASONS)["POSSIBLE_SAME_DISPLAY"]])
+        self.assertEqual(fields["review_candidates"], [earlier["strip_path"], later["strip_path"]])
 
     def test_the_other_state_can_be_placed_instead_or_with(self):
-        main_s, alt = self.record["systems"]
+        earlier, later = self.record["systems"]
         ws = Path(self.record["workspace"])
-        plan, _pages = rp.compose_systems([alt], all_systems=self.record["systems"], workspace=ws)
-        self.assertEqual([pl["system_id"] for p in plan["pages"] for pl in p["placements"]], ["sys-001-alt1"])
-        plan, _pages = rp.compose_systems([main_s, alt], all_systems=self.record["systems"], workspace=ws)
-        self.assertEqual([pl["system_id"] for p in plan["pages"] for pl in p["placements"]], ["sys-001", "sys-001-alt1"])
+        plan, _pages = rp.compose_systems([later], all_systems=self.record["systems"], workspace=ws)
+        self.assertEqual([pl["system_id"] for p in plan["pages"] for pl in p["placements"]], ["sys-002"])
+        self.assertFalse(any(p.get("markers") for p in plan["pages"]))
+        plan, _pages = rp.compose_systems([earlier, later], all_systems=self.record["systems"], workspace=ws)
+        self.assertEqual([pl["system_id"] for p in plan["pages"] for pl in p["placements"]], ["sys-001", "sys-002"])
+        self.assertEqual([m["kind"] for p in plan["pages"] for m in p.get("markers", [])], ["possible_repeat"])
 
 
 if __name__ == "__main__":

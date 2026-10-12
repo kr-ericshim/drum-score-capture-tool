@@ -70,7 +70,7 @@ from app.pipeline import minority_content as mc
 from app.pipeline import page_diff
 from app.pipeline import system_detect
 
-TRACKING_VERSION = "system_tracking-2"  # 2: vertical scroll is unsupported (refused like horizontal scroll)
+TRACKING_VERSION = "system_tracking-6"  # 6: number steps require digit-scale differing ink and a printed number in both views
 
 # layouts the tracker labels but the reflow refuses (reflow_pipeline.layout_gate)
 UNSUPPORTED_LAYOUTS = {"horizontal_scroll": "UNSUPPORTED_HORIZONTAL_SCROLL", "vertical_scroll": "UNSUPPORTED_VERTICAL_SCROLL"}
@@ -259,6 +259,7 @@ class _Episode:
     # parts of one display split at content steps: one written system in different states
     family: Optional[str] = None
     family_score: int = 0  # content steps at which this part is the state that shows the step's ink
+    number_step_unresolved: bool = False
 
     @property
     def ref(self) -> _Member:
@@ -373,6 +374,9 @@ def build_episodes(
 
     episodes = []
     content_steps: List[Dict[str, Any]] = []
+    number_steps: List[Dict[str, Any]] = []
+    number_steps_unresolved: List[Dict[str, Any]] = []
+    obs_by = {o["id"]: o for o in observations}
     # minority content of every display first: a speck at one screen place in several displays
     # belongs to the screen (video seen through the band, a player UI), not to the score
     pre: Dict[int, List[Dict[str, Any]]] = {}
@@ -391,9 +395,13 @@ def build_episodes(
     spots = mc.screen_fixed_spots(items, float(np.median(gaps))) if items else []
     screen_fixed = [it for it in items if mc.in_screen_fixed_spot(it["box"], it["area_px"], spots, float(np.median(gaps)))]
     for k, ep0 in enumerate(closed):
-        for ep in _split_on_content_steps(ep0, transients, content_steps, events=pre.get(k), spots=spots):
-            for part in _split_on_view_transitions(ep, transients, closed):
-                episodes.extend(_split_on_playhead_resets(part))
+        number_parts = _split_on_number_steps(ep0, obs_by, load_image, number_steps,
+                                              unresolved=number_steps_unresolved, logger=logger)
+        for numbered in number_parts:
+            events = pre.get(k) if numbered is ep0 else None
+            for ep in _split_on_content_steps(numbered, transients, content_steps, events=events, spots=spots):
+                for part in _split_on_view_transitions(ep, transients, closed):
+                    episodes.extend(_split_on_playhead_resets(part))
     _rekey_families_at_view_transitions(episodes, content_steps)
     for ep in episodes:
         for m in ep.members:
@@ -406,7 +414,7 @@ def build_episodes(
     layout = classify_layout(manifest, out, load_image, features=layout_feats.feats)
     for e in out:
         e["layout"] = _layout_at(layout, e["t_start"])
-    logger(f"episodes: {len(out)}, transients: {len(transients)}, content steps split: {len(content_steps)}")
+    logger(f"episodes: {len(out)}, transients: {len(transients)}, content steps split: {len(content_steps)}, number steps split: {len(number_steps)}")
     return {
         "schema_version": 1,
         "kind": "display_episodes",
@@ -422,6 +430,8 @@ def build_episodes(
         },
         "episodes": out,
         "content_steps": content_steps,
+        "number_steps": number_steps,
+        "number_steps_unresolved": number_steps_unresolved,
         # specks judged part of the screen (minority_content.screen_fixed_spots): on record, not split
         "screen_fixed_minority": {"spots": spots, "events": [{k: v for k, v in it.items() if k != "display"} for it in screen_fixed]},
         "transient_observations": transients,
@@ -431,6 +441,115 @@ def build_episodes(
 
 CONTENT_STEP_MIN_OBS = 4
 CONTENT_STEP_MAX_DEPTH = 8
+NUMBER_STEP_MAX_DEPTH = 8
+
+
+def _split_on_number_steps(ep: _Episode, obs_by: Dict[str, Dict[str, Any]], load_image: ImageLoader,
+                           log: List[Dict[str, Any]], depth: int = 0, *,
+                           unresolved: Optional[List[Dict[str, Any]]] = None,
+                           logger: Callable[[str], None] = lambda _m: None) -> List[_Episode]:
+    """Split a verified stable left run from a certainly different right endpoint.
+
+    Top-level endpoint agreement costs just two windows. Differing endpoints trigger
+    bisection, then every left member must agree. A recursive suffix scans every member
+    against its first, even when its endpoints agree, before accepting one state.
+    Sub-digit residue counts as agreement; a certain endpoint change without a clean
+    cut remains flagged for review.
+    """
+    if len(ep.members) < 2 or (depth == 0 and len(ep.members) < CONTENT_STEP_MIN_OBS):
+        return [ep]
+    # Runtime import: occurrences imports tracking's window geometry at module load.
+    # Reuse its strict raw comparator without a second implementation or import cycle.
+    from app.pipeline.reflow_occurrences import _raw_window_of, measure_number_area_differs
+
+    ms = ep.members
+    evidence = None
+    split_kind = "number_step"
+
+    def not_split(reason, **details):
+        ep.number_step_unresolved = True
+        record = {"slot_id": ep.slot_id, "t_start": round(ms[0].t, 4), "t_end": round(ms[-1].t, 4),
+                  "observation_ids": [m.obs_id for m in ms], "region_ids": [m.region_id for m in ms],
+                  "evidence": evidence, "reason": reason, **details}
+        if unresolved is not None:
+            unresolved.append(record)
+        logger(f"number step not split: {ep.slot_id} {ms[0].obs_id}: {reason}")
+        return [ep]
+
+    def window(i):
+        return _raw_window_of(obs_by, load_image, ms[i].obs_id, ms[i].region_id)
+
+    try:
+        first, last = window(0), window(len(ms) - 1)
+        evidence = measure_number_area_differs(first, last, require_digit_scale=True)
+        if depth == 0 and (evidence is None or evidence.get("reason") != "measure_number_area_differs"):
+            return [ep]
+        comparisons = {len(ms) - 1: evidence}
+
+        def comparison(i):
+            if i not in comparisons:
+                comparisons[i] = measure_number_area_differs(first, first if i == 0 else window(i),
+                                                            require_digit_scale=True)
+            return comparisons[i]
+
+        if depth > 0:
+            cut = next((i for i in range(len(ms)) if comparison(i) is not None), None)
+            if cut is None:
+                return [ep]
+            evidence = comparison(cut)
+        else:
+            lo, hi = 0, len(ms) - 1
+            while hi - lo > 1:
+                mid = (lo + hi) // 2
+                if comparison(mid) is None:
+                    lo = mid
+                else:
+                    hi = mid
+            cut = hi
+        if depth >= NUMBER_STEP_MAX_DEPTH:
+            return not_split("depth_limit")
+        if (comparison(cut) or {}).get("reason") != "measure_number_area_differs":
+            return not_split("cut_member_uncertain", obs_id=ms[cut].obs_id, member_evidence=comparison(cut))
+        times = [m.t for m in ms]
+        left_stable = cut > 0 and mc.stable_run(times, 0, cut - 1)
+        right_stable = mc.stable_run(times, cut, len(ms) - 1)
+        if not (left_stable and right_stable):
+            if depth > 0 or evidence.get("number_present") != [True, True]:
+                return not_split("unstable_side")
+            # A short edge at an actual line change is a hand-over, not two stable
+            # displays merged together. Keep it as a separate short episode; only
+            # the stable side whose every member certainly agrees can remain confirmed.
+            changes = ("content_change", "registration_change", "view_transition")
+            if depth == 0 and not left_stable and right_stable and ep.started_by in changes:
+                right = window(cut)
+                if any(measure_number_area_differs(right, window(i), require_digit_scale=True) is not None
+                       for i in range(cut, len(ms))):
+                    return not_split("unstable_side")
+            elif not (depth == 0 and left_stable and not right_stable and ep.ended_by in changes):
+                return not_split("unstable_side")
+            split_kind = "view_transition"
+        for i in range(cut):
+            if comparison(i) is not None:
+                return not_split("no clean cut", obs_id=ms[i].obs_id, member_evidence=comparison(i))
+    except Exception as exc:  # no pixels/comparison means no evidence to split
+        if depth > 0 or (evidence is not None and evidence.get("reason") == "measure_number_area_differs"):
+            return not_split("comparison_failed", detail=str(exc))
+        logger(f"number step not split: {ep.slot_id} {ms[0].obs_id}: comparison failed: {exc}")
+        return [ep]
+    if split_kind == "number_step":
+        log.append({"slot_id": ep.slot_id, "t": round(ms[cut].t, 4), "obs_id": ms[cut].obs_id,
+                    "evidence": evidence})
+    parts = []
+    for a, b in ((0, cut), (cut, len(ms))):
+        part = _Episode(ep.slot_id, ms[a:b], started_by=ep.started_by if a == 0 else split_kind,
+                        ended_by=split_kind if b < len(ms) else ep.ended_by,
+                        number_step_unresolved=ep.number_step_unresolved)
+        t_lo = ms[a - 1].t if a > 0 else -np.inf
+        t_hi = ms[b].t if b < len(ms) else np.inf
+        part.transients = [r for r in ep.transients if t_lo < r["t"] < t_hi]
+        parts.extend([part] if a == 0 or split_kind != "number_step" else _split_on_number_steps(
+            part, obs_by, load_image, log, depth + 1, unresolved=unresolved, logger=logger))
+    return parts
 
 
 def _band_top(members: List["_Member"]) -> int:
@@ -519,7 +638,7 @@ def _split_on_content_steps(ep: _Episode, transients: List[Dict[str, Any]], log:
                 "run": [round(ms[best["runs"][0][0]].t, 4), round(ms[best["runs"][0][1]].t, 4)]})
     parts = []
     for a, b in ((0, cut), (cut, n)):
-        seg = _Episode(ep.slot_id, ms[a:b])
+        seg = _Episode(ep.slot_id, ms[a:b], number_step_unresolved=ep.number_step_unresolved)
         seg.anchor_band = None
         seg.started_by = ep.started_by if a == 0 else "content_step"
         seg.ended_by = "content_step" if b < n else ep.ended_by
@@ -577,7 +696,7 @@ def _split_on_view_transitions(ep: _Episode, transients: List[Dict[str, Any]], c
         return [ep]
     parts, start = [], 0
     for k, run in cuts + [(len(ep.members), None)]:
-        seg = _Episode(ep.slot_id, ep.members[start:k])
+        seg = _Episode(ep.slot_id, ep.members[start:k], number_step_unresolved=ep.number_step_unresolved)
         seg.anchor_band = None
         # the family is re-keyed at view transitions once every split is made (build_episodes)
         seg.family, seg.family_score = ep.family, ep.family_score
@@ -613,7 +732,7 @@ def _split_on_playhead_resets(ep: _Episode) -> List[_Episode]:
         return [ep]
     parts, start = [], 0
     for c in cuts + [len(ep.members)]:
-        seg = _Episode(ep.slot_id, ep.members[start:c])
+        seg = _Episode(ep.slot_id, ep.members[start:c], number_step_unresolved=ep.number_step_unresolved)
         seg.family, seg.family_score = ep.family, ep.family_score
         seg.started_by = ep.started_by if start == 0 else "playhead_reset"
         seg.ended_by = "playhead_reset" if c < len(ep.members) else ep.ended_by
@@ -697,6 +816,7 @@ def _episode_record(eid: str, ep: _Episode, last_t: float) -> Dict[str, Any]:
         },
         "continuity_links": [],
         **({"content_family": {"id": ep.family, "score": ep.family_score}} if ep.family else {}),
+        **({"number_step_unresolved": True} if ep.number_step_unresolved else {}),
     }
 
 

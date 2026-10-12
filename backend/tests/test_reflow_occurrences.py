@@ -30,6 +30,45 @@ class OccurrenceRulesTest(unittest.TestCase):
     def run_occ(self, eps, **kw):
         return ro.build_occurrences(tracking(eps, **kw), EMPTY_MANIFEST, never_load)
 
+    def test_two_kept_content_family_parts_are_ordinary_systems(self):
+        eps = [ep("a", "slot-00", 0, 4, started="first_observation", ended="content_step"),
+               ep("b", "slot-00", 4.25, 8, started="content_step", ended="end_of_source")]
+        for e, score in zip(eps, (0, 5)):
+            e["content_family"] = {"id": "F", "score": score}
+        out = self.run_occ(eps)
+        first, second = out["systems"]
+        self.assertEqual([(s["id"], s["included"]) for s in out["systems"]], [("sys-001", True), ("sys-002", True)])
+        self.assertEqual([s["episode_ids"] for s in out["systems"]], [["a"], ["b"]])
+        self.assertEqual([s["order_t"] for s in out["systems"]], [0, 4.25])
+        self.assertEqual([s["content_family"] for s in out["systems"]], [e["content_family"] for e in eps])
+        self.assertNotIn("possible_repeat_of", first)
+        self.assertEqual(second["possible_repeat_of"], first["id"])
+        self.assertEqual(second["issues"], ["POSSIBLE_SAME_DISPLAY"])
+        self.assertTrue(all("alternate_of" not in s and "alternate_kind" not in s for s in out["systems"]))
+        self.assertEqual(out["exclusions"]["content_step_alternates"], [])
+
+    def test_family_repeat_links_include_listed_parts_and_stay_within_the_family(self):
+        eps = [ep("a", "slot-00", 0, 4, started="first_observation", ended="content_step"),
+               ep("b", "slot-00", 4.25, 4.75, started="content_step", ended="content_step"),
+               ep("other", "slot-01", 5, 9),
+               ep("c", "slot-00", 10, 14, started="content_step", ended="end_of_source")]
+        for e in (eps[0], eps[1], eps[3]):
+            e["content_family"] = {"id": "F", "score": 0}
+        eps[2]["content_family"] = {"id": "G", "score": 0}
+        out = ro.build_occurrences(tracking(eps), EMPTY_MANIFEST, never_load, ledger=True)
+        first, short, other, last = out["systems"]
+        self.assertEqual([s["included"] for s in out["systems"]], [True, False, True, True])
+        self.assertIn("SHORT_DISPLAY", short["issues"])
+        self.assertIn("POSSIBLE_SAME_DISPLAY", short["issues"])
+        self.assertEqual(short["possible_repeat_of"], first["id"])
+        self.assertEqual(last["possible_repeat_of"], short["id"])
+        self.assertNotIn("possible_repeat_of", other)
+        self.assertEqual(out["exclusions"]["short_listed_excluded"], [short["id"]])
+        self.assertEqual(out["exclusions"]["content_step_alternates"], [])
+        remaps = out["ledger"]["occurrence_remaps"]
+        self.assertEqual([r["final_system_id"] for r in remaps], [s["id"] for s in out["systems"]])
+        self.assertEqual([r["exclusion"] for r in remaps], [None, "short_listed_excluded", None, None])
+
     def test_playhead_reset_split_is_one_display(self):
         eps = [ep("e1", "slot-00", 0.0, 4.0, ended="playhead_reset"), ep("e2", "slot-00", 4.25, 8.0, started="playhead_reset", ended="end_of_source")]
         out = self.run_occ(eps)

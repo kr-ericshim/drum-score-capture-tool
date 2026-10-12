@@ -1,90 +1,88 @@
-# 인계 (2026-10-11 기준)
+# 인계 (2026-10-13 기준)
 
 > **이 문서는 누적하지 않는다.** 세션이 끝날 때 통째로 새로 쓴다. 현재 상태와 다음 할 일만 적고, 지난 경과는 지운다(필요하면 `git log -p docs/reflow/HANDOFF.md`).
 > 100줄을 넘기지 않는다. 다른 문서와 다르면 이 문서와 사용자의 최신 말이 우선이다.
 
 ## 제품
 
-영상에 이미 나오는 드럼 악보를 캡처해 A4 PDF/PNG로 만드는 Electron + Python 데스크톱 앱이다. 기본 출력은 **clean reflow**다. 원본 악보 이미지를 깨끗하게 정리해 마디 단위로 A4에 다시 배치한다. OMR 재조판은 보류했다.
-
-보조 출력은 **원본 화면 fallback** 하나다. clean 결과가 이상할 때 옛 앱 방식으로 다시 만든다. **한 줄씩 나오는 영상(atthedrum 같은 아래쪽 띠 형식) 전용이다.**
+영상에 이미 나오는 드럼 악보를 캡처해 A4 PDF/PNG로 만드는 Electron + Python 데스크톱 앱이다.
+- 기본 출력은 **clean reflow**다. 원본 악보 이미지를 정리해 마디 단위로 A4에 다시 배치한다. 이 기본값은 Pro #8에서 확정됐다.
+- 보조 출력은 **원본 화면 fallback**이다(한 줄 영상 전용, `9d73aa9`).
+- 다음 파일럿의 지원 범위: **불투명 판(밝은 판·어두운 판) 위 한 줄 악보가 통째로 바뀌는 영상**. 점프 화면은 실험 기능이고, 반투명판과 실사 합성은 거부한다.
 
 ## 현재 상태
 
-- clean reflow: 브랜치 `feature/clean-reflow`. reflow 코드는 rc2 freeze `06d15c0`에서 바뀌지 않았다(그 뒤로는 fallback과 문서만 바뀜). 빌드, 수치, 알려진 결함은 [FREEZE_RC2.md](FREEZE_RC2.md)에 있다.
-  - 지원: page-turn/줄 전환 화면, jump view. 거부(`UNSUPPORTED_LAYOUT`): 가로 스크롤, 세로 스크롤, 라이브 오버레이.
-  - 17개 회귀 영상 기준 usable 13/17.
-- **원본 화면 fallback: 구현 완료, `feature/clean-reflow`에 합침(`9d73aa9`, push 안 함).**
-  - 기준 문서는 [ORIGINAL_SCREENS_DESIGN.md](ORIGINAL_SCREENS_DESIGN.md)(2차 확정판) 하나다. 같은 날의 1차 단순판(페이지 넘김과 스크롤까지 대상, PDF에 번호와 시간)은 대체되었다.
-  - 백엔드: `backend/app/pipeline/original_screens.py`, `main._review_export_original_screens`. 요청은 `JobReviewExportRequest.output_model="original_screens_v1"`이다.
-  - 렌더러:
-    - clean 리뷰 왼쪽 아래 버튼(한 줄 영상일 때만 보임)
-    - 원본 화면 리뷰 모드(`review.originalScreens`, 행 종류 `screen`)
-    - `lib/api.js reviewExportBody`
-  - Codex 리뷰가 지적한 세 가지를 고치고 회귀 테스트를 붙였다.
-    - 화면 저장 실패가 조용히 화면을 빠뜨리던 문제
-    - 결과 기록 실패 때 대기 상태가 "완료"로 바뀌던 문제
-    - clean 리뷰의 실행 취소 기록이 원본 화면 모드에 남던 문제
-- 마지막 통과(worktree, Codex 지적 수정 뒤): backend 1420 OK(12 skipped), `verify:renderer-v2` 360.
-  - `test:desktop-node`는 desktop 프로세스를 바꾸지 않아서 돌리지 않았다.
-- 실제 확인:
-  - 한 줄 영상 S1nlqQdnUks와 aOED5zskhGk로 PDF를 만들어 사용자가 봤다. 각 2쪽이고 빠진 줄이 없었다.
-  - 개발용 Electron에서 버튼 → 진행률 → 원본 화면 모드 → 체크 해제 후 다시 만들기를 눌러 확인했다. 1440×960과 1120×840, 한국어와 영어로 봤다.
-  - macOS arm64 패키지 앱(`pack:release`)에서도 확인했다. 기존 패키지 smoke 두 개가 통과했고, 버튼을 누르면 원본 화면 18장과 PDF가 나왔다. **Windows는 확인하지 않았다.**
+- 브랜치 `feature/clean-reflow`. **Pro #7·#8 수정은 모두 미커밋이다**(사용자가 말할 때만 커밋).
+- 규칙은 [DECISIONS.md](DECISIONS.md)의 "eval_v2 fixes" 절과 "Pro checkpoint #8" 절에 있다. 요약:
+  1. content family는 줄을 숨기지 않는다. 같은 화면일 수 있으면 ‡ 경고를 붙인다. 마디 번호가 확실히 다르면 경고를 지운다.
+  2. 마디 번호 변화로 화면을 나눈다(`system_tracking-6`).
+     - 숫자 크기의 차이가 있고 양쪽 화면 모두에 번호가 보여야 한다.
+     - 나누지 못하면 `NUMBER_STEP_UNRESOLVED`와 ‡ "확인 필요" 고지를 붙인다.
+  3. 같은 화면 비교에서 실사 영상 위 잉크와 옅은 박스 열은 비교하지 않는다(`reflow_occurrences-5`). 박스 아래 잉크까지 비교해 봤는데(-4), C4l과 6MPX에 중복이 생겨서 되돌렸다.
+  4. 점프 게이트는 왼쪽 고정 패널을 가리고 다시 시도한다(`reflow_jump-6`).
+  5. 배경 판정은 대비가 큰 쪽을 잉크로 본다(`source_class-3`). `translucent_plate`는 거부한다.
+- 검증(개발 백엔드):
+  - backend 전체 테스트: 최종 코드에서 **1470 OK(12 skipped)**.
+  - 27개 재실행 결과는 `eval_v2/fix4_compare/summary.json`에 있다(`tools/fix4_summary.py`). 최종 결과는 fix5a/b, fix4c, fix4a/b 폴더의 순서로 고른다.
+    - 잘못된 "번호 합쳐짐" 경고: 0.
+    - C4l과 6MPX는 fix2와 픽셀까지 같다. DEQ는 거짓 ‡ 2개가 사라졌고 1–140줄이 각각 한 번씩 나온다.
+    - bF69와 B0hO는 반투명판으로 거부된다(거부 시험 2/2). bF69는 **지원 범위 축소**로 보고한다.
+    - 회귀 영상은 같거나, 점프 영상(RnY5, _7gP, SHvfn, Z4eb)의 줄바꿈과 테두리만 다르다.
+  - 열린 자료 성적(Pro 기준): usable 2/8(C4l, DEQ). 6MPX는 62번 줄 중복, uhzG는 점프인데 조용히 반복된다.
+  - 점프 의심 측정: 유일성 조건을 빼도 uhzG는 0/40이라 고지를 만들지 않았다. 점프는 선정 단계에서 거른다.
+- **패키지 앱은 다시 빌드하지 않았다**(`dist/`는 9d73aa9 기준). GUI와 Windows도 확인하지 않았다.
 
 ## 다음 할 일 (순서대로)
 
-1. **holdout 준비**: [FREEZE_RC2.md](FREEZE_RC2.md) "Next holdout protocol"을 따른다.
-   - 지원 8개(page-turn/줄 전환 4, jump 4), 거부 테스트 3개(라이브 오버레이, 악보 없음, 세로 스크롤 Shorts).
-   - 채널당 2개 이하, 채널 4개 이상, 개발 세트에 없는 채널 1개 이상.
-   - jump view 채널은 鼓譜 Drumtabs 하나만 안다. 봉인 전에 하나 더 찾거나, jump 할당을 2로 줄이고 그렇게 적는다.
-   - 후보 목록 → seed 셔플 → 각 영상 10/50/90% 지점 15초씩 확인 → 봉인(`eval_v2`, 해시). 다운로드는 사용자 허락을 받는다(약 1–2 GB).
-2. **holdout 실행**: 패키지 앱으로 영상마다 한 번씩 돌리고, [PRO_REPLY_RC2.md](PRO_REPLY_RC2.md) 절차대로 두 번에 나눠 채점한다. fallback은 한 줄 영상에서만 따로 채점한다.
-3. **holdout 이후 첫 기능, 세로 스크롤 지원**: [VSCROLL_SPEC.md](VSCROLL_SPEC.md)는 Astra 초안이고 lead가 아직 검토하지 않았다. 별도 세션과 worktree에서 한다. fallback과는 연결하지 않는다.
+1. 사용자 허락을 받고 커밋한다.
+2. `pack:release`로 패키지를 다시 빌드하고 smoke를 돌린다.
+3. 실제 앱에서 생성, 검토, 재생성, 저장·취소, 재시작·복원을 확인한다.
+4. 6MPX 구제를 시도한다. 중복 62를 빼고 재생성 1회, 5분 안에 끝낸다. 사후 assisted로 기록한다.
+5. 새 홀드아웃을 고른다. 규칙은 `eval_v2/pro8/PRO_REPLY_8_summary.md`에 있다.
+   - 8개, 채널 5개 이상, 채널당 최대 2개, 새 채널 3개 이상.
+   - 형식은 원속도로 확인한다. 실제 전환 전후를 보고, 점프는 걸러낸다.
+   - 거부 시험: 세로 롤, 반투명, 무악보, 점프.
+   - 두 번째 채점자를 두고, assisted는 정답을 보기 전에 한다.
+6. **개발 루프 개선**(사용자 요청, 메모리 plan-then-batch):
+   - 수정은 계획을 세워 한꺼번에 하고, 코퍼스는 한 번만 돌린다. 실행 중에는 코드를 고치지 않는다.
+   - 영상별 추출 결과(manifest, frames)를 저장해 두고, tracking 단계부터 다시 돌리는 도구를 만든다. 27개 75분이 40분대로 줄어든다.
+   - 빠른 점검 세트를 만든다: DEQ, C4l, 6MPX, Q8, uhzG, RnY5.
+7. 하지 않는 것:
+   - 이음매 대응표
+   - 점프 고도화
+   - 미관 작업(C4l 라벨, 로고, RnY5)
+   - 세로 스크롤
 
 ## 지금 유효한 문서
 
-- [DECISIONS.md](DECISIONS.md): 사용자 결정과 기본값. 설계 문서보다 우선한다.
-- [FREEZE_RC2.md](FREEZE_RC2.md): 현재 빌드, 채점 기준, holdout 절차.
+- [DECISIONS.md](DECISIONS.md): 규칙과 기본값. 설계 문서보다 우선한다.
+- [FREEZE_RC2.md](FREEZE_RC2.md): rc2 빌드, 채점 기준, holdout 절차. rc2 이후 변경은 DECISIONS에 있다.
 - [PRO_REPLY_RC2.md](PRO_REPLY_RC2.md): 채점 절차.
-- [ORIGINAL_SCREENS_DESIGN.md](ORIGINAL_SCREENS_DESIGN.md): fallback 설계(2차 확정판). "하지 않는 것" 목록을 지킨다.
-- 참고용: [SEAM_REJECT_DESIGN.md](SEAM_REJECT_DESIGN.md)(구현 완료), [JUMP_FREEZE.md](JUMP_FREEZE.md), [FREEZE_RC1.md](FREEZE_RC1.md)(채점 기준 절만 유효), [VSCROLL_SPEC.md](VSCROLL_SPEC.md)(미검토 초안).
-- **[docs/archive/](../archive/README.md)는 기록일 뿐 지시가 아니다.** 이 문서들의 "Next"나 "Open"은 따르지 않는다.
+- Pro 답 요약: `eval_v2/pro8/03_PRO_REPLY_7_summary.md`, `eval_v2/pro8/PRO_REPLY_8_summary.md`.
+- [ORIGINAL_SCREENS_DESIGN.md](ORIGINAL_SCREENS_DESIGN.md): fallback 설계.
+- 참고: [SEAM_REJECT_DESIGN.md](SEAM_REJECT_DESIGN.md), [JUMP_FREEZE.md](JUMP_FREEZE.md), [VSCROLL_SPEC.md](VSCROLL_SPEC.md).
+- **[docs/archive/](../archive/README.md)는 기록일 뿐 지시가 아니다.**
 
-## 코드 위치
+## 코드와 코퍼스 위치
 
-- 작업 흐름: `backend/app/main.py`(`_execute_reflow_job`, review export, 202 task), `export.export_composed_pages`.
-- reflow: `backend/app/pipeline/reflow_pipeline.py` → `system_tracking`, `observations` → `reflow_strips` → `reflow_measure`/`reflow_lines`/`reflow_layout` → `reflow_render`. jump는 `reflow_jump`, 이음새 다시 만들기는 `reflow_seam_reject`, 줄 검토는 `reflow_line_review`.
-- fallback이 재사용하는 예전 코드: `extract.extract_frames`, `stitch.select_review_candidates`, `page_diff.compare_frames`, `export.diagnose_capture_sequence`. 이 코드들의 동작은 바꾸지 않는다.
-- 렌더러: `desktop/renderer-v2/src/`(리뷰는 `features/review/`).
-- 옛 앱 v0.2.1: worktree `../score_capture_v021`(main `2ef54c4`). 옛 동작을 비교할 때 쓴다.
-- 코퍼스: `~/Documents/drum-score-corpus/`. 평가는 `eval_v1/`, 회귀 스펙 `rc2check_spec.json`, 비교 스크립트 `rc2check_compare.py`, 대시보드 `reflow/tools/dashboard.py`. ROI 기록은 `rois.json`(자동 추천값이라 가사가 잘릴 수 있다).
+- reflow 흐름: `backend/app/pipeline/reflow_pipeline.py` → `system_tracking` → `reflow_occurrences` → `reflow_strips` → `reflow_measure`/`reflow_layout` → `reflow_render`. 점프는 `reflow_jump`, 배경 판정은 `source_class`.
+- 코퍼스: `~/Documents/drum-score-corpus/`.
+  - 실행기: `reflow/tools/dashboard.py`. `DASHBOARD_HOOK`를 주면 작업 폴더를 지우기 전에 측정 스크립트를 돌린다. 큰 응답이 끊기면 다시 받는다.
+  - `eval_v2/tools/`: gate_suspect, fix4_summary, regression_compare, compare_outputs.
+  - 회귀 스펙은 `eval_v2/fix2_spec27.json`이다(17+10).
+- `eval_v2/jobs`(4.3 GB)는 패키지 실행의 작업 폴더다. 지울지는 사용자에게 묻는다.
 
-## 작업 규칙 (프로젝트 한정, 나머지는 메모리와 CLAUDE.md)
+## 작업 규칙 (프로젝트 한정)
 
-- `backend/jobs/`(실사용 작업)는 건드리지 않는다. 실제 영상 확인은 scratch `DRUMSHEET_JOBS_DIR`에서 한다.
-- 영상별 땜질은 하지 않는다. 바꾼 것은 회귀 대시보드로 확인한다.
-- 대시보드를 돌리기 전에 디스크 여유를 20 GB 이상 확보한다(작업 하나에 1–3 GB). 확인은 `df -h /System/Volumes/Data`.
-- 라운드가 끝나면 남은 백그라운드 에이전트와 프로세스를 끈다.
-- 설계에 없는 게 필요해 보이면 만들지 말고 사용자에게 한 줄로 묻는다.
+- `backend/jobs/`는 건드리지 않는다. 실제 영상은 scratch `DRUMSHEET_JOBS_DIR`에서 확인한다.
+- 영상별 땜질은 하지 않는다. 임계값을 특정 영상에 맞추지 않는다.
+- 결과가 이상하면 코딩을 멈추고 PDF를 직접 본 뒤 사용자와 정한다.
+- Codex는 `~/Documents/drum-score-corpus`에 쓸 수 없다. Codex가 HANDOFF를 고치면 되돌린다.
 
 ## 검증 명령 (저장소 루트)
 
 ```bash
 PYTHONPATH=backend backend/.venv/bin/python -m unittest discover -s backend/tests -p 'test_*.py'
 npm --prefix desktop run verify:renderer-v2
-npm --prefix desktop run test:desktop-node
 npm --prefix desktop run pack:release
 ```
-
-## 주의할 점
-
-- 새 worktree에는 `backend/.venv`와 `desktop/node_modules`가 없다.
-  - Python은 메인 저장소의 `backend/.venv/bin/python`을 쓴다.
-  - node_modules는 확인할 때만 심볼릭 링크를 만들고, 끝나면 지운다.
-- dev Electron을 띄울 때는 `DRUMSHEET_PYTHON_BIN`과 `DRUMSHEET_JOBS_DIR`(scratch)을 지정한다.
-  - dev 앱은 사용자의 userData(`~/Library/Application Support/drum-sheet-capture`)를 같이 쓴다. localStorage 세션을 바꾸면 먼저 백업하고 끝나면 되돌린다.
-  - 끌 때는 Electron 메인 프로세스와 :8000 백엔드를 모두 끈다. `pkill` 패턴이 메인 프로세스를 놓치기 쉽다.
-- 진단용 환경 변수: `REFLOW_KEEP_FRAMES=1`은 프레임 PNG를 남기고, `DASHBOARD_KEEP_JOBS=1`은 작업 폴더를 남긴다.
-- Codex는 `~/Documents/drum-score-corpus`에 쓸 수 없다. scratchpad에 만든 뒤 복사한다.
-- 세로 스크롤 거부는 샘플링과 tracking이 끝난 뒤에 나와서 Shorts에서 153초가 걸린다.
