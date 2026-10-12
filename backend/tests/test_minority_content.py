@@ -205,6 +205,55 @@ class MinorityStrokeTest(unittest.TestCase):
         self.assertEqual(tracking["content_steps"], [])
         self.assertEqual([s["included"] for s in occ["systems"]], [True])
 
+    def fade_into_video(self, frames, start):
+        # the plate fades into a textured video behind it (6MPX's last line: paper 246 -> 133)
+        rng = np.random.default_rng(5)
+        video = cv2.GaussianBlur(rng.integers(40, 220, frames[0][1].shape[:2], dtype=np.uint8), (0, 0), 3)
+        video = cv2.cvtColor(cv2.normalize(video, None, 30, 230, cv2.NORM_MINMAX), cv2.COLOR_GRAY2BGR).astype(np.float32)
+        out = []
+        for i, (t, img) in enumerate(frames):
+            a = 0.0 if i < start else min(0.65, 0.12 * (i - start + 1))
+            out.append((t, np.clip((1 - a) * img.astype(np.float32) + a * video, 0, 255).astype(np.uint8)))
+        return out
+
+    def test_a_fade_into_the_video_is_not_a_content_step(self):
+        frames = self.fade_into_video(show(strip(4), 0.0, 8.0, seed=1), 22)
+        tracking, occ, recs, td = pipeline(frames)
+        self.addCleanup(td.cleanup)
+        self.assertEqual(tracking["content_steps"], [])
+        self.assertFalse(any("POSSIBLE_SAME_DISPLAY" in s["issues"] for s in occ["systems"]))
+        self.assertEqual(sum(1 for s in occ["systems"] if s["included"]), 1)
+
+    def test_a_mark_added_on_light_paper_before_a_fade_still_splits(self):
+        frames = self.fade_into_video(with_marks(show(strip(4), 0.0, 8.0, seed=1), range(20, 32), stroke), 28)
+        tracking, occ, recs, td = pipeline(frames)
+        self.addCleanup(td.cleanup)
+        self.assertEqual(len(tracking["content_steps"]), 1)
+        self.assertEqual(tracking["content_steps"][0]["state_with_ink"], "later")
+        self.assertEqual(tracking["episodes"][0]["n_obs"], 20)
+
+    def test_a_mark_removed_just_before_a_fade_still_splits(self):
+        # the stroke shows for 8 of 16 observations, is gone on clear paper for 4, then the plate
+        # fades: the faded members still vote, so the state without the stroke stays a state
+        frames = self.fade_into_video(with_marks(show(strip(4), 0.0, 4.0, seed=1), range(0, 8), stroke), 12)
+        tracking, occ, recs, td = pipeline(frames)
+        self.addCleanup(td.cleanup)
+        self.assertEqual(len(tracking["content_steps"]), 1)
+        self.assertEqual(tracking["content_steps"][0]["state_with_ink"], "earlier")
+        self.assertEqual(sum(1 for s in occ["systems"] if s["included"]), 2)
+        self.assertGreater(dark_pixels(cv2.imread(recs[0]["path"]), [700, 149, 761, 152], recs[0]), 60)
+        self.assertEqual(dark_pixels(cv2.imread(recs[1]["path"]), [700, 149, 761, 152], recs[1]), 0)
+
+    def test_a_plate_that_only_dips_below_clearly_light_is_judged(self):
+        # opaque gray paper at 221, then 219 with a stroke added for good: not a fade
+        frames = with_marks(show(strip(4), 0.0, 8.0, seed=1), range(20, 32), stroke)
+        frames = [(t, np.clip(img.astype(np.float32) * ((221 if i < 20 else 219) / 255.0), 0, 255).astype(np.uint8))
+                  for i, (t, img) in enumerate(frames)]
+        tracking, occ, recs, td = pipeline(frames)
+        self.addCleanup(td.cleanup)
+        self.assertEqual(len(tracking["content_steps"]), 1)
+        self.assertEqual(sum(1 for s in occ["systems"] if s["included"]), 2)
+
 
 def speck(img):
     cv2.circle(img, DOT, 1, (0, 0, 0), -1)

@@ -70,7 +70,7 @@ from app.pipeline import minority_content as mc
 from app.pipeline import page_diff
 from app.pipeline import system_detect
 
-TRACKING_VERSION = "system_tracking-6"  # 6: number steps require digit-scale differing ink and a printed number in both views
+TRACKING_VERSION = "system_tracking-7"  # 7: in a fade, members on paper that is not clearly light are not judged for content steps
 
 # layouts the tracker labels but the reflow refuses (reflow_pipeline.layout_gate)
 UNSUPPORTED_LAYOUTS = {"horizontal_scroll": "UNSUPPORTED_HORIZONTAL_SCROLL", "vertical_scroll": "UNSUPPORTED_VERTICAL_SCROLL"}
@@ -230,6 +230,7 @@ class _Member:
     ink_shape: Optional[Tuple[int, int]] = None
     ink_on_paper: Optional[np.ndarray] = None  # packed: ink-dark neutral ink, without components on video seen through the band
     overlay_cols: Optional[np.ndarray] = None  # colored-overlay and playhead columns of the band
+    paper: Optional[float] = None  # paper level of the raw band inside the staff (75th percentile)
 
 
 def _attach_ink(m: "_Member", band: np.ndarray, region: Dict[str, Any], raw_band: Optional[np.ndarray] = None) -> None:
@@ -245,6 +246,11 @@ def _attach_ink(m: "_Member", band: np.ndarray, region: Dict[str, Any], raw_band
     on_paper = mc.drop_on_video_background(neutral, mc.background_texture(raw_band, m.gap))[0] if raw_band is not None else neutral
     m.ink_on_paper = np.packbits(on_paper, axis=None)
     m.overlay_cols = mc.colored_columns(band) | mc.playhead_columns(band.shape[1], region, m.gap)
+    if raw_band is not None:
+        g = cv2.cvtColor(raw_band, cv2.COLOR_BGR2GRAY) if raw_band.ndim == 3 else raw_band
+        top = int(round(WINDOW_ABOVE_GAPS * m.gap))
+        rows = g[max(0, top):min(g.shape[0], int(round(top + 4 * m.gap)))]
+        m.paper = float(np.percentile(rows if rows.size else g, 75))
 
 
 @dataclass
@@ -558,10 +564,37 @@ def _band_top(members: List["_Member"]) -> int:
     return int(round(m.staff_top - WINDOW_ABOVE_GAPS * m.gap))
 
 
+def _faded_members(members: List[_Member]) -> List[bool]:
+    """Members of a fade into or out of the video behind the plate (6MPX's last line: paper
+    246 -> 133), whose added ink is not judged for content steps: the run of members at the
+    start or end of the episode whose paper is not clearly light, when other members show
+    clearly light paper and the run reaches paper as dark as the ink threshold (there the
+    background cannot be told from ink). Paper levels: reflow_occurrences.RAW_PAPER_MIN and
+    WRITTEN_INK_THRESHOLD. A dim stretch elsewhere, or a plate that only dips below clearly
+    light, keeps every member judged."""
+    from app.pipeline.reflow_occurrences import RAW_PAPER_MIN, WRITTEN_INK_THRESHOLD
+    n = len(members)
+    dim = [m.paper is not None and m.paper < RAW_PAPER_MIN for m in members]
+    out = [False] * n
+    if all(dim) or not any(dim):
+        return out
+    for run in (range(n), range(n - 1, -1, -1)):  # from the start, from the end
+        edge = []
+        for i in run:
+            if not dim[i]:
+                break
+            edge.append(i)
+        if edge and min(members[i].paper for i in edge) <= WRITTEN_INK_THRESHOLD:
+            for i in edge:
+                out[i] = True
+    return out
+
+
 def _content_step_events(members: List[_Member]) -> List[Dict[str, Any]]:
     """Minority content of an episode's members: neutral ink some members show and the
     majority of the members does not draw. Columns a member's overlay covers are not judged
-    for that member, nor are components on video seen through the band.
+    for that member, nor are components on video seen through the band, nor the ink members
+    of a fade add (``_faded_members``).
 
     Only ink a minority shows counts. A state that lacks some majority ink loses nothing
     from the composite; when the state that has the ink is the minority, that ink is
@@ -584,7 +617,13 @@ def _content_step_events(members: List[_Member]) -> List[Dict[str, Any]]:
     majority = (count.astype(np.int32) * 2 > seen[None, :].astype(np.int32)) & (seen[None, :] > 0)
     maj_d = mc._dilate(majority, mc.tolerance_px(g))
     added: Dict[int, np.ndarray] = {}
+    # members of a fade still vote for the majority (a state that lost ink stays a minority),
+    # but the background they show is not added content
+    faded = _faded_members(members)
     for i, (m, cv) in enumerate(zip(members, cols)):
+        if faded[i]:
+            added[i] = np.zeros(shape, bool)
+            continue
         mine = unpack(m.ink_on_paper, m)
         added[i] = mc.unexplained(mine, majority, cv, g, reference_dilated=maj_d)[0]
     added, _track = mc.remove_cursor_track(added, g)
@@ -614,6 +653,9 @@ def _split_on_content_steps(ep: _Episode, transients: List[Dict[str, Any]], log:
     left_shows = False
     y0 = _band_top(ms)
     g = float(np.median([m.gap for m in ms]))
+    # members of a fade are unknown: a run reaching the first or last judged member reaches the edge
+    judged = [i for i, faded in enumerate(_faded_members(ms)) if not faded] or [0, n - 1]
+    first, last = judged[0], judged[-1]
     for e in (events if events is not None else _content_step_events(ms)):
         x0, b0, x1, b1 = e["box"]
         if mc.in_screen_fixed_spot([x0, b0 + y0, x1, b1 + y0], e["area_px"], spots, g):
@@ -621,9 +663,9 @@ def _split_on_content_steps(ep: _Episode, transients: List[Dict[str, Any]], log:
         for i0, i1 in e["runs"]:
             if not mc.stable_run(times, i0, i1):
                 continue
-            if i0 == 0 and i1 < n - 1:
+            if i0 <= first and i1 < last:
                 k, shows_left = i1 + 1, True
-            elif i1 == n - 1 and i0 > 0:
+            elif i1 >= last and i0 > first:
                 k, shows_left = i0, False
             else:
                 continue
