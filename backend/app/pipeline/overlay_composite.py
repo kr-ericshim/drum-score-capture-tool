@@ -168,6 +168,10 @@ def _drop_moving_objects(core: np.ndarray, reps: Sequence[np.ndarray]) -> Tuple[
 # larger (a band, a frame, a logo) or lies outside the rows can be.
 SYMBOL_MAX_H_GAPS = 4.0   # a symbol, a letter, a boxed rehearsal label: at most this many staff gaps tall
 SYMBOL_MAX_W_GAPS = 12.0  # ... and this many wide (a boxed word label)
+# A section mark changes with the section, so it cannot sit at one place on most of many different
+# displays. With at least this many distinct displays, an object that does (CHROME_MIN_SHARE of
+# them, steady color) is screen chrome (an editor icon, a logo) even when symbol-sized in the rows.
+LOGO_MIN_DISPLAYS = 8
 
 
 def _protect_symbols(core: np.ndarray, protect: np.ndarray, gap: float) -> Tuple[np.ndarray, np.ndarray, List[List[int]]]:
@@ -210,7 +214,9 @@ def screen_fixed_chrome(images: Sequence[np.ndarray], *, protect: Optional[np.nd
     ``protect`` (same size, bool) and ``gap`` (staff gap px): the score-row zone. A candidate
     object that touches it and is symbol-sized (``_protect_symbols``) is kept out of the mask,
     the appearance and the enclosed areas (``info["protected_objects"]``; ``info["_protected"]``:
-    their pixels, a steady printed object for the composite's unrecovered count)."""
+    their pixels, a steady printed object for the composite's unrecovered count). The protection
+    applies only with fewer than ``LOGO_MIN_DISPLAYS`` distinct displays; with more, a symbol at
+    one place on most of them is chrome (``info["protect_skipped"]``)."""
     info: Dict[str, object] = {"samples": len(images), "displays": 0, "chrome_px": 0}
     if not images:
         return np.zeros((0, 0), bool), info
@@ -249,7 +255,9 @@ def screen_fixed_chrome(images: Sequence[np.ndarray], *, protect: Optional[np.nd
     core, moving = _drop_moving_objects(core, reps)
     info["moving_objects"] = moving
     protected = np.zeros(shape[:2], bool)
-    if protect is not None and gap and gap > 0 and protect.shape == shape[:2] and core.any():
+    if protect is not None and len(idx) >= LOGO_MIN_DISPLAYS:
+        info["protect_skipped"] = "many_displays"
+    elif protect is not None and gap and gap > 0 and protect.shape == shape[:2] and core.any():
         core, protected, boxes = _protect_symbols(core, protect.astype(bool), float(gap))
         info["protected_objects"] = boxes
         info["protected_px"] = int(protected.sum())

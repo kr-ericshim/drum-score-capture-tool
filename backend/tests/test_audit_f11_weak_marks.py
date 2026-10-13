@@ -245,6 +245,23 @@ class NoWeakMarksNoChange(unittest.TestCase):
         _mask, info = rs.weak_marks(comp, members=[comp.copy() for _ in range(5)], gap=12)
         self.assertGreaterEqual(info["components"], 1)
 
+    def test_broken_border_rule_at_the_edge_is_not_a_weak_mark(self):
+        # a faint panel border along the top row, broken into short pieces (corpus 0MiL, w7mK, aOED):
+        # kept as weak marks it held empty rows above every line and added a page
+        im = np.full((80, 400, 3), 250, np.uint8)
+        for x0 in range(0, 400, 50):
+            im[0, x0 + 4:x0 + 44] = 205  # eight pieces of 40 px: each a tenth of the width
+        cv2.putText(im, "pp", (40, 50), cv2.FONT_HERSHEY_SIMPLEX, .8, (200, 200, 200), 1, cv2.LINE_AA)
+        mask, info = rs.weak_marks(im, members=[im.copy() for _ in range(5)], gap=12)
+        self.assertGreaterEqual(info["components"], 1)
+        self.assertFalse(mask[0].any())
+        self.assertTrue(all(b[1] > 2 for b in info["boxes"]), info["boxes"])
+        # a few short pieces that do not span the edge stay marks
+        im2 = np.full((80, 400, 3), 250, np.uint8)
+        im2[0, 100:140] = 205
+        mask2, info2 = rs.weak_marks(im2, members=[im2.copy() for _ in range(5)], gap=12)
+        self.assertTrue(mask2[0].any())
+
 
 if __name__ == "__main__":
     unittest.main()

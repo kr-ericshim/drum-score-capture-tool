@@ -178,6 +178,28 @@ class ProtectZoneUnit(unittest.TestCase):
         mask, info = oc.screen_fixed_chrome(reps, protect=zone, gap=3.0)  # 4 gaps = 12 px: the letter is larger
         self.assertTrue(mask.any())
 
+    def test_symbol_fixed_on_most_of_many_displays_is_chrome(self):
+        # an editor icon or logo at one place on every line of a long video (corpus SZwT): a section
+        # mark changes with the section, so it cannot repeat on most of many different displays
+        def reps(n):
+            out = []
+            for k in range(n):
+                im = staff(notes=[60 + 70 * j + 11 * k * (j % 3) for j in range(10)])
+                cv2.putText(im, "A", (180, 180), cv2.FONT_HERSHEY_SIMPLEX, .9, RED, 2, cv2.LINE_AA)
+                out.append(im)
+            return out
+        many = reps(oc.LOGO_MIN_DISPLAYS)
+        zone = np.ones(many[0].shape[:2], bool)
+        mask, info = oc.screen_fixed_chrome(many, protect=zone, gap=14.0)
+        self.assertEqual(info["displays"], oc.LOGO_MIN_DISPLAYS)
+        self.assertEqual(info.get("protect_skipped"), "many_displays")
+        self.assertTrue(mask[165:182, 179:198].any())
+        few = reps(oc.LOGO_MIN_DISPLAYS - 1)
+        mask, info = oc.screen_fixed_chrome(few, protect=zone, gap=14.0)
+        self.assertEqual(info["displays"], oc.LOGO_MIN_DISPLAYS - 1)
+        self.assertFalse(mask.any())
+        self.assertEqual(len(info["protected_objects"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

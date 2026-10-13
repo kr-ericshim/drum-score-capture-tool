@@ -1360,6 +1360,26 @@ WEAK_EDGE_ROWS = 3        # a long rule in the strip's outer rows is a UI border
 WEAK_EDGE_SPAN = 0.5      # ... when it spans this share of the width
 
 
+def _edge_rule_parts(stats: np.ndarray, h: int, w: int) -> set:
+    """Labels of the candidate components that form a UI border rule along the top or bottom edge:
+    thin (at most ``WEAK_EDGE_ROWS`` rows) components in the outer ``WEAK_EDGE_ROWS`` rows whose
+    columns, together per edge, cover at least ``WEAK_EDGE_SPAN`` of the width. A faint border is
+    often broken into many short pieces (by the ink it passes, by compression), none of which
+    spans the width alone."""
+    parts: set = set()
+    for top in (True, False):
+        labels, cols = [], np.zeros(w, bool)
+        for c in range(1, len(stats)):
+            x, y, bw, bh, _a = (int(v) for v in stats[c])
+            if bh > WEAK_EDGE_ROWS or not (y < WEAK_EDGE_ROWS if top else y + bh > h - WEAK_EDGE_ROWS):
+                continue
+            labels.append(c)
+            cols[x:x + bw] = True
+        if labels and cols.sum() >= WEAK_EDGE_SPAN * w:
+            parts.update(labels)
+    return parts
+
+
 def weak_marks(norm: np.ndarray, *, members: Optional[Sequence[np.ndarray]] = None, gap: Optional[float] = None,
                inverted: bool = False) -> Tuple[np.ndarray, Dict[str, Any]]:
     """Weak notation (audit F11) on the raw, polarity-normalized composite ``norm`` (before any
@@ -1373,7 +1393,9 @@ def weak_marks(norm: np.ndarray, *, members: Optional[Sequence[np.ndarray]] = No
     stroke (at most ``FAINT_MAX_STROKE_GAPS`` gaps thick) and, with at least 3 member crops
     (``members``, raw, same box), more than ``FAINT_PRESENT_SHARE`` of them show it at the same
     place. Not marks: the anti-aliased rim of dark ink (``WEAK_HALO_PX``) and a long rule in the
-    outer rows (``WEAK_EDGE_ROWS``, a UI border). Unclear components are marks.
+    outer rows (``WEAK_EDGE_ROWS``, a UI border), also when it is broken into pieces: the thin
+    components along one edge are judged together by the columns they cover (``_edge_rule_parts``).
+    Unclear components are marks.
 
     Returns (mask, info); the mask is the protection used for the crop (rows kept), the cleanup
     (``dark_theme_cleanup`` ``weak``) and the survival check (``finish_strip``)."""
@@ -1397,11 +1419,10 @@ def weak_marks(norm: np.ndarray, *, members: Optional[Sequence[np.ndarray]] = No
     evidence = len(mgs) >= 3
     n_c, lab, st, _c = cv2.connectedComponentsWithStats(cand.astype(np.uint8), connectivity=8)
     r = max(3, int(round(FAINT_RING_GAPS * g)))
+    border = _edge_rule_parts(st, h, w)
     for c in range(1, n_c):
         x, y, bw, bh, area = (int(v) for v in st[c])
-        if area < mc.MIN_COMPONENT_PX:
-            continue
-        if bh <= WEAK_EDGE_ROWS and bw >= WEAK_EDGE_SPAN * w and (y < WEAK_EDGE_ROWS or y + bh > h - WEAK_EDGE_ROWS):
+        if area < mc.MIN_COMPONENT_PX or c in border:
             continue
         x0, y0, x1, y1 = max(0, x - r), max(0, y - r), min(w, x + bw + r), min(h, y + bh + r)
         comp = lab[y0:y1, x0:x1] == c
