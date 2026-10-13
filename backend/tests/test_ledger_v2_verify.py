@@ -1,6 +1,5 @@
 """Small raw-evidence controls and mutations for the display-ledger-2 verifier."""
 import copy
-import io
 import json
 import tempfile
 import time
@@ -11,7 +10,6 @@ from unittest.mock import patch
 
 import cv2
 import numpy as np
-from PIL import Image
 
 from app.pipeline import reflow_ledger as rl
 from app.pipeline.export import export_composed_pages

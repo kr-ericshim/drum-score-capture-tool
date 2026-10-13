@@ -40,7 +40,6 @@ the pre_crop, and its separate copy_index never copies the system's other ink.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -61,7 +60,6 @@ MEASURE_VERSION = "reflow_measure-3"  # 2: staff-size floor, forced breaks at st
 LABEL_PAD_GAPS = 0.3  # padding inside a drawn outline box
 LABEL_SEP_GAPS = 0.4  # space between the label box and the line content below it
 OUTLINE_PX = 3  # ~0.25 mm at 300 dpi
-INK_INFLUENCE = 35  # an output column is scaffold-only when no non-staff ink reaches it
 
 
 class MeasurePlanUnavailable(RuntimeError):
@@ -71,10 +69,6 @@ class MeasurePlanUnavailable(RuntimeError):
         self.reason = reason
         self.detail = detail or {}
         super().__init__(reason)
-
-
-def _sha(a: np.ndarray) -> str:
-    return hashlib.sha256(np.ascontiguousarray(a).tobytes()).hexdigest()
 
 
 def load_context(workspace: Optional[Path]) -> Optional[Dict[str, Any]]:
@@ -1072,7 +1066,6 @@ def _ledger_line_records(ledger: dict, strips: dict, placement_keys: list,
 def _scaffold_origin(st: dict, line_id: str, x0: int, x1: int, height: int, col: int, y: int, op: str) -> dict:
     s = float(st.get("scale", 1))
     dx, dy = st.get("pre_crop", [0, 0])
-    H = st["image"].shape[0]
     spec = _resample_record(st)
     sx, sy = spec["output_size"][0] / spec["source_size"][0], spec["output_size"][1] / spec["source_size"][1]
     native_rows = (st.get("record") or {}).get("staff_y_strip", [])

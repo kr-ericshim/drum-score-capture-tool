@@ -351,22 +351,6 @@ def minority_events(masks: Dict[int, np.ndarray], gap: float, *, single_observat
     return events
 
 
-def merge_runs(events: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Events whose runs overlap in time form one group: one alternate shows them together.
-    Returns [{"run": (i0, i1), "events": [event indices]}] in time order."""
-    spans = sorted(((r0, r1, k) for k, e in enumerate(events) for r0, r1 in e["runs"]), key=lambda s: s[0])
-    groups: List[Dict[str, Any]] = []
-    for r0, r1, k in spans:
-        if groups and r0 <= groups[-1]["run"][1]:
-            g = groups[-1]
-            g["run"] = (g["run"][0], max(g["run"][1], r1))
-            if k not in g["events"]:
-                g["events"].append(k)
-        else:
-            groups.append({"run": (r0, r1), "events": [k]})
-    return groups
-
-
 # --------------------------------------------------------------------------- #
 # Round 5: stable steps, display-edge transitions, marks fixed to the screen
 # --------------------------------------------------------------------------- #
@@ -382,21 +366,6 @@ RECUR_MAX_EXTENT_GAPS = 0.75  # ... and at most 0.75 gap wide and tall (a lyric 
 def stable_run(times: Sequence[float], i0: int, i1: int) -> bool:
     """A run of observations ``i0..i1`` (inclusive) that lasts like a confirmed display."""
     return (i1 - i0 + 1) >= STABLE_RUN_MIN_OBS and (float(times[i1]) - float(times[i0])) >= STABLE_RUN_MIN_SEC - 1e-6
-
-
-def edge_transition_runs(runs: Sequence[Sequence[int]], n: int, times: Sequence[float], *, starts_with_change: bool,
-                         ends_with_change: bool) -> List[Tuple[int, int]]:
-    """Runs of an event that are a hand-over between displays: a run touching the display's first
-    (last) member when the display starts (ends) with another display, too short to be a state
-    of its own (``stable_run``). A page curl or cross-fade draws the neighbouring display's ink
-    there; a stable run at an edge is a content step (system_tracking splits the display)."""
-    out = []
-    for i0, i1 in runs:
-        at_start = i0 == 0 and starts_with_change
-        at_end = i1 == n - 1 and ends_with_change
-        if (at_start or at_end) and not stable_run(times, i0, i1):
-            out.append((int(i0), int(i1)))
-    return out
 
 
 def is_speck(box: Sequence[int], area_px: float, gap: float) -> bool:

@@ -877,7 +877,6 @@ def create_job(payload: JobCreate) -> JobCreateResponse:
         raise HTTPException(status_code=400, detail=str(exc))
 
     _apply_auto_layout_hints(payload)
-    detect_opts = payload.options.detect
 
     normalized_source_identity = _normalize_source_identity_payload(
         payload.source_identity.model_dump() if payload.source_identity else {}
@@ -3317,21 +3316,6 @@ def _resolve_selected_capture_paths_for_job(
     return requested_order
 
 
-def _build_export_options(*, formats: List[str]):
-    from app.schemas import ExportOptions
-
-    tokens = [str(value or "").strip().lower() for value in formats]
-    normalized: List[str] = []
-    for token in tokens:
-        if token == "jpeg":
-            token = "jpg"
-        if token in {"png", "jpg", "pdf"} and token not in normalized:
-            normalized.append(token)
-    if not normalized:
-        normalized = ["png", "pdf"]
-    return ExportOptions(formats=normalized, include_raw_frames=False)
-
-
 def _apply_auto_layout_hints(payload: JobCreate) -> None:
     detect_opts = payload.options.detect
     stitch_opts = payload.options.stitch
@@ -3348,26 +3332,6 @@ def _build_stitch_options(raw_options: Optional[dict[str, object]]):
 
     payload = raw_options if isinstance(raw_options, dict) else {}
     return StitchOptions(**payload)
-
-
-def _clear_export_workspace(workspace: Path) -> None:
-    image_dir = workspace / "images"
-    raw_dir = workspace / "raw_frames"
-    for directory in (image_dir, raw_dir):
-        if not directory.exists():
-            continue
-        for pattern in ("*.png", "*.jpg", "*.jpeg"):
-            for file_path in directory.glob(pattern):
-                try:
-                    file_path.unlink()
-                except OSError:
-                    continue
-    pdf_path = workspace / "sheet_export.pdf"
-    if pdf_path.exists():
-        try:
-            pdf_path.unlink()
-        except OSError:
-            pass
 
 
 def _create_staged_export_workspace(*, target_workspace: Path) -> Path:
@@ -3599,7 +3563,7 @@ def _probe_video_resolution_with_opencv(path: Path) -> tuple[int, int]:
         height = int(round(float(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)))
         if width > 0 and height > 0:
             return width, height
-            return 0, 0
+        return 0, 0
     finally:
         cap.release()
 

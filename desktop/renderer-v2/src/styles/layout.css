@@ -515,7 +515,6 @@
   .screen-headline-review { flex-direction: row; align-items: center; }
   .review-heading-copy { flex: 1; }
   .screen-headline-review .review-toolbar { max-width: 50%; }
-  .screen-headline-review .review-summary-pills { display: none; }
 }
 @media (max-width: 720px) {
   .app-shell[data-step="review"] .process-rail { gap: 8px; padding: 8px 12px; flex-wrap: wrap; }
@@ -555,13 +554,7 @@
   border-top: 1px solid var(--line-soft);
   gap: 12px 24px;
 }
-.screen-headline-review .review-summary-pills {
-  display: flex;
-  justify-content: flex-start;
-  align-items: center;
-}
 .review-output-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.review-save-context { min-width: 0; flex: 1; }
 .screen-headline-review .review-save-hint {
   white-space: normal;
   overflow: visible;

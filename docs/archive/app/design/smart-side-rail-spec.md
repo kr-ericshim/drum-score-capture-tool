@@ -4,15 +4,15 @@
 > **기준 버전**: 2026-09-24  
 > **상태**: 채택 완료 (Approved Design Direction)  
 > **참조 에셋 및 목업**:
-> - 기본 창 크기 실측: [docs/design/assets/proposal_a_1440x960.png](file:///Users/ericshim/Documents/myproject/score_capture_program/docs/design/assets/proposal_a_1440x960.png)
-> - 최소 창 크기 실측: [docs/design/assets/proposal_a_1120x840.png](file:///Users/ericshim/Documents/myproject/score_capture_program/docs/design/assets/proposal_a_1120x840.png)
-> - 대화형 프로토타입 HTML: [docs/design/review_screen_comparison.html](file:///Users/ericshim/Documents/myproject/score_capture_program/docs/design/review_screen_comparison.html)
+> - 기본 창 크기 실측: [assets/proposal_a_1440x960.png](assets/proposal_a_1440x960.png)
+> - 최소 창 크기 실측: [assets/proposal_a_1120x840.png](assets/proposal_a_1120x840.png)
+> - 대화형 프로토타입 HTML: [review_screen_comparison.html](review_screen_comparison.html)
 
 ---
 
 ## 후속 전체 적용 (2026-09-24)
 
-사용자가 1~4단계 전체에 A와 유사한 구조를 요청하고 어두운 색상을 철회했다. 현재 구현 기준은 `../DESIGN.md`의 Light Side-Rail Workspace이다. 이 문서의 다크 색상표는 과거 시안이며 더 이상 구현 기준이 아니다.
+사용자가 1~4단계 전체에 A와 유사한 구조를 요청하고 어두운 색상을 철회했다. 현재 구현 기준은 `docs/DESIGN.md`의 Light Side-Rail Workspace이다. 이 문서의 다크 색상표는 과거 시안이며 더 이상 구현 기준이 아니다.
 
 ## 구현 검토 수정사항 (2026-09-24)
 

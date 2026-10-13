@@ -9,3 +9,5 @@
   - `ORIGINAL_SCREENS_FALLBACK_REVIEW.md`는 사용자가 거절한 fallback 방향이다. fallback은 `docs/reflow/ORIGINAL_SCREENS_DESIGN.md`(단순판)만 따른다.
 - `app/`: reflow 이전 앱 개발의 계획과 보고서(2026-03 – 09).
   - `planning/`은 예전 `.planning/`(GSD 단계 계획), `superpowers/`, `plans/`, `reports/`는 예전 `docs/` 하위 폴더다.
+  - `design/`: 2026-09-24 다크 사이드레일 시안 A 명세(`smart-side-rail-spec.md`), 검토 화면 비교 프로토타입과 그 이미지(예전 `docs/design/`). `reports/2026-09-27-main-consolidation/preview.html`이 이 이미지를 쓴다.
+  - `DEVELOPMENT_KR.md`: 2026-02의 개발 운영 문서(상태, 백로그, 빌드 변형, 오류 대응). 예전 저장소 루트 파일이다.

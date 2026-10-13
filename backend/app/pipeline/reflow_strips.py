@@ -90,7 +90,6 @@ from app.pipeline import system_detect as sd
 from app.pipeline.overlay_composite import _MAX_MEMBERS, _MAX_SHIFT_PX, _alignment_gray, _overlay_columns
 from app.pipeline.paper_tone import flatten_paper_background
 
-STRIPS_VERSION = "reflow_strips-1"
 PAD_V_GAPS = 0.75
 PAD_H_GAPS = 0.5
 ENVELOPE_SAMPLES = 3
@@ -2705,7 +2704,6 @@ def build_strip(system: Dict[str, Any], manifest: Dict[str, Any], load_image: Im
     minority["speckle_dropped"] += inventory["speckle_dropped"]
     rejected = {v["obs_id"]:v for v in minority.get("rejected_observations", [])}
     transitions = {v["obs_id"]:v for v in minority.get("ineligible_observations", [])}
-    ineligible = set(rejected) | set(transitions)
     full_palette = None
     if inventory["events"] and chrome is not None:
         full_palette = chrome_palette([load_image(obs_by[m["obs_id"]]) for m in picked], chrome)

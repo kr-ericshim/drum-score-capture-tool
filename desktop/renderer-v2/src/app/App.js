@@ -18,7 +18,6 @@ import {
   isReviewableRun,
   jobRevision,
   formatSecondsLabel,
-  getAccessibleSteps,
   getProcessRailItems,
   getSourcePrepareSummary,
   getTopBarSummary,
@@ -2173,39 +2172,6 @@ export function createApp(root, dependencies = {}) {
         next.exportConfig.documentHeader,
         sourceDocumentDisplayName(next.source),
       );
-      return next;
-    });
-  }
-
-  function updateExportMetadata(field, value) {
-    const state = store.getState();
-    const modal = state.exportConfig.metadataModal;
-    if (!modal?.isOpen || !field || state.exportConfig.runStatus === "running") {
-      return;
-    }
-    const nextValue = sanitizeDocumentHeaderDraftField(field, value);
-    setState((next) => {
-      const currentModal = next.exportConfig.metadataModal || createExportMetadataModalState(
-        next.source.filePath,
-        new Date(),
-        createDocumentHeaderState(next.source.filePath, new Date(), sourceDocumentDisplayName(next.source)),
-        sourceDocumentDisplayName(next.source),
-      );
-      const draft = {
-        ...currentModal.draft,
-        [field]: nextValue,
-      };
-      currentModal.draft = draft;
-      currentModal.dirty = isExportMetadataDirty(draft, next.exportConfig.documentHeader);
-      currentModal.showDiscardConfirm = false;
-      next.exportConfig.error = "";
-      if (field === "title") {
-        currentModal.validation.title = "";
-      }
-      if (field === "bpm") {
-        currentModal.validation.bpm = "";
-      }
-      next.exportConfig.metadataModal = currentModal;
       return next;
     });
   }

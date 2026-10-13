@@ -90,11 +90,6 @@ def _matrix(value: Sequence[Sequence[float]]) -> np.ndarray:
     return m
 
 
-def _bbox(mask: np.ndarray) -> list[int]:
-    ys, xs = np.nonzero(mask)
-    return [int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1]
-
-
 def _boxes(union: np.ndarray) -> list[tuple[list[int], np.ndarray]]:
     """Connected hypotheses, tiled when large; no area/duration filtering."""
     n, labels, stats, _ = cv2.connectedComponentsWithStats(union.astype(np.uint8), 8)

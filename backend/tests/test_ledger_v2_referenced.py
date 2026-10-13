@@ -1,7 +1,6 @@
 """Round-2 referenced evidence, streaming, supersede and fractional-cut controls."""
 import copy
 import gc
-import hashlib
 import json
 import tempfile
 import time

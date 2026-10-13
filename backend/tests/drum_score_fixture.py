@@ -233,9 +233,6 @@ def degrade(image: np.ndarray, spec_or_degrade: Degrade) -> np.ndarray:
     return out
 
 
-VIDEO_LIKE = Degrade(scale=0.75, blur=0.8, jpeg_quality=70, noise=2.0)
-
-
 def add_note(spec: PageSpec, system: int, bar: int, slot: int, line: float) -> PageSpec:
     spec = spec.copy()
     spec.notes.setdefault((system, bar, slot), []).append(line)

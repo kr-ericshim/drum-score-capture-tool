@@ -24,7 +24,6 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
-import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import candidates as K  # noqa: E402

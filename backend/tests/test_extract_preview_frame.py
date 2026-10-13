@@ -16,30 +16,6 @@ class _Result:
         self.stdout = stdout
 
 
-class _FakeProgressProcess:
-    def __init__(self, out_path: Path):
-        self.returncode = 0
-        self.stdout = iter(
-            [
-                "frame=1\n",
-                "out_time=00:00:02.000000\n",
-                "progress=continue\n",
-                "frame=2\n",
-                "out_time=00:00:05.000000\n",
-                "progress=end\n",
-            ]
-        )
-        self.stderr = self
-        self._out_path = out_path
-
-    def wait(self):
-        self._out_path.write_bytes(b"png")
-        return self.returncode
-
-    def read(self):
-        return ""
-
-
 class TestPreviewFrameExtraction(unittest.TestCase):
     def test_main_frame_extraction_emits_live_progress(self):
         with tempfile.TemporaryDirectory() as td:

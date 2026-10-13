@@ -12,7 +12,6 @@ import numpy as np
 from app.pipeline import reflow_boundaries as rb
 from app.pipeline import reflow_layout as rl
 from app.pipeline import reflow_lines as rlines
-from app.pipeline import reflow_measure as rmeas
 from app.pipeline import reflow_pipeline as rp
 from app.pipeline import system_detect as sd
 

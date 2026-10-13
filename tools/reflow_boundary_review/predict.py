@@ -23,7 +23,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import common as C  # noqa: E402
 
 sys.path.insert(0, str(C.REPO / "backend" / "tests"))
-from app.pipeline import reflow_accounting as ra  # noqa: E402
 from app.pipeline import reflow_boundaries as rb  # noqa: E402
 from app.pipeline import reflow_units as ru  # noqa: E402
 

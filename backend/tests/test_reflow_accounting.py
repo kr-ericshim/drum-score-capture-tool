@@ -2,7 +2,6 @@
 
 import unittest
 
-import cv2
 import numpy as np
 
 from app.pipeline import reflow_accounting as ra

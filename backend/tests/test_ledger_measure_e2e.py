@@ -6,7 +6,6 @@ import tempfile
 import time
 import unittest
 from collections import Counter
-from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
 

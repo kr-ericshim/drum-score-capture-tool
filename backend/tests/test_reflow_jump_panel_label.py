@@ -11,7 +11,7 @@ faded near-panel ink in >= ``label_recur_min_others`` + 1 displays of the chain
 from __future__ import annotations
 
 import unittest
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict
 
 import cv2
 import numpy as np

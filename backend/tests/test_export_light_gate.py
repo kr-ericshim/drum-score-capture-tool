@@ -1,7 +1,6 @@
 """I-2: real staged files, lightweight app gate, and transactional negative controls."""
 import importlib.util
 import json
-import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch

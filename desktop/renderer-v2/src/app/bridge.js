@@ -43,12 +43,6 @@ export const bridge = {
   runGuidedSetup() {
     return window?.drumSheetAPI?.runGuidedSetup?.() || Promise.resolve("");
   },
-  getAlwaysOnTop() {
-    return window?.drumSheetAPI?.getAlwaysOnTop?.() || Promise.resolve(false);
-  },
-  setAlwaysOnTop(enabled) {
-    return window?.drumSheetAPI?.setAlwaysOnTop?.(enabled) || Promise.resolve(false);
-  },
   getBackendState() {
     return window?.drumSheetAPI?.getBackendState?.() || Promise.resolve({
       ready: false,

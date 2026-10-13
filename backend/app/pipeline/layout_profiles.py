@@ -8,7 +8,6 @@ LayoutMode = Literal["bottom_bar", "full_scroll", "page_turn"]
 FallbackMode = Literal["bottom", "center", "full_page"]
 
 
-LAYOUT_AUTO = "auto"
 LAYOUT_BOTTOM_BAR: LayoutMode = "bottom_bar"
 LAYOUT_FULL_SCROLL: LayoutMode = "full_scroll"
 LAYOUT_PAGE_TURN: LayoutMode = "page_turn"
@@ -130,7 +129,3 @@ def _roi_bounds(roi: Optional[Sequence[Sequence[float]]]) -> Optional[tuple[floa
     width = max(xs) - min(xs)
     height = max(ys) - min(ys)
     return width, height
-
-
-def get_detection_profile(layout_mode: LayoutMode) -> DetectionProfile:
-    return DETECTION_PROFILES.get(layout_mode, DETECTION_PROFILES[LAYOUT_FULL_SCROLL])

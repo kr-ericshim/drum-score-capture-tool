@@ -8,12 +8,11 @@ from unittest.mock import patch
 import cv2
 import numpy as np
 from fastapi import HTTPException
-from PIL import Image
 
 from app import main
 from app.job_store import JobStatus
 from app.pipeline import reflow_ledger as rl, reflow_pipeline as rp, reflow_strips as rs, source_class as sc
-from app.pipeline.export import COMPOSED_JPEG_QUALITY, export_composed_pages
+from app.pipeline.export import export_composed_pages
 from app.schemas import JobReviewExportRequest
 import test_reflow_ledger as ledger_fixture
 import test_reflow_review_export as flow_fixture

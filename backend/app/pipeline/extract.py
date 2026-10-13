@@ -354,39 +354,6 @@ def _build_youtube_postprocessor_hook(*, progress_callback, logger):
     return hook
 
 
-def _download_progress_fraction(status: Dict[str, object]) -> Optional[float]:
-    total = _int_from_status(status.get("total_bytes"))
-    if total <= 0:
-        total = _int_from_status(status.get("total_bytes_estimate"))
-    downloaded = _int_from_status(status.get("downloaded_bytes"))
-    if total > 0 and downloaded >= 0:
-        return max(0.0, min(1.0, downloaded / total))
-
-    percent_text = str(status.get("_percent_str") or "").strip().replace("%", "")
-    if not percent_text:
-        return None
-    try:
-        return max(0.0, min(1.0, float(percent_text) / 100.0))
-    except ValueError:
-        return None
-
-
-def _int_from_status(value: object) -> int:
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
-def _postprocessor_message(postprocessor: str) -> str:
-    label = str(postprocessor or "").lower()
-    if "merger" in label:
-        return "merge audio and video"
-    if "ffmpeg" in label:
-        return "processing downloaded media"
-    return "post-processing media"
-
-
 def _resolve_node_runtime_bin() -> str:
     configured = str(os.getenv("DRUMSHEET_NODE_BIN") or "").strip()
     if configured:
@@ -770,27 +737,6 @@ def _resolve_extract_duration_seconds(
     if duration <= 0:
         return 0.0
     return max(0.0, duration - start)
-
-
-def _consume_ffmpeg_progress(process, *, expected_duration: float, progress_callback) -> None:
-    if not process.stdout:
-        return
-    last_percent = -1
-    for raw_line in process.stdout:
-        if not progress_callback:
-            continue
-        key, _, value = str(raw_line or "").strip().partition("=")
-        if key != "out_time":
-            continue
-        seconds = _parse_ffmpeg_out_time_seconds(value)
-        if seconds is None or expected_duration <= 0:
-            continue
-        fraction = max(0.0, min(seconds / expected_duration, 1.0))
-        percent = int(round(fraction * 100.0))
-        if percent <= last_percent:
-            continue
-        last_percent = percent
-        _emit_frame_extract_progress(progress_callback, progress=fraction)
 
 
 def _parse_ffmpeg_out_time_seconds(value: object) -> Optional[float]:

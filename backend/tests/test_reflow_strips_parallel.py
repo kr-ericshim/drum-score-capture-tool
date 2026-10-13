@@ -13,7 +13,6 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from unittest.mock import patch
 
-import cv2
 import numpy as np
 
 from app.pipeline import observations as ob

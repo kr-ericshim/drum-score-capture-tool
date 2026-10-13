@@ -479,7 +479,6 @@ def register_pair(a: Dict[str, Any], b: Dict[str, Any], panel_right: int, cfg: D
     s = max(1, int(round(gap / float(coarse_gap_px or cfg["coarse_gap_px"]))))
     ca, cva = _downscale(fa, va, s)
     cb, cvb = _downscale(fb, vb, s)
-    wc = ca.shape[1]
     lim_c = int((w - panel_right - min_overlap) // s)
     curve_c: Dict[int, Tuple[float, int, int]] = {}
     for dxc in range(-lim_c, lim_c + 1):

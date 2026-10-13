@@ -112,7 +112,6 @@ FINAL_RAGGED_EDGE_COST = 5.0  # edge choice only (plan_document)
 RAGGED_INSUFFICIENT_SLACK = "INSUFFICIENT_SLACK"  # no break choice between two forced breaks lets every line reach it
 RAGGED_LOCKED_SPAN = "LOCKED_SPAN"  # unsplittable content (locked group, whole system, one long measure) with too little whitespace
 RAGGED_SEGMENT_TOO_SHORT = "SEGMENT_TOO_SHORT"  # all content between two forced breaks is shorter than a line can stretch
-RAGGED_PREFIX_CONSTRAINT = "PREFIX_CONSTRAINT"
 RAGGED_OVERHANG_AT_MARGIN = "OVERHANG_AT_MARGIN"  # at this edge the line's overhang ink (a "Fine" box) would cross the page margin
 
 

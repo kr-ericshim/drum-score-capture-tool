@@ -2,8 +2,6 @@
 import copy
 import hashlib
 import json
-import os
-import resource
 import tempfile
 import time
 import unittest

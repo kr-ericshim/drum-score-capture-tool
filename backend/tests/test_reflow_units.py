@@ -3,14 +3,13 @@
 import copy
 import unittest
 
-import numpy as np
 
 from app.pipeline import reflow_boundaries as rb
 from app.pipeline import reflow_units as ru
 from app.pipeline import system_detect as sd
 from drum_score_fixture import render
 import reflow_fixture as rf
-from test_reflow_boundaries import bar_x, make_strip, observations_of
+from test_reflow_boundaries import make_strip, observations_of
 
 
 def system(sid, img, rec, *, obs="auto", included=True, **kw):

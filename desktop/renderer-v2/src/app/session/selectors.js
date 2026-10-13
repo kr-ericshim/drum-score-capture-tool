@@ -967,7 +967,6 @@ export function deriveCapturePages(result = {}, locale = "en") {
   const reviewCandidates = Array.isArray(result.review_candidates) ? result.review_candidates : [];
   const finalImages = Array.isArray(result.images) ? result.images : [];
   const reviewSelectionMode = String(result.review_export?.selection_mode || "");
-  const hasReviewExport = Boolean(result.review_export);
   // Clean reflow jobs: review items are the cleaned system strips in their current order.
   const isReflow = result.output_model === "clean_reflow_v1";
   let capturePaths = finalImages;

@@ -258,7 +258,6 @@ def declef_patch(an: rb.StripAnalysis) -> Dict[str, Any]:
     cp = clef_patch(an)
     if not cp.get("verified"):
         return dict(out, reason=cp.get("reason") or "CLEF_NOT_VERIFIED")
-    g = an.gap
     l = an.staff["lines"]
     b0, b1 = an.band
     clef_ids = cp["_clef_ids"]

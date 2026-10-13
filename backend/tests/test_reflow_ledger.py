@@ -1,5 +1,4 @@
 """Mutation and control tests using raw member evidence and delivered JPEG PDFs."""
-import copy
 import json
 import tempfile
 import unittest

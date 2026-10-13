@@ -6,7 +6,6 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
-from threading import Event
 from unittest.mock import patch
 
 import cv2
@@ -17,8 +16,7 @@ from app import main
 from app.job_store import Job, JobStatus, JobStore
 from app.pipeline import observations as ob, reflow_jump as jump, reflow_pipeline as pipeline
 from app.pipeline import reflow_seam_reject as repair, system_tracking as tracking
-from app.pipeline.process_control import OperationCancelled, operation_scope
-from app.pipeline.reflow_line_review import build_line_review
+from app.pipeline.process_control import OperationCancelled
 from app.schemas import JobReviewExportRequest
 from reflow_fixture import build, loader
 from test_reflow_jump import JUMP, VIEW_W, long_score

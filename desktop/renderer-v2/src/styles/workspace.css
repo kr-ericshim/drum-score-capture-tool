@@ -17,7 +17,6 @@
   background-size: 18px 18px;
 }
 
-.app-shell .float-surface,
 .app-shell[data-step] .process-rail {
   background: var(--bg-panel);
   border: 1px solid var(--line-soft);
@@ -403,7 +402,6 @@
 .app-shell[data-step] .panel { background: transparent; border: 0; border-radius: 0; box-shadow: none; }
 .app-shell[data-step] .panel-heading h2 { font-size: 13px; font-weight: 650; line-height: 1.35; color: var(--text-1); letter-spacing: -0.005em; text-transform: none; }
 .app-shell[data-step] .panel-heading p { font-size: 12px; line-height: 1.5; color: var(--text-2); }
-.app-shell .mono-figure { font-family: var(--sans); font-variant-numeric: tabular-nums; }
 
 /* ---------- Screen frame: panel (headline + controls) beside the canvas ---------- */
 .app-shell[data-step] .screen {
@@ -581,7 +579,6 @@
   --drop-br: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b3b3b3' stroke-width='1.5' stroke-linecap='round'><path d='M23 1v18a4 4 0 0 1-4 4H1'/></svg>");
   --drop-bl: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b3b3b3' stroke-width='1.5' stroke-linecap='round'><path d='M23 23H5a4 4 0 0 1-4-4V1'/></svg>");
 }
-.app-shell.is-source-drop-active .screen-source,
 .screen-source.is-drop-active {
   --drop-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230a6ccc' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><rect x='2.5' y='5' width='19' height='14' rx='2.5'/><path d='M10 9.3v5.4l4.6-2.7z'/></svg>");
   --drop-tl: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230d99ff' stroke-width='2.4' stroke-linecap='round'><path d='M1 23V5a4 4 0 0 1 4-4h18'/></svg>");
@@ -610,7 +607,6 @@
   letter-spacing: -0.005em;
   transition: background-color var(--dur-enter) var(--ease-out), color var(--dur-enter) var(--ease-out);
 }
-.app-shell.is-source-drop-active .screen-source .source-registry::before,
 .screen-source.is-drop-active .source-registry::before { background-color: var(--accent-soft); color: var(--accent); }
 .screen-source .source-registry > .panel-heading,
 .screen-source .registry-table-wrap {

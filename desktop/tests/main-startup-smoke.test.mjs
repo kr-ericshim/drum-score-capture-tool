@@ -39,14 +39,6 @@ test("main process startup contract loads renderer-v2 through the isolated prelo
     isDestroyed() {
       return false;
     }
-
-    setAlwaysOnTop(enabled) {
-      this.alwaysOnTop = Boolean(enabled);
-    }
-
-    isAlwaysOnTop() {
-      return Boolean(this.alwaysOnTop);
-    }
   }
 
   const app = new EventEmitter();

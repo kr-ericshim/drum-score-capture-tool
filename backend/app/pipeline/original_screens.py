@@ -26,7 +26,6 @@ from app.pipeline.process_control import checkpoint, report_progress
 from app.pipeline.stitch import select_review_candidates
 from app.schemas import ExtractOptions, StitchOptions
 
-OUTPUT_MODEL = "original_screens_v1"
 INTERVAL_SEC = 0.5  # fixed capture interval (2 fps)
 DEDUPE = StitchOptions(dedupe_level="sensitive", layout_hint="page_turn")
 ONE_LINE_MIN_ASPECT = 2.25  # the old app's bottom_bar rule (inferLayoutHintFromRoi)

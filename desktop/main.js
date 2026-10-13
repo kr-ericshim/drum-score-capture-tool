@@ -913,22 +913,6 @@ ipcMain.handle("select-video-file", async () => {
     return true;
   });
 
-  ipcMain.handle("set-always-on-top", async (_, enabled) => {
-    if (!mainWindow || mainWindow.isDestroyed()) {
-      return false;
-    }
-    const next = Boolean(enabled);
-    mainWindow.setAlwaysOnTop(next, "floating");
-    return mainWindow.isAlwaysOnTop();
-  });
-
-  ipcMain.handle("get-always-on-top", async () => {
-    if (!mainWindow || mainWindow.isDestroyed()) {
-      return false;
-    }
-    return mainWindow.isAlwaysOnTop();
-  });
-
   ipcMain.handle("get-backend-state", async () => getBackendStatePayload());
 
   ipcMain.handle("restart-backend", async () => {

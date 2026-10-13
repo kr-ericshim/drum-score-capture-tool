@@ -19,7 +19,6 @@ import unittest
 from pathlib import Path
 
 import cv2
-import numpy as np
 
 from app.pipeline import reflow_boundaries as rb
 

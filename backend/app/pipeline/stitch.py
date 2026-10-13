@@ -135,11 +135,6 @@ def stitch_pages(
     return merged_paths
 
 
-def _merge_scroll_group_frames(frame_group: List[Path]) -> Optional[np.ndarray]:
-    merged, _split_boundaries = _merge_scroll_group_frames_with_boundaries(frame_group)
-    return merged
-
-
 def _merge_scroll_group_frames_with_boundaries(frame_group: List[Path]) -> Tuple[Optional[np.ndarray], List[int]]:
     if not frame_group:
         return None, []

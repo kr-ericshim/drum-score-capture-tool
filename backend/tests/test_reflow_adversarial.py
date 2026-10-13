@@ -12,8 +12,8 @@ from app.pipeline import observations as ob
 from app.pipeline import score_assembly as sa
 from app.pipeline import system_detect as sd
 from app.pipeline import system_tracking as st
-from drum_score_fixture import Overlay, groove_notes, render, strip_spec
-from reflow_fixture import STEP, build, frame, loader, page, show, strip
+from drum_score_fixture import groove_notes, render, strip_spec
+from reflow_fixture import STEP, build, loader, page, show, strip
 
 CORPUS = Path.home() / "Documents/drum-score-corpus"
 

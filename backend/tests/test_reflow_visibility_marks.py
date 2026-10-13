@@ -1,11 +1,9 @@
 """2C-0 raw minority evidence, conditional plates and source edges."""
-import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 import cv2
 import numpy as np
-from app.pipeline import reflow_strips as rs, reflow_jump as rj, reflow_pipeline as rp, source_class as sc
+from app.pipeline import reflow_strips as rs, reflow_pipeline as rp, source_class as sc
 from reflow_fixture import build, loader
 from test_source_class import _frames, _compose, _texture, _notation, _flat
 

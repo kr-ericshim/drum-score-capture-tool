@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 import numpy as np
 from app.pipeline import reflow_jump as rj, reflow_strips as rs
-from test_reflow_jump_coverage import five_display_run, manifest_for, jump_record, run_seams, paper, STAFF
+from test_reflow_jump_coverage import five_display_run, manifest_for, jump_record, run_seams, paper
 
 class JumpVisibilityTest(unittest.TestCase):
     def test_finishing_diagnostics_reach_jump_strip_record(self):

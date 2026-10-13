@@ -1,11 +1,8 @@
 """Stage C controls; adapters here are provisional until Stage B lands."""
 import base64
-from collections import Counter
 import copy
-import json
 from pathlib import Path
 import tempfile
-import time
 import unittest
 import zlib
 
@@ -54,24 +51,6 @@ def certificate(image, *, output_size=None, method="cubic", origin=(12, 10), pag
             "instances": [rec], "page_px": list(page_px), "findings": []}
     if features:
         cert["features"] = {"s": feature_records(image, "s", supporters=["a", "b"])}
-    return cert
-
-
-def sink_adapter(sink, plan, strips, *, provisional_features=False):
-    """Copy persisted placements into §12.4.4 instances, without a B verdict.
-
-    Real experiments can infer native features for C-only fidelity diagnosis;
-    these are explicitly not a certificate of A support or B plan validity.
-    """
-    cert = {"plan_sha256": common.json_sha256(plan), "strips": {sid: common.pixels_sha256(image) for sid, image in strips.items()},
-            "page_px": plan["page_px"], "instances": [], "findings": [], "diagnostic_adapter": True}
-    for record in sink["placements"]:
-        h, w = strips[record["strip_id"]].shape[:2]
-        cert["instances"].append({**{k: record[k] for k in ("line_id", "page_index", "copy_index", "strip_id")},
-                                  "owned_strip_bbox": [0, 0, w, h], "transform": copy.deepcopy(record["stages"]),
-                                  "removal_footprints": [], "replica_role": "clef" if record["copy_index"] else None})
-    if provisional_features:
-        cert["features"] = {sid: feature_records(image, sid, supporters=[], diagnostic_only=True) for sid, image in strips.items()}
     return cert
 
 

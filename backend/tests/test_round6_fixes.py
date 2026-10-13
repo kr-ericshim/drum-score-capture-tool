@@ -8,7 +8,6 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from app.pipeline import reflow_occurrences as ro
 from app.pipeline import reflow_pipeline as rp
 from app.pipeline import reflow_strips as rs
 from app.pipeline import system_detect as sd

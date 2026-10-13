@@ -1,4 +1,4 @@
-> **상태 (2026-10-11): 미검토 초안.** holdout 이후에 착수한다. 그 전까지 세로 스크롤은 거부(`UNSUPPORTED_VERTICAL_SCROLL`)가 유지된다. 본문의 HANDOFF 인용은 옛 판 기준이다. 현재 순서는 [HANDOFF.md](HANDOFF.md)를 따른다.
+> **상태 (2026-10-11): 미검토 초안.** holdout 이후에 착수한다. 그 전까지 세로 스크롤은 거부(`UNSUPPORTED_VERTICAL_SCROLL`)가 유지된다. 본문의 HANDOFF 인용은 옛 판 기준이다. 현재 순서는 [HANDOFF.md](../../reflow/HANDOFF.md)를 따른다.
 
 # Drum Sheet Capture 세로 블록 스크롤 구현 명세
 
@@ -34,7 +34,7 @@ V1의 대상은 다음과 같다.
 
 ## 2 현재 코드와 probe에서 확인한 사실
 
-최신 인계는 [HANDOFF.md](/Users/ericshim/Documents/myproject/score_capture_program/docs/reflow/HANDOFF.md:5)의 2026년 10월 11일 midday 항목이다. 이 항목은 이번 버전에서 세로 스크롤을 거부하고, holdout 이후 전용 지원을 추가하는 순서를 정한다. (2026-10-11 갱신: 원본 화면 fallback은 한 줄 영상 전용으로 확정되어 세로 스크롤과 관계없다. [ORIGINAL_SCREENS_DESIGN.md](ORIGINAL_SCREENS_DESIGN.md) 참고.) 이번 명세는 그 향후 구현 설계이며 현재 거부 설정을 해제하라는 지시가 아니다.
+최신 인계는 [HANDOFF.md](/Users/ericshim/Documents/myproject/score_capture_program/docs/reflow/HANDOFF.md:5)의 2026년 10월 11일 midday 항목이다. 이 항목은 이번 버전에서 세로 스크롤을 거부하고, holdout 이후 전용 지원을 추가하는 순서를 정한다. (2026-10-11 갱신: 원본 화면 fallback은 한 줄 영상 전용으로 확정되어 세로 스크롤과 관계없다. [ORIGINAL_SCREENS_DESIGN.md](../../reflow/ORIGINAL_SCREENS_DESIGN.md) 참고.) 이번 명세는 그 향후 구현 설계이며 현재 거부 설정을 해제하라는 지시가 아니다.
 
 원본은 [5pe5bLexYN4.webm](/Users/ericshim/Documents/drum-score-corpus/probe_vscroll/videos/5pe5bLexYN4.webm), 저장된 실패 실행은 `/Users/ericshim/Documents/drum-score-corpus/probe_vscroll/run1/jobs/62e5f31d-b6a8-4dc6-8772-9dd47250f06f/`다. 이는 프로젝트의 `backend/jobs/`와 별도인 probe 데이터다.
 
@@ -365,7 +365,7 @@ else:
 | 일반 가로 스크롤이 남음 | 기존 `UNSUPPORTED_HORIZONTAL_SCROLL` |
 | 검증 시간/메모리 예산 초과 | `VSCROLL_BUDGET_EXCEEDED` |
 
-원본 시작·끝에서 실제로 잘린 줄은 보이는 부분을 보존하고 `SOURCE_CLIPPED` 검토 결과로 낼 수 있다. 이 경우 원곡 전체를 복원했다고 표시하지 않는다. 보이는 부분조차 잃거나 관측되지 않은 구간을 추정해야 하면 clean 결과를 거부한다. 원본 화면 fallback은 한 줄 영상 전용이므로(2026-10-11 확정, [ORIGINAL_SCREENS_DESIGN.md](ORIGINAL_SCREENS_DESIGN.md)) 이 거부 결과와 연결하지 않는다.
+원본 시작·끝에서 실제로 잘린 줄은 보이는 부분을 보존하고 `SOURCE_CLIPPED` 검토 결과로 낼 수 있다. 이 경우 원곡 전체를 복원했다고 표시하지 않는다. 보이는 부분조차 잃거나 관측되지 않은 구간을 추정해야 하면 clean 결과를 거부한다. 원본 화면 fallback은 한 줄 영상 전용이므로(2026-10-11 확정, [ORIGINAL_SCREENS_DESIGN.md](../../reflow/ORIGINAL_SCREENS_DESIGN.md)) 이 거부 결과와 연결하지 않는다.
 
 ### 6.3 구현용 검색 절차
 

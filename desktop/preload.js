@@ -111,8 +111,6 @@ contextBridge.exposeInMainWorld("drumSheetAPI", {
   sendBugReport: (input) => ipcRenderer.invoke("send-bug-report", input),
   openBugReportIssue: (input) => ipcRenderer.invoke("open-bug-report-issue", input),
   copyText: (text) => ipcRenderer.invoke("copy-text", text),
-  setAlwaysOnTop: (enabled) => ipcRenderer.invoke("set-always-on-top", enabled),
-  getAlwaysOnTop: () => ipcRenderer.invoke("get-always-on-top"),
   getBackendState: () => ipcRenderer.invoke("get-backend-state"),
   restartBackend: () => ipcRenderer.invoke("restart-backend"),
   runGuidedSetup: () => ipcRenderer.invoke("run-guided-setup"),

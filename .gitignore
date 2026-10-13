@@ -25,5 +25,6 @@ desktop/dist/
 backend/runtime/
 backend/bin/
 .tmp/
+/tmp/
 
 backend/.venv-build/

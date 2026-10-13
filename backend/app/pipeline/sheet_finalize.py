@@ -252,40 +252,6 @@ def _overlap_ink_agrees(
     return min(top_matched, bottom_matched) >= 0.6
 
 
-def _crop_to_content(image) -> np.ndarray:
-    h, w = image.shape[:2]
-    if h <= 8 or w <= 8:
-        return image
-
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    inv = cv2.adaptiveThreshold(
-        gray,
-        255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY_INV,
-        31,
-        7,
-    )
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-    inv = cv2.morphologyEx(inv, cv2.MORPH_OPEN, kernel)
-
-    row_density = (inv > 0).sum(axis=1).astype(np.float32) / float(max(1, w))
-    col_density = (inv > 0).sum(axis=0).astype(np.float32) / float(max(1, h))
-    active_rows = np.where(row_density > 0.003)[0]
-    active_cols = np.where(col_density > 0.003)[0]
-    if active_rows.size == 0 or active_cols.size == 0:
-        return image
-
-    pad = max(8, int(min(h, w) * 0.012))
-    y0 = max(0, int(active_rows[0]) - pad)
-    y1 = min(h, int(active_rows[-1]) + pad + 1)
-    x0 = max(0, int(active_cols[0]) - pad)
-    x1 = min(w, int(active_cols[-1]) + pad + 1)
-    if y1 <= y0 or x1 <= x0:
-        return image
-    return image[y0:y1, x0:x1].copy()
-
-
 def _split_long_page(
     image,
     *,
