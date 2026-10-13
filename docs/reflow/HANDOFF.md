@@ -1,4 +1,4 @@
-# 인계 (2026-10-13 저녁, 감사 수정 배치 커밋 후)
+# 인계 (2026-10-14, 감사 수정 코퍼스 확인과 부작용 수정 후)
 
 > **이 문서는 누적하지 않는다.** 세션이 끝날 때 통째로 새로 쓴다. 현재 상태와 다음 할 일만 적는다(지난 경과는 `git log -p docs/reflow/HANDOFF.md`).
 > 100줄을 넘기지 않는다. 다른 문서와 다르면 이 문서와 사용자의 최신 말이 우선이다.
@@ -11,47 +11,45 @@
 
 ## 현재 상태
 
-- 브랜치 `feature/clean-reflow`. 이번 세션의 감사 수정 배치를 한 커밋으로 넣었다(사용자 승인).
-- 감사 결과와 수정: [audit_2026-10-13/README.md](audit_2026-10-13/README.md), 규칙은 [DECISIONS.md](DECISIONS.md) "Astra audit fixes (2026-10-13)".
-  - 고침: F01(1관측 화면을 검토 목록에), F03(커서 리셋은 합치지 않고 ‡), F04(가운데 번호 단계), F05(이웃 하나 기준 숨김), F06(영상 끝 프레임 1회 추가 샘플), F07(선택 후 ‡ 재계산, 리셋 사슬 포함), F08(디코딩 조기 종료 = 실패, 끝 근처 seek로 진짜 끝인지 확인), F09(표기 제거 단계), F10(악보 줄 안 작은 색 기호는 chrome으로 지우지 않음), F11(옅은 표기 보호·생존 검사).
-  - Codex 검수가 찾은 4개(리셋 ‡ 선택 후 소실, 디코딩 판정 허점, 점프 구간 안 1관측 화면 소실, 점프 strip의 옅은 표기 잘림)와 Opus 재검수가 찾은 디코딩 오판정(VFR 마지막 프레임 정지, 컨테이너가 더 긴 MKV/WebM)도 고쳤다.
-  - 보류(사용자 결정): PDF 첫 페이지 "확인 필요" 고지. `OVERLAY_UNRECOVERED`·`MINORITY_CONTENT_DROPPED`가 지원 영상 거의 모든 줄에 붙어 있어 잡음이 된다. F13은 변경 없음.
-- 검증: backend 전체 **1538 OK(12 skipped)**. 모두 합성 fixture·mock이다. **실제 영상, 코퍼스, 패키지 앱, `verify:renderer-v2`는 돌리지 않았다**(사용자가 배터리로 작업 중이라 영상·코퍼스 실행 금지).
-- 형식 선별 도구(코퍼스 쪽, 저장소 밖): `~/Documents/drum-score-corpus/eval_v2/tools/format_screen.py` + 검토 페이지 `format_review.html`. 자동으로는 "비지원 후보(근거)"나 "사람 확인 필요"만 내고, "지원"은 사람이 클립 3개를 1배속으로 본 뒤에만 고를 수 있다. 설계와 개발 자료: `eval_v2/format_screen_dev/DESIGN_FROM_REPORT.md`. **실제 영상으로는 아직 한 번도 안 돌렸다.**
-- Astra(max) 조언 원문은 세션 scratchpad에 있었다(휘발). 요지:
-  - 순서: 핵심 손실 수정 → 앱 안 형식 확인 → 패키지 실사용 → 홀드아웃. 다음 지원 확장은 **고정 2–3줄 페이지 전체 교체**, 그다음 가로 점프.
-  - 검증은 줄이되 실제 PDF·앱 확인은 남긴다. 수정마다 27개 재디코딩은 피한다.
+- 브랜치 `feature/clean-reflow`. 감사 수정 배치(`e408c72`, 정리 `5954d31`) 뒤에 부작용 수정 `1ed3f6d`를 넣었다.
+- **코퍼스 27개 실행(감사 수정 후)**: `eval_v2/audit27{a,b}_dashboard`. 지원/거부 판정은 fade27과 모두 같다. 사라진 마디는 보지 못했다.
+  - 예상대로: C4l·Q8·6MPX ‡ 하나씩(F03), 2NzO 번호 단계 안내(F04), 정상 영상에 `VIDEO_DECODE_INCOMPLETE` 없음(F08).
+  - `SHORT_DISPLAY`가 Q8 607개, uhzG 326개(둘 다 지원 범위 밖). 지원 영상은 6개 이하.
+  - 부작용 2개를 찾아 `1ed3f6d`로 고쳤다. 규칙은 [DECISIONS.md](DECISIONS.md) F10·F11 항목.
+    - F11: 끊긴 옅은 테두리선 조각이 약한 표기로 보호돼 줄이 높아졌다(w7mK 3→4장, 0MiL, aOED). 같은 가장자리의 얇은 조각을 합쳐 폭으로 판단한다.
+    - F10: SZwT의 편집기 아이콘이 줄마다 남았다. 서로 다른 화면 8개 이상 중 80% 이상에서 같은 자리에 있는 작은 기호는 chrome으로 본다.
+  - 수정 후 6개 재실행(`eval_v2/edgelogo_{a,b}_dashboard`): w7mK·0MiL·SZwT는 fade27과 픽셀까지 같다. aOED는 3장 그대로(가사 아래 여백만 조금 늘어남). C4l은 음자리표 가장자리 파란 번짐만 정리됐다. 27개 전체는 다시 돌리지 않았다.
+- 검증: backend **1540 OK(12 skipped)**, `verify:renderer-v2` 360 통과, `pack:release` 재빌드, `smoke:packaged-runtime`·`smoke:packaged-electron` 통과.
+- **형식 선별 도구 첫 실행**(저장소 밖, `eval_v2/format_screen_dev/runs/summary.md`): 16개 모두 기대와 맞고 60초 예산 안(최대 34초).
+  - 첫 실행(`runs_v1/`)에서 C4l을 "반투명/실사 비지원 후보"로 잘못 냈다. 고친 것(protocol `format_screen-2`, `DESIGN_FROM_REPORT.md` 끝에 기록):
+    - auto ROI를 앱과 똑같이(`estimate_auto_roi` + `apply_notation_envelope`) 만든다.
+    - 점프 근거는 겹친 부분 잔차 6.0 이하만 인정한다. 진짜 점프 0.6–2.4, C4l 반복 그루브 13.7–15.4.
+  - 이 16개는 개발 자료이지 성적이 아니다.
+- 코퍼스 hook: `DASHBOARD_HOOK=eval_v2/tools/keep_tracking.py`로 돌리면 영상마다 작업 폴더의 JSON(tracking, manifest, occurrences 등)이 `<out>/<id>/workspace_json/`에 남는다.
 
-## 다음 할 일 (순서대로, 전원 연결 후)
+## 다음 할 일 (순서대로)
 
-1. **코퍼스 27개 1회 실행**(`eval_v2/tools/run_quick.sh` 또는 27개 전체를 fade27과 비교). 볼 것:
-   - C4l·DEQ에 ‡ 붙은 줄이 하나씩 늘어나는지(F03, 예상됨). ‡ 없이 늘면 결함.
-   - 검토 목록의 `SHORT_DISPLAY`가 크게 늘지만 PDF는 같아야 한다(F01).
-   - `content_steps`의 `kind: "removed"`가 흰 박스·회색 처리로 잘못 나뉘는지(F09). DEQ·6MPX·C4l의 새 `NUMBER_STEP_UNRESOLVED`(F04).
-   - Dr5j·Fzc0·SZwT·Teo·uhzG의 `screen_chrome.protected_px`와 로고 조각 잔류(F10). 줄 높이 증가·옅은 잔여물(F11).
-   - `VIDEO_DECODE_INCOMPLETE`가 정상 영상에 뜨지 않는지, `decode_end_confirmed_by_seek`가 붙은 영상이 있는지(F08).
-   - 결과가 이상하면 코딩을 멈추고 PDF를 직접 본 뒤 사용자와 정한다.
-2. **선별 도구 개발 실행:** `zsh ~/Documents/drum-score-corpus/eval_v2/tools/format_screen_dev16.sh` → `eval_v2/format_screen_dev/runs/summary.md`. uhzG·oGnU(이동 플래그), jrmm(세로 이동), Q8·01Mr(MULTI_ROW)가 잡히는지와 60초 예산. 이 16개는 개발 자료이지 성적이 아니다.
-3. `npm --prefix desktop run verify:renderer-v2`(F08 문구 2줄 추가됨) → `pack:release`로 패키지 재빌드, smoke.
-4. 실제 앱에서 생성, 검토(가운데 화면 해제 후 재내보내기 ‡ 포함), 재생성, 저장·취소, 재시작·복원.
-5. 새 홀드아웃: 선별 도구 + 사람 1배속 확인으로 고른다. 규칙은 `eval_v2/pro8/PRO_REPLY_8_summary.md`와 `DESIGN_FROM_REPORT.md`의 선정 프로토콜.
-6. 그 뒤 검토: 앱 안 형식 확인(선별 도구 재사용), 다음 확장(고정 다단 페이지).
+1. **실제 앱 확인**(패키지 `dist/mac-arm64/Drum Sheet Capture.app`): 생성 → 검토(가운데 화면 해제 후 재내보내기, ‡ 포함) → 재생성 → 저장·취소 → 재시작·복원. 영상은 C4l처럼 ‡가 나오는 것을 쓴다.
+2. 새 홀드아웃: 선별 도구 + 사람 1배속 확인으로 고른다. 규칙은 `eval_v2/pro8/PRO_REPLY_8_summary.md`와 `DESIGN_FROM_REPORT.md`의 선정 프로토콜.
+3. 그 뒤 검토: 앱 안 형식 확인(선별 도구 재사용), 다음 확장(고정 다단 페이지).
 
-## 알려진 한계 (이번 배치 이후)
+## 알려진 한계
 
 - 0.5초 샘플 사이에만 나온 화면은 여전히 놓친다(F06 중간 부분).
-- 점프 커버리지 판정은 1관측 화면을 보지 않는다(목록에는 남음, 잡음 방지 의도).
-- 다운로드가 덜 된 파일처럼 정말 짧은 파일은 통과하고 manifest 기록에만 남는다.
-- 이번 변경 전에 분석한 점프 작업은 이음매 재처리가 `SEAM_REPAIR_INCOMPATIBLE`로 끝날 수 있다(오래된 작업만).
+- 점프 커버리지 판정은 1관측 화면을 보지 않는다(목록에는 남음).
+- 다운로드가 덜 된 짧은 파일은 통과하고 manifest 기록에만 남는다.
 - 리셋 사슬의 먼 쌍은 번호 차이로만 해제한다(최악은 ‡ 하나 더).
+- F10: 화면이 7개 이하인 영상에서는 같은 자리의 작은 로고가 남을 수 있다.
+- 선별 도구 점프 잔차 기준(6.0)은 개발 영상 16개로만 정했다.
 
 ## 하지 않는 것
 
-이음매 대응표, 점프 고도화, 미관 작업(C4l 라벨, 로고, RnY5), 세로 스크롤, 반투명판 완화(F13).
+이음매 대응표, 점프 고도화, 미관 작업(C4l 라벨, 로고, RnY5), 세로 스크롤, 반투명판 완화(F13). PDF 첫 페이지 "확인 필요" 고지는 보류(사용자 결정, 플래그 잡음 때문).
 
 ## 지금 유효한 문서
 
 - [DECISIONS.md](DECISIONS.md): 규칙과 기본값. 설계 문서보다 우선한다.
+- [audit_2026-10-13/README.md](audit_2026-10-13/README.md): 감사 항목.
 - [FREEZE_RC2.md](FREEZE_RC2.md), [PRO_REPLY_RC2.md](PRO_REPLY_RC2.md): rc2 빌드, 채점 절차.
 - Pro 답 요약: `eval_v2/pro8/03_PRO_REPLY_7_summary.md`, `eval_v2/pro8/PRO_REPLY_8_summary.md`.
 - [ORIGINAL_SCREENS_DESIGN.md](ORIGINAL_SCREENS_DESIGN.md): fallback 설계.
@@ -59,14 +57,15 @@
 
 ## 코드와 코퍼스 위치
 
-- reflow 흐름: `reflow_pipeline.py` → `system_tracking` → `reflow_occurrences` → `reflow_strips` → `reflow_measure`/`reflow_layout` → `reflow_render`. 점프 `reflow_jump`, 배경 판정 `source_class`, 디코딩 `observations`.
-- 코퍼스 `~/Documents/drum-score-corpus/`: 실행기 `reflow/tools/dashboard.py`, `eval_v2/tools/`(run_quick.sh, quick_compare.py, audit_freq.py, format_screen*), 회귀 스펙 `eval_v2/fix2_spec27.json`.
+- reflow 흐름: `reflow_pipeline.py` → `system_tracking` → `reflow_occurrences` → `reflow_strips` → `reflow_measure`/`reflow_layout` → `reflow_render`. 점프 `reflow_jump`, 배경 판정 `source_class`, 디코딩 `observations`, chrome `overlay_composite`.
+- 코퍼스 `~/Documents/drum-score-corpus/`: 실행기 `reflow/tools/dashboard.py`, `eval_v2/tools/`(run_quick.sh, quick_compare.py, keep_tracking.py, format_screen*), 회귀 스펙 `eval_v2/fix2_spec27.json`. 27개는 fade27과 같은 두 묶음 `eval_v2/audit27_{a,b}.json`으로 나눠 돌린다(약 1시간).
 - `eval_v2/jobs`(4.3 GB)는 패키지 실행 작업 폴더다. 지울지는 사용자에게 묻는다.
 
 ## 작업 규칙 (프로젝트 한정)
 
 - `backend/jobs/`는 건드리지 않는다. 실제 영상은 scratch `DRUMSHEET_JOBS_DIR`에서 확인한다.
 - 영상별 땜질과 특정 영상에 맞춘 임계값은 하지 않는다.
+- 영상·코퍼스 실행 전에 전원 연결을 사용자에게 묻는다.
 - 같은 저장소를 다른 세션이 동시에 고칠 수 있다. 워커를 띄우기 전에 `git status`와 다른 세션의 작업 파일을 확인한다.
 - Codex는 `~/Documents/drum-score-corpus`에 쓸 수 없다. Codex가 HANDOFF를 고치면 되돌린다.
 
