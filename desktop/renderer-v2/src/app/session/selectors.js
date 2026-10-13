@@ -406,14 +406,32 @@ export function inferLayoutHintFromRoi(points) {
   return "full_scroll";
 }
 
-function hasPendingRoiDraft(state) {
-  if (!isRectValid(state?.roi?.draftRect)) {
+// Two ROI boxes are the same region when their corners agree to the pixel. The editor applies
+// rounded corners while an automatic suggestion may carry fractions; a sub-pixel difference is
+// not an edit and must not leave an applied region looking unapplied.
+export function roiRectsMatch(a, b) {
+  if (!isRectValid(a) || !isRectValid(b)) {
     return false;
   }
-  if (!isRectValid(state?.roi?.appliedRect)) {
+  return a.every((point, index) => Math.round(Number(point[0])) === Math.round(Number(b[index][0]))
+    && Math.round(Number(point[1])) === Math.round(Number(b[index][1])));
+}
+
+// The one test for "the region on screen is not the applied one", shared by the region step, the
+// step rail and the export start (runtimeSafety.hasDirtyRoiDraft): a changed box, or a changed
+// white-score auto fit.
+export function hasPendingRoiDraft(state) {
+  const roi = state?.roi || {};
+  if (Boolean(roi.autoFit) !== Boolean(roi.appliedAutoFit)) {
     return true;
   }
-  return JSON.stringify(state.roi.draftRect) !== JSON.stringify(state.roi.appliedRect);
+  if (!isRectValid(roi.draftRect)) {
+    return false;
+  }
+  if (!isRectValid(roi.appliedRect)) {
+    return true;
+  }
+  return !roiRectsMatch(roi.draftRect, roi.appliedRect);
 }
 
 export function getStepState(state, step) {

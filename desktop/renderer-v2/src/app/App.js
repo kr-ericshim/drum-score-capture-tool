@@ -2040,6 +2040,11 @@ export function createApp(root, dependencies = {}) {
     setState((next) => {
       invalidateExportReviewState(next);
       next.roi.appliedRect = points;
+      // the box on screen is now the applied one (the editor rounds corners; a fractional
+      // suggestion left in the draft would read as unapplied), and applying is the user's
+      // decision: a late automatic suggestion must not replace it
+      next.roi.draftRect = points;
+      next.roi.autoRoiUserEdited = true;
       next.roi.appliedAutoFit = Boolean(next.roi.autoFit);
       next.exportConfig.layoutHint = inferLayoutHintFromRoi(points);
       next.ui.activeStep = "export";

@@ -1,4 +1,4 @@
-import { formatSecondsLabel, isReviewableRun, needsAttention, reviewListPages, summarizeSelection } from "../../app/session/selectors.js";
+import { formatSecondsLabel, hasPendingRoiDraft, isReviewableRun, needsAttention, reviewListPages, summarizeSelection } from "../../app/session/selectors.js";
 import { pickLocalizedText, reflowReviewReasonText, t } from "../../lib/i18n.js";
 import { fileUrl, normalizeAssetPath } from "../../lib/paths.js";
 import { thumbShapeFor } from "./thumbShape.js";
@@ -11,19 +11,6 @@ function escapeHtml(value) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
-}
-
-function hasPendingRoiDraft(state) {
-  if (Boolean(state?.roi?.autoFit) !== Boolean(state?.roi?.appliedAutoFit)) return true;
-  const draft = state?.roi?.draftRect;
-  const applied = state?.roi?.appliedRect;
-  if (!Array.isArray(draft) || draft.length !== 4) {
-    return false;
-  }
-  if (!Array.isArray(applied) || applied.length !== 4) {
-    return true;
-  }
-  return JSON.stringify(draft) !== JSON.stringify(applied);
 }
 
 function renderPagePills(page, locale) {

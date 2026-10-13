@@ -1,4 +1,4 @@
-import { formatSecondsLabel, isRectValid } from "../../app/session/selectors.js";
+import { formatSecondsLabel, hasPendingRoiDraft, isRectValid } from "../../app/session/selectors.js";
 import { t } from "../../lib/i18n.js";
 import { normalizeAssetPath } from "../../lib/paths.js";
 
@@ -43,7 +43,7 @@ export function buildRoiScreenModel(state) {
   const previewCandidates = Array.isArray(state.roi.previewCandidates) ? state.roi.previewCandidates : [];
   const draftReady = isRectValid(state.roi.draftRect);
   const appliedReady = isRectValid(state.roi.appliedRect);
-  const hasPendingDraft = draftReady && (!appliedReady || rectKey(state.roi.draftRect) !== rectKey(state.roi.appliedRect) || Boolean(state.roi.autoFit) !== Boolean(state.roi.appliedAutoFit));
+  const hasPendingDraft = hasPendingRoiDraft(state);
   const durationSec = Number(state.source.metadata?.durationSec || 0);
   const currentTime = Number.isFinite(state.roi.frameTime) ? state.roi.frameTime : 0;
 

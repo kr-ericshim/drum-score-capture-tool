@@ -1,4 +1,5 @@
 import test from "node:test";
+import { buildRoiScreenModel } from "../features/roi/RoiScreen.js";
 import assert from "node:assert/strict";
 
 import { createApp } from "../app/App.js";
@@ -640,6 +641,102 @@ test("late automatic ROI does not overwrite a draft drawn while detection runs",
   await loading;
 
   assert.deepEqual(app.debug.getState().roi.draftRect, manual);
+});
+
+test("an applied fractional auto suggestion lets export start", async () => {
+  // packaged app, 2026-10-14: the auto ROI arrived with fractional corners, the editor applied
+  // rounded ones, and "apply the region first" blocked export while the region step said applied
+  installBrowserStubs();
+  const root = createDynamicStageRoot();
+  const suggested = [[20.44, 100], [300, 100], [300, 175.6], [20.44, 175.6]];
+  const rounded = [[20, 100], [300, 100], [300, 176], [20, 176]];
+  const app = createApp(root, {
+    exposeTestApi: true,
+    mountRoiEditor: () => ({ applyDraft() { return rounded; }, setDraft() {}, destroy() {} }),
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "/tmp/preview.png", sourcePath: "/tmp/preview.png", diagnostics: [] }),
+      requestAutoRoi: async () => ({ status: "suggested", roi: suggested, evidenceLevel: "high", diagnostics: {} }),
+      requestPreviewRoiHealth: async () => ({ riskLevel: "ok", diagnostics: [], envelope: { status: "found", clipped: false } }),
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+      reviewExport: async () => ({}),
+    },
+  });
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/source-a.mp4";
+    next.source.metadata = { durationSec: 120, width: 320, height: 180 };
+    next.ui.activeStep = "roi";
+    next.roi.frameTime = 10;
+    return next;
+  });
+  await root.dispatchAction("load-preview-frame");
+  await flush();
+  assert.deepEqual(app.debug.getState().roi.draftRect, suggested);
+
+  await root.dispatchAction("apply-roi");
+  await flush();
+  let state = app.debug.getState();
+  assert.deepEqual(state.roi.appliedRect, rounded);
+  assert.equal(state.ui.activeStep, "export");
+  assert.equal(buildRoiScreenModel(state).statusTone, "ready");
+
+  await root.dispatchAction("run-export");
+  await flush();
+  state = app.debug.getState();
+  assert.equal(state.exportConfig.error, "", state.exportConfig.error);
+  assert.equal(state.exportConfig.metadataModal?.isOpen, true, "PDF export continues to the document details");
+
+  // a fractional draft equal to the applied box to the pixel is not a pending change either
+  app.debug.setState((next) => {
+    next.roi.draftRect = suggested;
+    return next;
+  });
+  assert.equal(buildRoiScreenModel(app.debug.getState()).applyDisabled, true);
+  app.debug.setState((next) => {
+    next.roi.draftRect = rounded;
+    return next;
+  });
+
+});
+
+test("an automatic suggestion that arrives after apply does not reopen the applied region", async () => {
+  installBrowserStubs();
+  const root = createDynamicStageRoot();
+  const pendingSuggestion = deferred();
+  const applied = [[30, 30], [280, 30], [280, 150], [30, 150]];
+  const app = createApp(root, {
+    exposeTestApi: true,
+    mountRoiEditor: () => ({ applyDraft() { return applied; }, setDraft() {}, destroy() {} }),
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "/tmp/preview.png", sourcePath: "/tmp/preview.png", diagnostics: [] }),
+      requestAutoRoi: () => pendingSuggestion.promise,
+      requestPreviewRoiHealth: async () => ({ riskLevel: "ok", diagnostics: [], envelope: { status: "found", clipped: false } }),
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+      reviewExport: async () => ({}),
+    },
+  });
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/source-a.mp4";
+    next.source.metadata = { durationSec: 120, width: 320, height: 180 };
+    next.ui.activeStep = "roi";
+    next.roi.frameTime = 10;
+    return next;
+  });
+  const loading = root.dispatchAction("load-preview-frame");
+  await flush();
+  app.debug.setState((next) => {
+    next.roi.draftRect = applied;
+    return next;
+  });
+  await root.dispatchAction("apply-roi");
+  pendingSuggestion.resolve({ status: "suggested", roi: [[20.5, 100], [300, 100], [300, 175], [20.5, 175]], evidenceLevel: "high", diagnostics: {} });
+  await loading;
+  await flush();
+  const state = app.debug.getState();
+  assert.deepEqual(state.roi.appliedRect, applied);
+  assert.deepEqual(state.roi.draftRect, applied, "the late suggestion stays out of the applied region's draft");
+  assert.equal(getStepState(state, "export").enabled, true);
 });
 
 test("applying a region runs the clipping check; the larger area loads only as a draft", async () => {

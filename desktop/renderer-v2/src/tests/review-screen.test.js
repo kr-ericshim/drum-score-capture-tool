@@ -356,3 +356,20 @@ test("review card marks inclusion only with its checkbox and names the capture o
   assert.match(markup, /data-action="open-output-dir"[^>]*aria-label="Open folder"/);
   assert.match(markup, /data-action="review-undo"[^>]*title="Undo \(Ctrl\/⌘ Z\)"/);
 });
+
+test("review rebuild follows the shared ROI check: a pixel-equal fractional draft is applied, a 1-px edit is not", () => {
+  // a same-frame refresh after a job can load a fractional auto suggestion that rounds to the
+  // applied region; the region step then has nothing to apply, so review must not stay blocked
+  const state = createReviewState();
+  state.exportConfig.jobId = "job-1";
+  state.exportConfig.runStatus = "done";
+  state.review.reflow = { lines: [] };  // a clean-reflow job (an older job cannot be rebuilt here)
+  state.roi.appliedRect = [[20, 100], [300, 100], [300, 176], [20, 176]];
+  state.roi.draftRect = state.roi.appliedRect;
+  const enabled = (s) => !/data-action="apply-review"[^>]*disabled/.test(renderReviewScreen(s));
+  assert.equal(enabled(state), true, "baseline: rebuild is available");
+  state.roi.draftRect = [[20.44, 100], [300, 100], [300, 175.6], [20.44, 175.6]];
+  assert.equal(enabled(state), true);
+  state.roi.draftRect = [[21, 100], [300, 100], [300, 176], [21, 176]];
+  assert.equal(enabled(state), false);
+});

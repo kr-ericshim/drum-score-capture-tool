@@ -19,7 +19,7 @@
     - F11: 끊긴 옅은 테두리선 조각이 약한 표기로 보호돼 줄이 높아졌다(w7mK 3→4장, 0MiL, aOED). 같은 가장자리의 얇은 조각을 합쳐 폭으로 판단한다.
     - F10: SZwT의 편집기 아이콘이 줄마다 남았다. 서로 다른 화면 8개 이상 중 80% 이상에서 같은 자리에 있는 작은 기호는 chrome으로 본다.
   - 수정 후 6개 재실행(`eval_v2/edgelogo_{a,b}_dashboard`): w7mK·0MiL·SZwT는 fade27과 픽셀까지 같다. aOED는 3장 그대로(가사 아래 여백만 조금 늘어남). C4l은 음자리표 가장자리 파란 번짐만 정리됐다. 27개 전체는 다시 돌리지 않았다.
-- 검증: backend **1540 OK(12 skipped)**, `verify:renderer-v2` 360 통과, `pack:release` 재빌드, `smoke:packaged-runtime`·`smoke:packaged-electron` 통과.
+- 검증: backend **1540 OK(12 skipped)**, `verify:renderer-v2` 363 통과, `pack:release` 재빌드, `smoke:packaged-runtime`·`smoke:packaged-electron` 통과.
 - **형식 선별 도구 첫 실행**(저장소 밖, `eval_v2/format_screen_dev/runs/summary.md`): 16개 모두 기대와 맞고 60초 예산 안(최대 34초).
   - 첫 실행(`runs_v1/`)에서 C4l을 "반투명/실사 비지원 후보"로 잘못 냈다. 고친 것(protocol `format_screen-2`, `DESIGN_FROM_REPORT.md` 끝에 기록):
     - auto ROI를 앱과 똑같이(`estimate_auto_roi` + `apply_notation_envelope`) 만든다.
@@ -28,15 +28,14 @@
 - 코퍼스 hook: `DASHBOARD_HOOK=eval_v2/tools/keep_tracking.py`로 돌리면 영상마다 작업 폴더의 JSON(tracking, manifest, occurrences 등)이 `<out>/<id>/workspace_json/`에 남는다.
 
 - **패키지 앱 실사용 확인(2026-10-14, C4l, scratch `DRUMSHEET_JOBS_DIR`)**: 생성 17줄(‡ 줄 7, 짝 줄 6) → 줄 6 해제 후 PDF 다시 만들기 → 27번 줄 한 번, ‡ 없음(F07 동작) → 다른 이름으로 저장 창 취소 정상 → 재시작 후 검토 선택(16/35) 복원.
-  - **막힘 버그(원인 미확정)**: 첫 실행 세션(없어진 작업을 복원하다 404, 그 뒤 새 영상 선택)에서 ROI 화면은 "적용됨"인데 3단계 "다음"이 "악보 영역 변경사항을 먼저 적용합니다"로 계속 막혔다. 적용 버튼은 비활성이라 사용자가 풀 수 없다. 앱 재시작으로 풀렸다. 내보내기는 `runtimeSafety.hasDirtyRoiDraft`(autoFit도 비교), ROI 화면은 `RoiScreen` 자체 판정을 쓴다. 재현은 `--remote-debugging-port`로 띄워 CDP로 상태를 보면서 한다.
+  - **막힘 버그(고침)**: 자동 ROI 제안은 소수점 좌표로 draft에 들어가는데, 적용은 에디터가 반올림한 정수 좌표를 저장했다. 그래서 적용 직후 내보내기가 "악보 영역 변경사항을 먼저 적용합니다"로 막혔다(고치기 전 패키지에서 재현). 이제 ROI 화면·단계 표시·내보내기·검토 다시 만들기가 한 판정(`selectors.hasPendingRoiDraft`, 픽셀 단위 비교)을 쓰고, 적용하면 draft를 적용값으로 맞춘 뒤 늦은 자동 제안이 덮어쓰지 못한다. 고친 패키지에서 같은 순서로 PDF 정보 창이 열리는 것을 확인했다. 검토 화면 쪽 누락은 Codex 리뷰가 찾았다.
   - 작은 문제: 없어진 작업을 복원하면 이유 없이 "작업 중 문제가 생겼습니다"만 뜬다. 재시작 직후 3단계에 "영역 확인을 마치지 못했습니다"가 뜨는데 확인 요청이 백엔드에 가지 않았다. 재시작 후 검토 화면은 방금 만든 PDF를 "이전 PDF"로 보여 준다. 1412×840 창에서 검토 목록이 두 줄만 보인다.
   - 사용자 앱 데이터(localStorage)의 마지막 세션은 scratch 작업 폴더를 가리킨다. 평소처럼 앱을 열면 위 404 복원 오류가 한 번 뜬다.
 
 ## 다음 할 일 (순서대로)
 
-1. 위 막힘 버그 재현과 수정(renderer). 재현이 안 되면 두 판정을 한 함수로 합치는 것만 한다.
-2. 새 홀드아웃: 선별 도구 + 사람 1배속 확인으로 고른다. 규칙은 `eval_v2/pro8/PRO_REPLY_8_summary.md`와 `DESIGN_FROM_REPORT.md`의 선정 프로토콜.
-3. 그 뒤 검토: 앱 안 형식 확인(선별 도구 재사용), 다음 확장(고정 다단 페이지).
+1. 새 홀드아웃: 선별 도구 + 사람 1배속 확인으로 고른다. 규칙은 `eval_v2/pro8/PRO_REPLY_8_summary.md`와 `DESIGN_FROM_REPORT.md`의 선정 프로토콜.
+2. 그 뒤 검토: 앱 안 형식 확인(선별 도구 재사용), 다음 확장(고정 다단 페이지).
 
 ## 알려진 한계
 

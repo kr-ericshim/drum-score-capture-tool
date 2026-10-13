@@ -1,5 +1,5 @@
 import { captureRange } from "../../features/export/captureRange.js";
-import { isRectValid } from "./selectors.js";
+import { hasPendingRoiDraft, isRectValid } from "./selectors.js";
 
 export function createRuntimeGuards() {
   let sourceSession = 0;
@@ -155,12 +155,5 @@ export function canRunExport(state) {
 }
 
 export function hasDirtyRoiDraft(state) {
-  if (Boolean(state?.roi?.autoFit) !== Boolean(state?.roi?.appliedAutoFit)) return true;
-  if (!isRectValid(state?.roi?.draftRect)) {
-    return false;
-  }
-  if (!isRectValid(state?.roi?.appliedRect)) {
-    return true;
-  }
-  return JSON.stringify(state.roi.draftRect) !== JSON.stringify(state.roi.appliedRect);
+  return hasPendingRoiDraft(state);
 }
