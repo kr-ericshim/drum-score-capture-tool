@@ -15,6 +15,7 @@ import numpy as np
 from app.pipeline import observations as ob
 from app.pipeline import reflow_jump as jump
 from app.pipeline import reflow_strips as strips
+from app.pipeline import system_tracking
 
 
 class SeamRepairError(RuntimeError):
@@ -135,7 +136,8 @@ def rebuild_jump_runs(reflow, repair, order, composed, revision_dir, *, checkpoi
         pipeline._dump(original, revision_dir / "original_analysis.json")
         candidate["original_analysis_path"] = str(revision_dir / "original_analysis.json")
     manifest = read(original_workspace / "manifest.json")
-    tracking = read(original_workspace / "tracking.json")
+    # the jump view was analysed without the one-observation transient displays
+    tracking = system_tracking.without_transient_displays(read(original_workspace / "tracking.json"))
     occurrences = read(current_workspace / "occurrences.json")
     chains = read(current_workspace / "ledger_chains.json")
     effective = repair["jump"]

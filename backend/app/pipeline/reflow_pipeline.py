@@ -257,8 +257,11 @@ def analyse_source(
     # tracker's own verdict (horizontal motion stays unsupported).
     jump: Optional[Dict[str, Any]] = None
     ev = workspace / "ledger_evidence" if ledger else None
+    # the jump view works on the ordinary displays (one-observation transient displays are
+    # short candidates of the occurrence stage only)
+    jump_tracking = stk.without_transient_displays(tracking)
     try:
-        jump = rj.analyse_jumps(tracking, manifest, load, out_path=workspace / "jump.json", logger=logger,
+        jump = rj.analyse_jumps(jump_tracking, manifest, load, out_path=workspace / "jump.json", logger=logger,
                                 checkpoint=checkpoint, keep_composites=True, ledger=ledger, evidence_dir=ev)
     except OperationCancelled:
         raise
@@ -269,11 +272,11 @@ def analyse_source(
     layout_gate(tracking, jump)  # refuses horizontal motion without a jump view before any strip work
     checkpoint()
     progress("assembling", 0.0)
-    jump_eps = [i for r in runs for i in rj.run_episode_ids(r, tracking)]
+    jump_eps = [i for r in runs for i in rj.run_episode_ids(r, jump_tracking)]
     occ = ro.build_occurrences(tracking, manifest, load, logger=logger, exclude_episode_ids=jump_eps, ledger=ledger, evidence_dir=ev)
     jump_built: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
     if runs:
-        jump_built = rj.build_jump_systems(jump, tracking, manifest, workspace / "strips", composites=jump["_composites"],
+        jump_built = rj.build_jump_systems(jump, jump_tracking, manifest, workspace / "strips", composites=jump["_composites"],
                                            covered=jump["_covered"], load=load, logger=logger, checkpoint=checkpoint, ledger=ledger, evidence_dir=ev)
         occ = _merge_jump_occurrences(occ, [o for o, _r in jump_built])
     _dump(occ, workspace / "occurrences.json")
@@ -300,7 +303,7 @@ def analyse_source(
     by_id = {r["system_id"]: r for r in strips}
     # coverage of the leftover intervals, against what the chart actually exports: the included
     # systems after occurrence selection, with their strips written
-    coverage = leftover_gate(tracking, manifest, jump, exported=rj.exported_reference(occ["systems"], by_id))
+    coverage = leftover_gate(jump_tracking, manifest, jump, exported=rj.exported_reference(occ["systems"], by_id))
     if jump is not None:
         if coverage is not None:
             jump["coverage"] = coverage
@@ -370,7 +373,8 @@ def analyse_source(
             "issues": s["issues"] + rec.get("issues", []) + (["OVERLAY_UNRECOVERED"] if rec["unrecovered_columns"] > 0 else []),
             "strip": {k: v for k, v in rec.items() if k != "path"},
             **({"label": label_by[s["id"]]} if s["id"] in label_by else {}),
-            **({k: s[k] for k in ("content_family", "possible_repeat_of", "possible_repeat_cleared") if k in s}),
+            **({k: s[k] for k in ("content_family", "possible_repeat_of", "possible_repeat_cleared", "repeat_cleared_with",
+                                       "possible_repeat_chain") if k in s}),
         })
         # minority content the composite leaves out: each alternate is listed right after its
         # system, unchecked, so it can replace (or join) it in review
@@ -1804,11 +1808,9 @@ def compose_systems(systems: Sequence[Dict[str, Any]], *, header: Optional[Dict[
     if clipped:
         header = dict(header or {}, source_clipped=clipped)
     composed_systems = [d["system"] for d in decided]
-    composed_ids = {s["id"] for s in composed_systems}
-    possible_repeats = [{"system_id": s["id"], "of_system_id": s["possible_repeat_of"]}
-                        for s in composed_systems
-                        if "POSSIBLE_SAME_DISPLAY" in (s.get("issues") or [])
-                        and s.get("possible_repeat_of") in composed_ids]
+    # worked out on the composed selection: a part whose family neighbour is not printed is
+    # paired with the nearest printed one (audit F07)
+    possible_repeats = ro.possible_repeat_pairs(composed_systems)
     if possible_repeats or (header or {}).get("possible_repeats"):
         header = dict(header or {})
         header.pop("possible_repeats", None)

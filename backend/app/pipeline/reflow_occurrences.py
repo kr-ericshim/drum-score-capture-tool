@@ -16,9 +16,11 @@ not used on this path (that module stays for evaluation and later phases).
 Input: an observation manifest (observations.py) and its display episodes
 (system_tracking.py). One occurrence is one continuous display of one system:
 
-* Episodes of one screen slot split only by a playhead reset are one display
-  (the same system is still on screen; bF69 showed 57 episodes for 26 systems
-  because its playhead detector fired on a preview bar).
+* Episodes of one screen slot split only by a playhead reset stay two systems (audit F03:
+  a reset cannot tell the same line played again from a second line that looks the same).
+  The split binds every join rule, and unless every member shows a certain difference the
+  later one is marked as a possible repeat of the earlier one (‡ ``POSSIBLE_SAME_DISPLAY``,
+  ``reset_splits``): a duplicate with a notice rather than a silent loss.
 * Episodes joined by a verified, one-to-one tracker continuity link (a preview
   row promoted to the active row, a row moving with its page by one shared
   offset) are one display. Unverified or competing matches stay separate and
@@ -29,8 +31,9 @@ Input: an observation manifest (observations.py) and its display episodes
   Short displays are not placed by default. One is hidden only with positive
   evidence that its content is shown by a kept display around it: every
   non-staff foreground component of every raw member window - of any size,
-  including gray and a 1-px dot, after colored pixels are masked - is drawn by one of the
-  kept displays shown just before or after it at the same screen position
+  including gray and a 1-px dot, after colored pixels are masked - is drawn by ONE
+  kept display shown just before or after it (or around it) at the same screen position
+  (audit F05: the union of two neighbours is no evidence)
   (``shown_by_kept_display``), or it has no non-staff ink component at all.
   A tracker "small change" (page_diff ``ambiguous``) never counts as the same
   content here. Every
@@ -41,7 +44,7 @@ Input: an observation manifest (observations.py) and its display episodes
   systems that show their content.
 * Rows displayed together (a page view) are ordered top to bottom; displays
   are otherwise ordered by the time they become the shown (active) system.
-* Every join rule (tracker continuity, playhead reset, false content split, steady
+* Every join rule (tracker continuity, false content split, steady
   page-view row) passes one identity gate on raw polarity-normalized windows
   (``identity_verdict``: paper level, written display, measure-number area). A pair
   with evidence of two written occurrences is vetoed, recorded in ``identity_vetoes``,
@@ -66,7 +69,7 @@ from app.pipeline import minority_content as mc, page_diff, system_detect, reflo
 from app.pipeline.system_tracking import (WINDOW_ABOVE_GAPS, clean_content, compare_content, comparable_windows, region_window,
                                           window_extent)
 
-OCCURRENCES_VERSION = "reflow_occurrences-5"  # pale-box masking; certain-number repeat clearing
+OCCURRENCES_VERSION = "reflow_occurrences-7"  # 7: a playhead reset never joins (‡ possible repeat); 6: short display hidden by ONE kept display; transient displays; ‡ pairs after selection
 MIN_OCCURRENCE_SEC = 1.5
 VIEW_CLUSTER_SEC = 1.5
 RESET_JOIN_SEC = 1.0
@@ -725,8 +728,13 @@ def build_occurrences(
     are not page systems."""
     all_eps = tracking.get("episodes", [])
     unsupported = [iv for iv in tracking.get("layout_intervals", []) if not iv.get("supported", True)]
+    # a one-observation transient display (system_tracking) is never excluded with a jump-view
+    # run around it: slot and time say nothing about its content, so it stays a listed short
+    # display (unticked, SHORT_DISPLAY) unless a kept display draws it
     excluded = set(exclude_episode_ids)
     eps = [e for e in all_eps if e.get("layout") != "horizontal_scroll" and e["id"] not in excluded]
+    # transient displays are short candidates only: no join rule, no peer of another row's change
+    joinable = [e for e in eps if not e.get("transient_display")]
     ep_by = {e["id"]: e for e in eps}
     uf = _UF([e["id"] for e in eps])
     guard = _VetoGuard(uf)
@@ -833,16 +841,12 @@ def build_occurrences(
             return "veto", {"kept_apart": "measure_number_area_differs", "evidence": number, "playhead": [xa, xb]}
         return "same", {"playhead": [xa, xb], "cursor_only": cursor_only}
 
-    def gated_join(a: Dict[str, Any], b: Dict[str, Any], path: str, *, need_same: bool) -> Tuple[bool, str, Dict[str, Any]]:
-        """Run the identity gate for a join rule. ``need_same``: the rule has only pixel evidence
-        (an uncertain identity keeps the pair apart); otherwise the rule has its own tracker
-        evidence and only a veto keeps it apart. Pixel-only rules require whole-span sameness;
-        both a veto and uncertainty bind every later rule, including joins through a group."""
-        if guard.blocks(a["id"], b["id"]):
-            identity_vetoes.append({"a": a["id"], "b": b["id"], "path": path, "verdict": "group_holds_identity_veto"})
-            return False, "veto", {"kept_apart": "group_holds_identity_veto"}
-        kind, rec = identity_verdict(a, b, identifier_veto_only=not need_same)
-        if need_same and kind != "veto":
+    def pair_identity(a: Dict[str, Any], b: Dict[str, Any], *, whole_span: bool) -> Tuple[str, Dict[str, Any]]:
+        """``identity_verdict`` of a's last and b's first view; with ``whole_span`` every raw
+        member of both episodes is compared too (any notation difference vetoes); otherwise
+        only a differing printed identifier vetoes."""
+        kind, rec = identity_verdict(a, b, identifier_veto_only=not whole_span)
+        if whole_span and kind != "veto":
             # A late tracker boundary may put the new display at both endpoints.
             # Before unioning, every raw member of BOTH episodes must agree with
             # b's first window under the same strict identity gate. Uncertainty
@@ -860,6 +864,17 @@ def build_occurrences(
                         break
                 if kind == "veto":
                     break
+        return kind, rec
+
+    def gated_join(a: Dict[str, Any], b: Dict[str, Any], path: str, *, need_same: bool) -> Tuple[bool, str, Dict[str, Any]]:
+        """Run the identity gate for a join rule. ``need_same``: the rule has only pixel evidence
+        (an uncertain identity keeps the pair apart); otherwise the rule has its own tracker
+        evidence and only a veto keeps it apart. Pixel-only rules require whole-span sameness;
+        both a veto and uncertainty bind every later rule, including joins through a group."""
+        if guard.blocks(a["id"], b["id"]):
+            identity_vetoes.append({"a": a["id"], "b": b["id"], "path": path, "verdict": "group_holds_identity_veto"})
+            return False, "veto", {"kept_apart": "group_holds_identity_veto"}
+        kind, rec = pair_identity(a, b, whole_span=need_same)
         if kind == "veto" or (kind == "uncertain" and need_same):
             guard.veto(a["id"], b["id"])
             identity_vetoes.append({"a": a["id"], "b": b["id"], "path": path, "verdict": rec["kept_apart"],
@@ -867,6 +882,32 @@ def build_occurrences(
                                     **({"observations": rec["observations"]} if "observations" in rec else {})})
             return False, kind, rec
         return guard.join(a["id"], b["id"]), kind, rec
+
+    # 2. (done first, so no join rule can bridge it) a playhead reset inside one display of a
+    #    slot: the same line played again, or another line that looks the same (two identical
+    #    un-numbered grooves). A reset alone never joins (audit F03): both sides stay separate
+    #    systems and the split binds every later rule (``_VetoGuard``). Unless every raw member
+    #    shows a certain difference (``pair_identity`` whole span: notation or a printed
+    #    identifier one side does not draw), the later side is marked as a possible repeat of
+    #    the earlier one (‡, ``POSSIBLE_SAME_DISPLAY``): a duplicate with a notice, never a loss.
+    by_slot: Dict[str, List[Dict[str, Any]]] = {}
+    for e in sorted(joinable, key=lambda x: x["t_start"]):
+        by_slot.setdefault(e["slot_id"], []).append(e)
+    reset_splits: List[Dict[str, Any]] = []
+    for slot, seq in by_slot.items():
+        for a, b in zip(seq, seq[1:]):
+            if a.get("ended_by") == "playhead_reset" and b.get("started_by") == "playhead_reset" \
+                    and 0.0 <= b["t_start"] - a["t_end"] <= RESET_JOIN_SEC:
+                kind, rec = pair_identity(a, b, whole_span=True)
+                guard.veto(a["id"], b["id"])
+                split = {"a": a["id"], "b": b["id"], "verdict": kind, "possible_repeat": kind != "veto"}
+                if kind == "veto":
+                    split["kept_apart"] = rec["kept_apart"]
+                    identity_vetoes.append({"a": a["id"], "b": b["id"], "path": "playhead_reset_same_display",
+                                            "verdict": rec["kept_apart"], "evidence": rec.get("evidence"),
+                                            "playhead": rec.get("playhead"),
+                                            **({"observations": rec["observations"]} if "observations" in rec else {})})
+                reset_splits.append(split)
 
     # 1. tracker continuity links: the same displayed content moved to another slot.
     #    Only verified (preview promotion / shared page translation), one-to-one links
@@ -892,19 +933,6 @@ def build_occurrences(
             continue
         joins.append({"a": lk["from"], "b": lk["to"], "basis": lk["kind"],
                       **({"identity_uncertain": True} if kind == "uncertain" else {})})
-
-    # 2. a playhead reset inside one continuous display of a slot
-    by_slot: Dict[str, List[Dict[str, Any]]] = {}
-    for e in sorted(eps, key=lambda x: x["t_start"]):
-        by_slot.setdefault(e["slot_id"], []).append(e)
-    for slot, seq in by_slot.items():
-        for a, b in zip(seq, seq[1:]):
-            if a.get("ended_by") == "playhead_reset" and b.get("started_by") == "playhead_reset" \
-                    and 0.0 <= b["t_start"] - a["t_end"] <= RESET_JOIN_SEC:
-                ok, kind, _rec = gated_join(a, b, "playhead_reset_same_display", need_same=False)
-                if ok:
-                    joins.append({"a": a["id"], "b": b["id"], "basis": "playhead_reset_same_display",
-                                  **({"identity_uncertain": True} if kind == "uncertain" else {})})
 
     # 3. a row that stays the same while the rest of its page view stays on screen:
     #    the tracker may split it at a transient overlay or highlight; one display.
@@ -939,7 +967,7 @@ def build_occurrences(
             if uf.find(a["id"]) == uf.find(b["id"]) or not (0.0 <= b["t_start"] - a["t_end"] <= step + SPLIT_JOIN_EXTRA_SEC):
                 continue
             lo, hi = a["t_end"] - TRANSITION_PEER_SEC, b["t_start"] + TRANSITION_PEER_SEC
-            peers = [o["id"] for o in eps if o["slot_id"] != slot and (
+            peers = [o["id"] for o in joinable if o["slot_id"] != slot and (
                 (o.get("started_by") != "first_observation" and lo <= o["t_start"] <= hi)
                 or (o.get("ended_by") not in (None, "end_of_source") and lo <= o["t_end"] <= hi))]
             rec: Dict[str, Any] = {"a": a["id"], "b": b["id"], "t": [round(a["t_end"], 4), round(b["t_start"], 4)]}
@@ -969,7 +997,7 @@ def build_occurrences(
         for a, b in zip(long_seq, long_seq[1:]):
             if uf.find(a["id"]) == uf.find(b["id"]) or not (0.0 <= b["t_start"] - a["t_end"] <= RESET_JOIN_SEC + 0.5):
                 continue
-            steady = [o for o in eps if o["slot_id"] != slot and o["t_start"] < a["t_end"] and o["t_end"] > b["t_start"]
+            steady = [o for o in joinable if o["slot_id"] != slot and o["t_start"] < a["t_end"] and o["t_end"] > b["t_start"]
                       and (o["t_end"] - o["t_start"]) >= min_occurrence_sec]
             if not steady:
                 continue
@@ -1033,7 +1061,7 @@ def build_occurrences(
 
     # 4. short displays: hidden only with positive evidence that a kept display shows
     #    their content; every other one is listed as an excluded (restorable) system.
-    starts_ends = [(e["t_start"], e["slot_id"]) for e in eps] + [(e["t_end"], e["slot_id"]) for e in eps]
+    starts_ends = [(e["t_start"], e["slot_id"]) for e in joinable] + [(e["t_end"], e["slot_id"]) for e in joinable]
 
     def rep_window(c: Dict[str, Any]) -> Tuple:
         key = c["root"]
@@ -1056,13 +1084,20 @@ def build_occurrences(
     def raw_member_window(o: str, r: str) -> Tuple:
         return _raw_window_of(obs_by, load_image, o, r)
 
-    def member_windows(c: Dict[str, Any], *, kept: bool = False) -> Iterable[Tuple]:
+    def member_windows(c: Dict[str, Any], *, kept: bool = False,
+                       near: Optional[Tuple[float, float]] = None) -> Iterable[Tuple]:
         # Do not retain full RGB crops for all neighbouring displays in memory.
         members = c["episodes"]
         if kept:
             # A preview not passed to this kept system's strip cannot recover ink.
             members = [e for e in members if e.get("role") != "preview"] or members
-        return (raw_member_window(o, r) for o, r in _member_observations(members))
+        pairs = _member_observations(members)
+        if near is not None:
+            # a display around a short one: only its observations within NEIGHBOUR_MATCH_SEC
+            # (fewer windows can only keep the short display listed)
+            pairs = [(o, r) for o, r in pairs if o in obs_by
+                     and near[0] - NEIGHBOUR_MATCH_SEC <= obs_by[o]["t_sec"] <= near[1] + NEIGHBOUR_MATCH_SEC]
+        return (raw_member_window(o, r) for o, r in pairs)
 
     def neighbour_displays(f: Dict[str, Any]) -> List[Tuple[Dict[str, Any], str]]:
         """Kept displays shown just before / after the short one at its screen position."""
@@ -1103,19 +1138,31 @@ def build_occurrences(
                 near = neighbour_displays(f)
                 fw = rep_raw_window(f)
                 samples = list(member_windows(f))
-                evidence = shown_by_kept_display(samples, (win for c, _w in near for win in member_windows(c, kept=True)),
-                                                 raw_evidence=True)
+                # the whole short display must be drawn by ONE kept display (audit F05: the
+                # union of the display before and the one after is no evidence)
+                evidence = shown_by_kept_display(samples, (), raw_evidence=True)
+                covering: List[Dict[str, Any]] = []
+                if not evidence.get("shown") and evidence.get("reason") == "no_kept_neighbour" and near:
+                    shown_ev, first_failure = None, None
+                    for c, where in near:
+                        wins = member_windows(c, kept=True, near=(f["t_start"], f["t_end"]) if where == "mid" else None)
+                        ev = shown_by_kept_display(samples, wins, raw_evidence=True)
+                        if ev.get("shown"):
+                            shown_ev = shown_ev or ev
+                            covering.append(c)
+                        elif first_failure is None:
+                            first_failure = ev
+                    evidence = shown_ev or first_failure or evidence
                 evidence["basis"] = "all_raw_polarity_normalized_members"
                 evidence["observations_checked"] = len(samples)
                 if evidence.get("shown"):
-                    same = [c for c, _w in near if _strictly_same_image(fw, rep_raw_window(c))
-                            and shown_by_kept_display(samples, member_windows(c, kept=True), raw_evidence=True).get("shown")]
+                    same = [c for c in covering if _strictly_same_image(fw, rep_raw_window(c))]
                     if same and evidence["reason"] != "no_content_beyond_staff_lines":
                         reasons.append("same_as_neighbour_display")
                         represented_by = [c["root"] for c in same]
                     else:
                         reasons.append(evidence["reason"])
-                        represented_by = [c["root"] for c, _w in near]
+                        represented_by = [c["root"] for c in (covering or [c for c, _w in near])]
             except Exception as exc:  # no pixels -> no evidence -> listed
                 logger(f"short display comparison failed: {exc}")
                 evidence = {"shown": False, "reason": f"comparison_failed: {exc}"}
@@ -1184,38 +1231,86 @@ def build_occurrences(
             "issues": issues,
             **({"content_family": family} if family else {}),
         })
-    previous_by_family: Dict[str, str] = {}
+    earlier_by_family: Dict[str, List[str]] = {}
     for s in sorted(systems, key=lambda s: s["t_start"]):
         family = s.get("content_family")
         if family:
-            previous = previous_by_family.get(family["id"])
-            if previous is not None:
+            earlier = earlier_by_family.setdefault(family["id"], [])
+            if earlier:
                 s["issues"].append("POSSIBLE_SAME_DISPLAY")
-                s["possible_repeat_of"] = previous
-            previous_by_family[family["id"]] = s["id"]
+                s["possible_repeat_of"] = earlier[-1]
+                s["_earlier_family_parts"] = list(earlier)
+            earlier.append(s["id"])
     sys_by = {s["id"]: s for s in systems}
-    for s in systems:
-        previous = s.get("possible_repeat_of")
-        if previous is None:
-            continue
+
+    def numbers_certainly_differ(previous: str, s: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """The evidence that the measure numbers of ``previous`` (its last view) and ``s`` (its
+        first view) certainly differ at digit scale, both printed and uncovered; else None."""
         try:
             a = max((ep_by[eid] for eid in sys_by[previous]["episode_ids"]), key=lambda e: e["t_end"])
             b = min((ep_by[eid] for eid in s["episode_ids"]), key=lambda e: e["t_start"])
             wa, wb = ep_raw_window(a, "last"), ep_raw_window(b, "first")
             _same, identity = same_written_display(wa, wb)
             if identity.get("reason") in ("unregistered", "staff_size_differs"):
-                continue
+                return None
             number = measure_number_area_differs(wa, wb, identity.get("shift") or (0.0, 0.0),
                                                 require_uncovered_glyphs=True, require_digit_scale=True)
         except Exception as exc:  # unavailable raw evidence keeps the notice
             logger(f"possible repeat comparison failed: {s['id']}: {exc}")
-            continue
+            return None
         if number is not None and number.get("reason") == "measure_number_area_differs" \
                 and number.get("number_present") == [True, True]:
+            return number
+        return None
+
+    for s in systems:
+        previous = s.get("possible_repeat_of")
+        if previous is None:
+            continue
+        # every earlier part of the family: when the parts between are not printed (short, or
+        # unticked) the notice pairs this part with an earlier one (audit F07,
+        # possible_repeat_pairs); it is cleared for a pair only when its numbers certainly differ
+        cleared_with = [p for p in s.pop("_earlier_family_parts")[:-1] if numbers_certainly_differ(p, s) is not None]
+        if cleared_with:
+            s["repeat_cleared_with"] = cleared_with
+        number = numbers_certainly_differ(previous, s)
+        if number is not None:
             s["issues"] = [issue for issue in s["issues"] if issue != "POSSIBLE_SAME_DISPLAY"]
             s.pop("possible_repeat_of")
             s["possible_repeat_cleared"] = {"of": previous, "evidence": number}
     sys_of_ep = {e_id: s_["id"] for s_ in systems for e_id in s_["episode_ids"]}
+    # the later side of a playhead-reset split may repeat the earlier one (‡, audit F03); a
+    # part that already carries a content-family notice keeps that one. Consecutive possible
+    # repeats form a chain (A, A', A'' of one un-numbered groove): ``possible_repeat_chain`` lists
+    # the earlier systems of the chain, oldest first, so a later system whose recorded partner
+    # is not printed is paired with the nearest printed one (possible_repeat_pairs). A veto (a
+    # certain difference) or numbers cleared for the pair end the chain.
+    reset_chain: Dict[str, List[str]] = {}
+    for split in sorted(reset_splits, key=lambda x: ep_by[x["b"]]["t_start"]):
+        sa, sb = sys_of_ep.get(split["a"]), sys_of_ep.get(split["b"])
+        split["system_ids"] = [sa, sb]
+        if not split["possible_repeat"] or sa is None or sb is None or sa == sb:
+            continue
+        s = sys_by[sb]
+        if (s.get("possible_repeat_cleared") or {}).get("of") == sa:
+            continue
+        chain = reset_chain.setdefault(sb, [])
+        for p in reset_chain.get(sa, []) + [sa]:
+            if p != sb and p not in chain:
+                chain.append(p)
+        if s.get("possible_repeat_of") is not None:
+            continue
+        s["issues"].append("POSSIBLE_SAME_DISPLAY")
+        s["possible_repeat_of"] = sa
+        s["possible_repeat_basis"] = "playhead_reset"
+    for sb, chain in reset_chain.items():
+        s = sys_by[sb]
+        s["possible_repeat_chain"] = chain
+        # a pair further back in the chain is cleared only by certainly different numbers
+        cleared_with = [p for p in chain[:-1] if p not in (s.get("repeat_cleared_with") or [])
+                        and numbers_certainly_differ(p, s) is not None]
+        if cleared_with:
+            s["repeat_cleared_with"] = list(s.get("repeat_cleared_with") or []) + cleared_with
     continuity_suggestions = []
     for lk in similar_links:
         a_sys, b_sys = sys_of_ep.get(lk["from"]), sys_of_ep.get(lk["to"])
@@ -1346,11 +1441,63 @@ def build_occurrences(
         "exclusions": exclusions,
         "joins": joins,
         "identity_vetoes": identity_vetoes,
+        "reset_splits": reset_splits,
         "continuity_suggestions": continuity_suggestions,
         "self_checks": self_checks,
         "unsupported_intervals": [{"start": iv["start"], "end": iv["end"], "kind": iv["kind"], "issue": iv.get("issue")} for iv in unsupported],
         "layout_intervals": tracking.get("layout_intervals", []),
     }
+
+
+def possible_repeat_pairs(composed: Sequence[Dict[str, Any]]) -> List[Dict[str, str]]:
+    """The ‡ "may repeat the line above" pairs of a composed selection, worked out after the
+    selection (audit F07): each composed part of a content family is paired with the nearest
+    composed part of the same family before it, also when the parts between are not printed.
+    A pair is left out only when its measure numbers certainly differ
+    (``possible_repeat_cleared`` / ``repeat_cleared_with`` from build_occurrences). Systems
+    without a family keep their recorded ``possible_repeat_of`` pair (when both are composed), as
+    does a family part with no composed earlier part when its pair lies outside the family (a
+    playhead-reset split, audit F03). When that recorded partner is not composed, a system of a
+    reset-repeat chain (``possible_repeat_chain``: three cursor cycles of one groove) is paired
+    with the nearest composed earlier system of the chain, unless their numbers certainly differ."""
+    composed_ids = {s["id"] for s in composed}
+    by_id = {s["id"]: s for s in composed}
+    cleared: Dict[str, set] = {}
+    for s in composed:
+        ids = set(s.get("repeat_cleared_with") or [])
+        if s.get("possible_repeat_cleared"):
+            ids.add(s["possible_repeat_cleared"].get("of"))
+        cleared[s["id"]] = ids
+
+    def outside_pair(s: Dict[str, Any], fid: Optional[str]) -> Optional[str]:
+        """The recorded pair outside ``fid`` (a playhead-reset split, audit F03) when printed;
+        else the nearest printed earlier system of its reset chain (``possible_repeat_chain``)
+        unless their numbers certainly differ."""
+        recorded = s.get("possible_repeat_of")
+        if "POSSIBLE_SAME_DISPLAY" in (s.get("issues") or []) and recorded in composed_ids \
+                and (fid is None or (by_id[recorded].get("content_family") or {}).get("id") != fid):
+            return recorded
+        for p in reversed(s.get("possible_repeat_chain") or []):
+            if p in composed_ids:
+                if p in cleared[s["id"]] or s["id"] in cleared[p]:
+                    return None
+                return p
+        return None
+
+    out: List[Dict[str, str]] = []
+    last_of_family: Dict[str, Dict[str, Any]] = {}
+    for s in composed:
+        fid = (s.get("content_family") or {}).get("id")
+        prev = last_of_family.get(fid) if fid else None
+        if fid:
+            last_of_family[fid] = s
+        if prev is None or prev["id"] in cleared[s["id"]] or s["id"] in cleared[prev["id"]]:
+            partner = outside_pair(s, fid)
+            if partner is not None:
+                out.append({"system_id": s["id"], "of_system_id": partner})
+            continue
+        out.append({"system_id": s["id"], "of_system_id": prev["id"]})
+    return out
 
 
 def _merge_intervals(iv: List[Tuple[float, float]], tol: float = 0.0) -> List[List[float]]:

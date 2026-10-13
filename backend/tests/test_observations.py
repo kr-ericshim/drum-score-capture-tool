@@ -234,3 +234,138 @@ class RoleAssignmentTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DecodeCompletenessTest(unittest.TestCase):
+    """A decoder that stops early must not yield a manifest that claims the whole video (audit F08)."""
+
+    ROI = [[0, 0], [1400, 0], [1400, 190], [0, 190]]
+
+    def _manifest(self, decodable_frames: int = 0, metadata_frames: int = 180, *, pts=None, seek_pts=None,
+                  fps: float = 30.0, metadata_fps=None):
+        """A capture delivering ``pts`` (default: ``decodable_frames`` frames at ``fps``) in a sequential
+        decode, and ``seek_pts`` (default: the ``metadata_frames`` the container claims, i.e. the stream
+        really continues) after a seek, in a container claiming ``metadata_frames`` at ``metadata_fps``."""
+        from unittest.mock import patch
+
+        img = render(strip_spec())
+        step = fps if fps > 0 else 30.0
+        seq = list(pts) if pts is not None else [i / step for i in range(decodable_frames)]
+        after_seek = list(seek_pts) if seek_pts is not None else [i / step for i in range(metadata_frames)]
+        seeks = []
+
+        class Capture:
+            def __init__(self, *_args):
+                self.i = -1
+                self.frames = seq
+
+            def isOpened(self):
+                return True
+
+            def set(self, key, value):
+                assert key == cv2.CAP_PROP_POS_MSEC
+                seeks.append(value / 1000.0)
+                self.frames = after_seek
+                self.i = sum(1 for t in after_seek if t < value / 1000.0 - 1e-9) - 1
+
+            def grab(self):
+                self.i += 1
+                return self.i < len(self.frames)
+
+            def retrieve(self):
+                return True, img
+
+            def get(self, key):
+                if key == cv2.CAP_PROP_FPS:
+                    return fps
+                if key == cv2.CAP_PROP_POS_MSEC:
+                    return self.frames[min(self.i, len(self.frames) - 1)] * 1000.0 if self.frames else 0.0
+                return 0
+
+            def release(self):
+                pass
+
+        mfps = fps if metadata_fps is None else metadata_fps
+        info = ob.VideoInfo("memory", mfps, metadata_frames, 1400, 190, metadata_frames / mfps if mfps > 0 else 0.0)
+        self.seeks = seeks
+        with patch.object(ob, "probe_video", return_value=info), patch.object(ob.cv2, "VideoCapture", Capture), \
+                patch.object(ob, "file_sha256", return_value="0" * 64):
+            return ob.build_manifest(video_path=Path("/tmp/in_memory_not_a_video"), roi=self.ROI,
+                                     store_frames=False, work_scale=1.0)
+
+    def test_early_end_of_decode_stops_the_job(self):
+        with self.assertRaises(ob.VideoDecodeIncompleteError) as ctx:
+            self._manifest(45)  # 1.5 s of a 6 s video
+        self.assertEqual(ctx.exception.code, "VIDEO_DECODE_INCOMPLETE")
+        self.assertEqual(ctx.exception.decoded_until, round(44 / 30, 6))  # the last frame the decoder delivered
+
+    def test_no_decodable_frame_stops_the_job(self):
+        with self.assertRaises(ob.VideoDecodeIncompleteError):
+            self._manifest(0)
+
+    def test_a_few_missing_tail_frames_are_tolerated(self):
+        # container frame counts often overshoot by a few frames
+        m = self._manifest(175)
+        self.assertEqual(m["sampling"]["sampled_until_sec"], round(175 / 30, 4))  # the real reach, not 6.0
+        self.assertEqual(ob.validate_manifest(m), [])
+
+    def test_decoder_stopping_after_the_last_grid_target_tolerance_stops_the_job(self):
+        # 139 of 180 frames (last at 4.6 s): the 5.5 s grid point is within 1 s of the last served
+        # sample, but the requested final frame (5.967 s) is 1.37 s past the decoder's reach
+        with self.assertRaises(ob.VideoDecodeIncompleteError) as ctx:
+            self._manifest(139)
+        self.assertEqual(ctx.exception.decoded_until, round(138 / 30, 6))
+
+    def test_whole_video_decoded_records_the_container_end(self):
+        m = self._manifest(180)
+        self.assertEqual(m["sampling"]["sampled_until_sec"], 6.0)
+        self.assertEqual(ob.validate_manifest(m), [])
+
+    def test_early_end_confirmed_by_seek_keeps_the_decoded_video(self):
+        # 139 of 180 frames sequentially, and seeking past 4.6 s decodes nothing later: the stream
+        # really ends at 4.6 s (e.g. a container claiming more than it holds)
+        m = self._manifest(139, seek_pts=[i / 30.0 for i in range(139)])
+        self.assertEqual(m["sampling"]["sampled_until_sec"], round(139 / 30, 4))  # the real reach
+        note = m["sampling"]["decode_end_confirmed_by_seek"]
+        self.assertEqual(note["stream_end_sec"], round(138 / 30, 6))
+        self.assertEqual(len(note["probe_sec"]), 2)
+        self.assertTrue(all(138 / 30 < t < 5.967 for t in note["probe_sec"]))
+        self.assertEqual(len(self.seeks), 2)
+        self.assertEqual(max(o["t_sec"] for o in m["observations"]), 4.5)  # nothing invented past the reach
+        self.assertEqual(ob.validate_manifest(m), [])
+
+    def test_early_end_with_later_frames_after_a_seek_stops_the_job(self):
+        with self.assertRaises(ob.VideoDecodeIncompleteError):
+            self._manifest(139)  # the seek decodes frames up to 5.967 s
+        self.assertEqual(len(self.seeks), 1)  # the first probe already finds a later frame
+
+    def test_vfr_recording_holding_its_last_frame_passes(self):
+        # frames every 1/30 s up to 4.0 s, the last one held 2 s; the container says 6 s
+        # (121 frames at an average 20.17 fps)
+        pts = [i / 30.0 for i in range(121)]
+        m = self._manifest(metadata_frames=121, pts=pts, seek_pts=pts, fps=121 / 6.0)
+        self.assertEqual(m["sampling"]["decode_end_confirmed_by_seek"]["stream_end_sec"], 4.0)
+        self.assertAlmostEqual(m["sampling"]["sampled_until_sec"], 4.0 + 6.0 / 121, places=3)
+        self.assertEqual(max(o["t_sec"] for o in m["observations"]), 4.0)
+
+    def test_container_longer_than_the_video_stream_passes(self):
+        # MKV/WebM: the frame count comes from a 7.5 s container (longer audio); video ends at 5.97 s
+        pts = [i / 30.0 for i in range(180)]
+        m = self._manifest(metadata_frames=225, pts=pts, seek_pts=pts)
+        self.assertEqual(m["sampling"]["sampled_until_sec"], 6.0)
+        self.assertEqual(m["sampling"]["decode_end_confirmed_by_seek"]["stream_end_sec"], round(179 / 30, 6))
+        self.assertEqual(ob.validate_manifest(m), [])
+
+    def test_small_overshoot_and_whole_video_need_no_seek(self):
+        for decodable, metadata in ((180, 185), (180, 180), (175, 180)):
+            with self.subTest(decodable=decodable, metadata=metadata):
+                m = self._manifest(decodable, metadata)
+                self.assertEqual(self.seeks, [])
+                self.assertNotIn("decode_end_confirmed_by_seek", m["sampling"])
+                self.assertEqual(m["sampling"]["sampled_until_sec"], round(decodable / 30, 4))
+
+    def test_zero_fps_container_is_unchanged(self):
+        m = self._manifest(90, 0, fps=0.0)
+        self.assertEqual(self.seeks, [])
+        self.assertEqual(m["sampling"]["sampled_until_sec"], 0.0)
+        self.assertEqual(len(m["observations"]), 1)

@@ -32,7 +32,7 @@ class NumberStepTrackingTest(unittest.TestCase):
 
     def test_stable_number_change_splits_and_places_both_without_repeat_hint(self):
         tracking, manifest, images = self.track([33] * 12 + [37] * 12)
-        self.assertEqual(tracking["tracking_version"], "system_tracking-7")
+        self.assertEqual(tracking["tracking_version"], "system_tracking-8")
         eps = tracking["episodes"]
         self.assertEqual(len(eps), 2, [(e["t_start"], e["t_end"], e["started_by"]) for e in eps])
         self.assertEqual([e["n_obs"] for e in eps], [12, 12])
@@ -135,8 +135,9 @@ class NumberStepTrackingTest(unittest.TestCase):
                     retained += [r["obs_id"] for r in tracking["transient_observations"]]
                     self.assertEqual(sorted(retained), [o["id"] for o in manifest["observations"]])
                     if not same_music:
-                        self.assertEqual([e["n_obs"] for e in tracking["episodes"]], [13, 1, 12])
-                        self.assertFalse(tracking["episodes"][1]["confirmed"])
+                        ordinary = [e for e in tracking["episodes"] if not e.get("transient_display")]
+                        self.assertEqual([e["n_obs"] for e in ordinary], [13, 1, 12])
+                        self.assertFalse(ordinary[1]["confirmed"])
                     systems = ro.build_occurrences(tracking, manifest, loader(images))["systems"]
                     self.assertFalse(any("NUMBER_STEP_UNRESOLVED" in s["issues"] for s in systems))
 
@@ -451,12 +452,15 @@ class NumberStepFailureTest(unittest.TestCase):
         self.assertEqual(len(parts), 2)
         self.assertTrue(all(p.number_step_unresolved for p in parts))
         records = [st._episode_record(f"e-{i}", p, 3) for i, p in enumerate(parts)]
-        # Also cover a joined group where just one member is unresolved.
+        # Also cover a reset split where just one part is unresolved: a reset never joins (audit
+        # F03), so each part keeps its own flag and the later part is a possible repeat (‡).
         records[0].pop("number_step_unresolved")
         out = ro.build_occurrences({"episodes": records}, {"observations": []}, lambda _o: None)
-        self.assertEqual(len(out["systems"]), 1)
-        self.assertEqual(out["systems"][0]["episode_ids"], ["e-0", "e-1"])
-        self.assertIn("NUMBER_STEP_UNRESOLVED", out["systems"][0]["issues"])
+        self.assertEqual([s["episode_ids"] for s in out["systems"]], [["e-0"], ["e-1"]])
+        self.assertNotIn("NUMBER_STEP_UNRESOLVED", out["systems"][0]["issues"])
+        self.assertIn("NUMBER_STEP_UNRESOLVED", out["systems"][1]["issues"])
+        self.assertIn("POSSIBLE_SAME_DISPLAY", out["systems"][1]["issues"])
+        self.assertEqual(out["systems"][1]["possible_repeat_of"], out["systems"][0]["id"])
 
 
 class PossibleRepeatNumberTest(unittest.TestCase):

@@ -196,13 +196,41 @@ def probe_video(path: Path) -> VideoInfo:
     return VideoInfo(str(path), fps, count, w, h, dur)
 
 
-def iter_frames_at(path: Path, targets: Iterable[float], *, checkpoint: Callable[[], None] = lambda: None) -> Iterator[Tuple[float, float, np.ndarray]]:
+class VideoDecodeIncompleteError(RuntimeError):
+    """The decoder stopped well before the end the container reports, so the later part of
+    the video was never sampled. The job stops instead of passing off the decoded head as the
+    whole video (Astra audit 2026-10-13, F08)."""
+
+    code = "VIDEO_DECODE_INCOMPLETE"
+
+    def __init__(self, decoded_until: Optional[float], expected_until: float):
+        self.decoded_until = decoded_until
+        self.expected_until = expected_until
+        got = "no frame" if decoded_until is None else f"{decoded_until:.2f}s"
+        super().__init__(f"{self.code}: the decoder stopped at {got} of {expected_until:.2f}s")
+
+
+# Container frame counts can overshoot the decodable frames by a few frames, so coarse
+# targets this close to the last decoded frame may go unserved without loss being reported.
+DECODE_END_TOLERANCE_SEC = 1.0
+
+
+def iter_frames_at(path: Path, targets: Iterable[float], *, checkpoint: Callable[[], None] = lambda: None,
+                   reach: Optional[Dict[str, Any]] = None) -> Iterator[Tuple[float, float, np.ndarray]]:
     """Yield ``(target_sec, pts_sec, frame)`` for each target time.
 
     The chosen frame is the first decoded frame whose PTS is at or after
     ``target - half a frame`` (the frame nearest the target from the decoder's
     point of view). Targets are visited in ascending order with one
     sequential decode; a frame is decoded (retrieved) only when needed.
+
+    When the stream ends before the last targets (the container's frame count overshoots the
+    decodable frames), targets at most ``DECODE_END_TOLERANCE_SEC`` after the last decoded
+    frame get that last frame, with its own PTS (audit F06: the end tail is observed).
+
+    ``reach`` (when given) receives ``"last_pts"``: the PTS of the last frame the decoder
+    delivered (None when none was), kept current while iterating. The decode-completeness check
+    compares it with the requested final frame (audit F08).
     """
     todo = sorted(set(round(float(t), 6) for t in targets))
     if not todo:
@@ -213,22 +241,72 @@ def iter_frames_at(path: Path, targets: Iterable[float], *, checkpoint: Callable
     fps = float(cap.get(cv2.CAP_PROP_FPS) or 30.0)
     half = 0.5 / fps
     i = 0
+    last: Optional[Tuple[float, np.ndarray]] = None  # the latest retrieved frame
+    pts: Optional[float] = None  # the latest grabbed frame
+    if reach is not None:
+        reach["last_pts"] = None
     try:
         while i < len(todo):
             checkpoint()
             if not cap.grab():
+                # only the stream's real last frame stands in for targets past the end
+                if last is not None and last[0] == pts:
+                    while i < len(todo) and todo[i] - last[0] <= DECODE_END_TOLERANCE_SEC:
+                        yield todo[i], round(last[0], 6), last[1]
+                        i += 1
                 break
             pts = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+            if reach is not None:
+                reach["last_pts"] = round(pts, 6)
             if pts + half < todo[i]:
+                if todo[-1] - pts <= DECODE_END_TOLERANCE_SEC:
+                    ok, frame = cap.retrieve()
+                    if ok:
+                        last = (pts, frame)
                 continue
             ok, frame = cap.retrieve()
             if not ok:
                 continue
+            last = (pts, frame)
             while i < len(todo) and todo[i] <= pts + half:
                 yield todo[i], round(pts, 6), frame
                 i += 1
     finally:
         cap.release()
+
+
+def decode_end_probes(reached: float, final: float) -> List[float]:
+    """Seek targets that check a sequential decode's early end: halfway and three quarters of
+    the way from the decoder's reach to the requested final frame."""
+    gap = final - reached
+    return [round(reached + gap * 0.5, 6), round(reached + gap * 0.75, 6)]
+
+
+def stream_continues_after(path: Path, reached: float, probes: Sequence[float]) -> bool:
+    """True when a frame later than ``reached`` decodes after seeking to one of ``probes``.
+
+    Run only when a sequential decode ended more than ``DECODE_END_TOLERANCE_SEC`` before the
+    requested end (audit F08): a later frame means the decoder stopped early; none means the
+    video stream really ends at ``reached`` (a VFR recording holding its last frame, or a
+    container longer than its video stream). A video that no longer opens counts as continuing,
+    so the end is never confirmed without a seek."""
+    cap = cv2.VideoCapture(str(path))
+    try:
+        if not cap.isOpened():
+            return True
+        fps = float(cap.get(cv2.CAP_PROP_FPS) or 30.0)
+        half = 0.5 / fps
+        for t in probes:
+            cap.set(cv2.CAP_PROP_POS_MSEC, float(t) * 1000.0)
+            if not cap.grab():
+                continue
+            pts = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+            ok, frame = cap.retrieve()
+            if ok and frame is not None and pts > reached + half:
+                return True
+    finally:
+        cap.release()
+    return False
 
 
 def file_sha256(path: Path, chunk: int = 1 << 20) -> str:
@@ -411,6 +489,14 @@ def _grid(start: float, end: float, hz: float) -> List[float]:
     return [round(start + i * step, 6) for i in range(n + 1)]
 
 
+def _last_frame_time(fps: float, end: float) -> Optional[float]:
+    """Nominal time of the last frame before ``end`` (source seconds), or None without a frame rate."""
+    if not fps or fps <= 0 or end <= 0:
+        return None
+    index = int(np.ceil(end * fps - 1e-6)) - 1
+    return round(max(0, index) / fps, 6)
+
+
 def build_manifest(
     *,
     video_path: Path,
@@ -466,13 +552,18 @@ def build_manifest(
     samples: Dict[float, Dict[str, Any]] = {}
     changes: List[Dict[str, Any]] = []
     windows: List[Tuple[float, float]] = []
+    served: Dict[str, Any] = {"targets": set(), "last_pts": None}
 
-    def take(targets: List[float], kind: str, compare_consecutive: bool) -> None:
+    reach: Dict[str, Any] = {"last_pts": None}
+
+    def take(targets: List[float], kind: str, compare_consecutive: bool, reach_out: Optional[Dict[str, Any]] = None) -> None:
         prev: Optional[Tuple[float, np.ndarray]] = None
         done = 0
-        for target, pts, frame in iter_frames_at(video_path, targets):
+        for target, pts, frame in iter_frames_at(video_path, targets, reach=reach_out):
             checkpoint()
             done += 1
+            served["targets"].add(target)
+            served["last_pts"] = pts if served["last_pts"] is None else max(served["last_pts"], pts)
             if progress is not None and kind == "coarse" and targets:
                 progress(min(1.0, done / float(len(targets))))
             if pts in samples:
@@ -500,12 +591,38 @@ def build_manifest(
             prev = (pts, crop)
 
     coarse = _grid(start, max(start, duration - 1e-3), coarse_hz)
-    take(coarse, "coarse", True)
+    # the last frame once more (audit F06): a screen shown only after the last grid sample is
+    # observed. Not a grid point: when the container overshoots the decodable frames it may go
+    # unserved (or get the real last frame, iter_frames_at) without failing the decode check.
+    tail = _last_frame_time(info.fps, duration)
+    tail_targets = [tail] if tail is not None and tail >= start and (not coarse or tail > coarse[-1] + 1e-6) else []
+    take(coarse + tail_targets, "coarse", True, reach)
     logger(f"coarse samples: {len(samples)}, changes: {len(changes)}")
+    # decode completeness (audit F08): the decoder's real reach (the PTS of the last frame it
+    # delivered) against the requested final frame, with DECODE_END_TOLERANCE_SEC applied once
+    # (container frame counts overshoot the decodable frames by a few frames). Unserved grid
+    # points alone are not the test: the tolerance on them let a decoder stop up to 1 s before
+    # the last grid point plus the grid step and the tail. An early end is confirmed once by
+    # seeking past it: when no later frame decodes, the video stream really ends there (VFR
+    # held last frame, container longer than the video stream) and sampling stands.
+    final = tail if tail is not None else (coarse[-1] if coarse else start)
+    reached = reach.get("last_pts")
+    if served["last_pts"] is None or reached is None:
+        raise VideoDecodeIncompleteError(reached, duration)
+    end_confirmed: Optional[Dict[str, Any]] = None
+    if reached < final - DECODE_END_TOLERANCE_SEC - 1e-6:
+        probes = decode_end_probes(float(reached), final)
+        if stream_continues_after(video_path, float(reached), probes):
+            raise VideoDecodeIncompleteError(reached, duration)
+        end_confirmed = {"stream_end_sec": round(float(reached), 6), "requested_end_sec": round(final, 6),
+                         "probe_sec": probes}
+        logger(f"decode ended at {reached:.2f}s of {duration:.2f}s; no later frame after seeking, the stream ends there")
+    frame_sec = 1.0 / info.fps if info.fps and info.fps > 0 else 0.0
+    sampled_until = min(duration, max(float(reached), float(served["last_pts"])) + frame_sec)
     fine: List[float] = []
     for w0, w1 in windows:
         fine.extend(_grid(w0, w1, fine_hz))
-    fine = sorted(set(fine) - set(coarse))
+    fine = sorted(set(fine) - set(coarse) - set(tail_targets))
     take(fine, "fine", False)
     logger(f"total samples: {len(samples)}")
     if sizes and sizes["work"] != sizes["native"]:
@@ -544,6 +661,20 @@ def build_manifest(
     for obs in observations:
         assign_roles(obs)
 
+    sampling: Dict[str, Any] = {
+        "coarse_hz": coarse_hz,
+        "fine_hz": fine_hz,
+        "fine_window_sec": fine_window,
+        "change_detector": "page_diff.compare_frames(normal) on polarity-normalized consecutive coarse ROI crops; resample unless same or ambiguous/small_change",
+        "sampled_from_sec": round(start, 4),
+        # what the decoder really reached (the end of its last frame), not the container's claim
+        "sampled_until_sec": round(sampled_until, 4),
+    }
+    if end_confirmed is not None:
+        # the sequential decode ended over DECODE_END_TOLERANCE_SEC before the container's end and
+        # seeking past it decoded nothing later (audit F08)
+        sampling["decode_end_confirmed_by_seek"] = end_confirmed
+
     return {
         "schema_version": SCHEMA_VERSION,
         "kind": MANIFEST_KIND,
@@ -561,14 +692,7 @@ def build_manifest(
         "applied_roi": [[float(x), float(y)] for x, y in roi],
         "roi_revision": roi_revision,
         "source_to_crop": s2c,
-        "sampling": {
-            "coarse_hz": coarse_hz,
-            "fine_hz": fine_hz,
-            "fine_window_sec": fine_window,
-            "change_detector": "page_diff.compare_frames(normal) on polarity-normalized consecutive coarse ROI crops; resample unless same or ambiguous/small_change",
-            "sampled_from_sec": round(start, 4),
-            "sampled_until_sec": round(duration, 4),
-        },
+        "sampling": sampling,
         # crops are analysed and stored at this scale of the native ROI crop (1 = native);
         # source_to_crop and crop_size include it
         "work_scale": dict(scale_rec, native_crop_size=list(sizes["native"]) if sizes else None,

@@ -44,6 +44,8 @@ from the observations of that one display and cleaned:
   (``settle_chrome``). Anything else in or touching a chrome area (ink of any
   darkness or tint) is kept with its surroundings, its rows are never trimmed,
   and the strip gets ``OVERLAY_COVERS_NOTATION`` (``screen_chrome`` in the record).
+  A symbol-sized colored object in the score rows (``score_row_zone``: a section mark, a boxed
+  label, a mark above or below the staff) is never chrome, however often it repeats (audit F10).
 * Minority content: every member's full owned ROI/rows is inventoried before
   cropping. Missing foreground, including outside-crop and rejected fade or
   registration hypotheses, is retained in one lossless review bundle per system
@@ -58,7 +60,9 @@ from the observations of that one display and cleaned:
   cannot be separated is kept and flagged ``LOW_CONTRAST_CONTENT_KEPT``. Video showing
   through a translucent score band is whitened away from the ink. Paper tone is flattened
   with paper_tone.flatten_paper_background, and every kept component is checked to survive
-  the finishing (``CONTENT_LOST_IN_FINISHING`` otherwise).
+  the finishing (``CONTENT_LOST_IN_FINISHING`` otherwise). Weak marks lighter than these cutoffs
+  (``weak_marks``, audit F11) are found on the raw composite and protected in the row trim, the
+  cleanup and the survival check (against the raw composite, so a cleanup erasure counts).
 
 Coordinates: crop pixels of the observation manifest; boxes are half-open.
 """
@@ -497,7 +501,8 @@ def paper_levels(images: Sequence[np.ndarray]) -> List[float]:
 
 def compose_members(images: List[np.ndarray], gap: float, *, keys: Optional[Sequence[Any]] = None,
                     memo: Optional[Dict[Any, np.ndarray]] = None,
-                    chrome: Optional[np.ndarray] = None, ledger_members: bool = False) -> Tuple[np.ndarray, Dict[str, Any]]:
+                    chrome: Optional[np.ndarray] = None, ledger_members: bool = False,
+                    protected: Optional[np.ndarray] = None) -> Tuple[np.ndarray, Dict[str, Any]]:
     """Overlay-free composite of aligned crops of one display (same shape).
 
     * Fade/transition members (paper ``FADE_PAPER_DROP`` below the members' median) are
@@ -508,10 +513,15 @@ def compose_members(images: List[np.ndarray], gap: float, *, keys: Optional[Sequ
     * ``chrome`` (screen-fixed chrome in this crop, overlay_composite.screen_fixed_chrome) is
       not a transient overlay: no member can clear it, so it takes the plain median and is
       settled by ``settle_chrome`` (never counted as unrecovered).
+    * ``protected``: screen-fixed colored symbols kept as score content (screen_fixed_chrome
+      ``_protected``, audit F10). They stay in the composite as printed; like chrome, their
+      steady surroundings are not counted as unrecovered.
     ``keys``/``memo``: see ``_overlay_cols_of``."""
     n = len(images)
     h, w = images[0].shape[:2]
     chrome = chrome if chrome is not None and chrome.shape == (h, w) and chrome.any() else None
+    protected = protected if protected is not None and protected.shape == (h, w) and protected.any() else None
+    fixed = chrome if protected is None else (protected if chrome is None else (chrome | protected))
     masks = [_overlay_mask2d_of(im, gap, keys[i] if keys is not None else None, memo, chrome) for i, im in enumerate(images)]
     papers = paper_levels(images)
     med_paper = float(np.median(papers)) if papers else 0.0
@@ -580,12 +590,13 @@ def compose_members(images: List[np.ndarray], gap: float, *, keys: Optional[Sequ
     if all_cov.any():
         # every member covers it: the plain median of the members stays (static content is kept,
         # an overlay shown by a minority of them drops out); counted below
-        if chrome is not None:
+        if fixed is not None:
             # the overlay masks fill a solid object's box and grow (page_diff pads tinted boxes by
-            # 0.3 gap, then 0.15 gap): around a chrome object they cover the chrome's own steady
-            # surroundings in every member. Steady pixels there are not a covered overlay.
-            _n, _lab, stats = chrome_objects(chrome)
-            zone = np.zeros_like(chrome)
+            # 0.3 gap, then 0.15 gap): around a chrome object (or a protected screen-fixed symbol)
+            # they cover its own steady surroundings in every member. Steady pixels there are not a
+            # covered overlay.
+            _n, _lab, stats = chrome_objects(fixed)
+            zone = np.zeros_like(fixed)
             for k in range(1, _n):
                 x, y, bw, bh, _a = (int(v) for v in stats[k])
                 zone[y:y + bh, x:x + bw] = True
@@ -1224,7 +1235,8 @@ def job_dark_background(occurrences: Dict[str, Any], manifest: Dict[str, Any],
 
 
 def dark_theme_cleanup(norm: np.ndarray, *, members: Optional[Sequence[np.ndarray]] = None, gap: Optional[float] = None,
-                       inverted: bool = True, force_opaque: bool = False) -> Tuple[np.ndarray, Dict[str, Any]]:
+                       inverted: bool = True, force_opaque: bool = False,
+                       weak: Optional[np.ndarray] = None) -> Tuple[np.ndarray, Dict[str, Any]]:
     """Cleanup of an inverted dark theme (``norm``: dark ink on light paper). Returns (image, info).
 
     Dark ink (gray < min(``DARK_INK_MAX``, paper - 60)) and its 2-px anti-aliased edge are always
@@ -1247,6 +1259,10 @@ def dark_theme_cleanup(norm: np.ndarray, *, members: Optional[Sequence[np.ndarra
       bF69tpnUk5w: video at gray 110-150 after inversion). Glyph-like components among them
       (persistent, thin, on clean plate, contrast >= ``FAINT_CONTRAST_KEEP``) are counted in
       ``translucent_glyphlike`` with their boxes, for review.
+
+    ``weak``: weak marks found on the raw composite (``weak_marks``, audit F11: lighter than the
+    ``FAINT_PAPER_DROP`` candidates, e.g. a contrast-55 'pp'). On an opaque plate they are kept
+    with a 2-px edge; on a translucent plate they are judged as above.
 
     info ``_notation_mask`` marks the kept content (dark ink and kept lighter components), for
     the survival check after finishing (``finishing_survival``)."""
@@ -1331,9 +1347,91 @@ def dark_theme_cleanup(norm: np.ndarray, *, members: Optional[Sequence[np.ndarra
             else:
                 info["kept_flagged"] += 1
                 info["flagged_boxes"].append(box)
+    if opaque and weak is not None and weak.shape == (h, w) and weak.any():
+        keep |= mc._dilate(weak, 2)  # their survival is checked by finish_strip against the raw composite
+        info["weak_kept_px"] = int(weak.sum())
     out = norm.copy()
     out[~keep] = 255
     info["_notation_mask"] = notation
+    return out, info
+
+
+WEAK_HALO_PX = 4          # a weak component this close to dark ink (almost all of it) is that ink's anti-aliased rim
+WEAK_EDGE_ROWS = 3        # a long rule in the strip's outer rows is a UI border (paper_tone clears it), not a mark
+WEAK_EDGE_SPAN = 0.5      # ... when it spans this share of the width
+
+
+def weak_marks(norm: np.ndarray, *, members: Optional[Sequence[np.ndarray]] = None, gap: Optional[float] = None,
+               inverted: bool = False) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Weak notation (audit F11) on the raw, polarity-normalized composite ``norm`` (before any
+    cleanup): a light 'pp', a ghost note, a thin gray line - marks lighter than the ink and the
+    ``FAINT_PAPER_DROP`` candidates, so no level cutoff sees them.
+
+    Candidates are pixels at least ``FAINT_CONTRAST_MIN`` darker than the local plate (a grayscale
+    closing wider than a stroke), outside dark ink. A connected component (at least
+    ``minority_content.MIN_COMPONENT_PX`` px) is a weak mark when, as in ``dark_theme_cleanup``,
+    its contrast against the ring of plate around it is at least ``FAINT_CONTRAST_MIN``, it is a
+    stroke (at most ``FAINT_MAX_STROKE_GAPS`` gaps thick) and, with at least 3 member crops
+    (``members``, raw, same box), more than ``FAINT_PRESENT_SHARE`` of them show it at the same
+    place. Not marks: the anti-aliased rim of dark ink (``WEAK_HALO_PX``) and a long rule in the
+    outer rows (``WEAK_EDGE_ROWS``, a UI border). Unclear components are marks.
+
+    Returns (mask, info); the mask is the protection used for the crop (rows kept), the cleanup
+    (``dark_theme_cleanup`` ``weak``) and the survival check (``finish_strip``)."""
+    gray = cv2.cvtColor(norm, cv2.COLOR_BGR2GRAY) if norm.ndim == 3 else norm
+    h, w = gray.shape
+    info: Dict[str, Any] = {"components": 0, "boxes": []}
+    out = np.zeros((h, w), bool)
+    if h < 3 or w < 3:
+        return out, info
+    paper = float(np.percentile(gray, 75))
+    g = float(gap) if gap and gap > 0 else _DEFAULT_GAP
+    ink = gray < min(DARK_INK_MAX, paper - FAINT_PAPER_DROP)
+    k = max(5, int(round(2 * FAINT_MAX_STROKE_GAPS * g)) | 1)
+    plate_est = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+    cand = (plate_est.astype(np.int16) - gray.astype(np.int16) >= FAINT_CONTRAST_MIN) & ~mc._dilate(ink, 2)
+    if not cand.any():
+        return out, info
+    halo = mc._dilate(ink, WEAK_HALO_PX)
+    cand_any = mc._dilate(cand | ink, 1)
+    mgs = _member_grays(members, (h, w), inverted)
+    evidence = len(mgs) >= 3
+    n_c, lab, st, _c = cv2.connectedComponentsWithStats(cand.astype(np.uint8), connectivity=8)
+    r = max(3, int(round(FAINT_RING_GAPS * g)))
+    for c in range(1, n_c):
+        x, y, bw, bh, area = (int(v) for v in st[c])
+        if area < mc.MIN_COMPONENT_PX:
+            continue
+        if bh <= WEAK_EDGE_ROWS and bw >= WEAK_EDGE_SPAN * w and (y < WEAK_EDGE_ROWS or y + bh > h - WEAK_EDGE_ROWS):
+            continue
+        x0, y0, x1, y1 = max(0, x - r), max(0, y - r), min(w, x + bw + r), min(h, y + bh + r)
+        comp = lab[y0:y1, x0:x1] == c
+        if (halo[y0:y1, x0:x1] & comp).sum() >= 0.9 * area:
+            continue
+        ring = mc._dilate(comp, r) & ~mc._dilate(comp, 1)
+        clear_ring = ring & ~cand_any[y0:y1, x0:x1]
+        if clear_ring.sum() >= 0.25 * max(1, int(ring.sum())):
+            ring = clear_ring
+        sub = gray[y0:y1, x0:x1]
+        level = float(np.median(sub[comp]))
+        plate = float(np.median(sub[ring])) if ring.any() else paper
+        contrast = plate - level
+        stroke = 2.0 * float(cv2.distanceTransform(comp.astype(np.uint8), cv2.DIST_L2, 3).max())
+        if contrast < FAINT_CONTRAST_MIN or stroke > FAINT_MAX_STROKE_GAPS * g:
+            continue
+        if evidence:
+            shown = 0
+            for mg in mgs:
+                ms = mg[y0:y1, x0:x1]
+                m_level = float(np.median(ms[comp]))
+                m_plate = float(np.median(ms[ring])) if ring.any() else paper
+                if m_plate - m_level >= FAINT_CONTRAST_MIN and abs(m_level - level) <= contrast:
+                    shown += 1
+            if shown <= FAINT_PRESENT_SHARE * len(mgs):
+                continue
+        out[y0:y1, x0:x1] |= comp
+        info["components"] += 1
+        info["boxes"].append([x, y, x + bw, y + bh])
     return out, info
 
 
@@ -1447,6 +1545,43 @@ def trim_blank_rows(strip: np.ndarray, *, keep: Tuple[int, int], pad: int) -> Tu
     return strip[top:bot].copy(), [top, h - bot]
 
 
+def keep_weak_mark_rows(keep: Tuple[int, int], weak_mask: Optional[np.ndarray]) -> Tuple[int, int]:
+    """``keep`` (rows ``trim_blank_rows`` never enters) widened to the rows of the weak marks
+    (``finish_strip`` ``weak_out["mask"]``, same rows as the finished image; audit F11): they are
+    lighter than the trim's ink cutoff, so nothing else holds their rows."""
+    if weak_mask is None or not weak_mask.any():
+        return keep
+    rows = np.flatnonzero(weak_mask.any(axis=1))
+    return min(int(keep[0]), int(rows[0])), max(int(keep[1]), int(rows[-1]) + 1)
+
+
+def audit_weak_marks_cropped(finish_info: Dict[str, Any], weak_mask: Optional[np.ndarray], rows: Tuple[int, int], *,
+                             origin: Sequence[int] = (0, 0), boxes_key: str = "lost_boxes") -> int:
+    """The final survival check of the weak marks covers the crop too (audit F11): a weak-mark
+    component with pixels outside the delivered rows ``rows`` [y0, y1) of the finished image is
+    lost (``survival["lost"]``, ``survival["weak_marks"]["cropped"]``, CONTENT_LOST_IN_FINISHING).
+    ``origin`` maps the boxes (``survival[boxes_key]``) to the caller's coordinates. Returns the
+    number of components lost this way."""
+    if weak_mask is None or not weak_mask.any():
+        return 0
+    outside = weak_mask.copy()
+    outside[max(0, int(rows[0])):max(0, int(rows[1]))] = False
+    if not outside.any():
+        return 0
+    ox, oy = int(origin[0]), int(origin[1])
+    n_o, _lab_o, st_o, _c = cv2.connectedComponentsWithStats(outside.astype(np.uint8), connectivity=8)
+    lost = [[int(st_o[k][0]) + ox, int(st_o[k][1]) + oy, int(st_o[k][0] + st_o[k][2]) + ox, int(st_o[k][1] + st_o[k][3]) + oy]
+            for k in range(1, n_o)]
+    surv = finish_info.setdefault("survival", {"lost": 0})
+    surv["lost"] = int(surv.get("lost", 0)) + len(lost)
+    surv[boxes_key] = list(surv.get(boxes_key, [])) + lost
+    surv.setdefault("weak_marks", {})["cropped"] = len(lost)
+    issues = finish_info.setdefault("issues", [])
+    if CONTENT_LOST_IN_FINISHING not in issues:
+        issues.append(CONTENT_LOST_IN_FINISHING)
+    return len(lost)
+
+
 MINORITY_ISSUE = "MINORITY_CONTENT_DROPPED"
 UNCERTAIN_MARK_KEPT = "UNCERTAIN_MARK_KEPT"
 TRANSLUCENT_PLATE_GRAY = "TRANSLUCENT_PLATE_GRAY"
@@ -1457,7 +1592,8 @@ COLORED_EXPLAINS_GAPS = 0.5  # colored ink explains neutral ink this close to it
 def finish_strip(comp: np.ndarray, *, members: Optional[Sequence[np.ndarray]] = None,
                  gap: Optional[float] = None,
                  staff: Optional[Tuple[Sequence[float], int, int]] = None,
-                 dark_background: Optional[Dict[str, Any]] = None) -> Tuple[np.ndarray, bool, bool, Dict[str, Any]]:
+                 dark_background: Optional[Dict[str, Any]] = None,
+                 weak_out: Optional[Dict[str, Any]] = None) -> Tuple[np.ndarray, bool, bool, Dict[str, Any]]:
     """Polarity-normalized, dark-theme-cleaned (``dark_theme_cleanup``), paper-flattened strip
     of a composite, with the component survival check after finishing (``finishing_survival``).
     ``members``: the composite's member crops (same box), the persistence evidence of the dark
@@ -1466,10 +1602,16 @@ def finish_strip(comp: np.ndarray, *, members: Optional[Sequence[np.ndarray]] = 
     video cutoff: a dimmed or fading display), its lighter content is kept as on opaque paper and
     flagged instead. ``dark_background`` replaces independently witnessed footage only after
     cleanup and paper flattening, with no changes outside its mask.
+    Weak marks (``weak_marks``, audit F11) are found on the raw composite before any cleanup; on
+    light paper and on an opaque dark plate they are kept and their survival is checked against
+    the raw composite (``survival["weak_marks"]``), so an erasure by the cleanup itself counts.
     Returns (image, inverted, paper flattened, info); info ``issues`` lists
-    ``LOW_CONTRAST_CONTENT_KEPT`` / ``CONTENT_LOST_IN_FINISHING``."""
+    ``LOW_CONTRAST_CONTENT_KEPT`` / ``CONTENT_LOST_IN_FINISHING``. ``weak_out`` (when given) receives
+    ``"mask"``: the protected weak marks (composite pixels), whose rows the caller keeps when trimming."""
     norm, inv = sd.normalize_polarity(comp)
     info: Dict[str, Any] = {"issues": []}
+    raw_norm = norm
+    weak, winfo = weak_marks(norm, members=members, gap=gap, inverted=inv)
     # Compute the composite veto before cleanup can erase or soften restored ink.
     remove = None
     if inv and dark_background is not None and dark_background["mask"].shape == norm.shape[:2]:
@@ -1480,11 +1622,11 @@ def finish_strip(comp: np.ndarray, *, members: Optional[Sequence[np.ndarray]] = 
         remove = dark_background["mask"] & ~protected
     staff_drawn = staff is not None and staff_survives(norm, *staff)
     if inv:
-        cleaned, dinfo = dark_theme_cleanup(norm, members=members, gap=gap)
+        cleaned, dinfo = dark_theme_cleanup(norm, members=members, gap=gap, weak=weak)
         if dinfo["plate"] == "translucent" and dinfo["translucent_glyphlike"]:
             info["issues"].append(TRANSLUCENT_PLATE_GRAY)
         if staff_drawn and dinfo["plate"] == "translucent" and not staff_survives(cleaned, *staff):
-            cleaned, dinfo = dark_theme_cleanup(norm, members=members, gap=gap, force_opaque=True)
+            cleaned, dinfo = dark_theme_cleanup(norm, members=members, gap=gap, force_opaque=True, weak=weak)
             dinfo["kept_flagged"] += dinfo["kept"]
             dinfo["flagged_boxes"] += dinfo["kept_boxes"]
             dinfo["kept"], dinfo["kept_boxes"] = 0, []
@@ -1492,6 +1634,9 @@ def finish_strip(comp: np.ndarray, *, members: Optional[Sequence[np.ndarray]] = 
         norm = cleaned
         notation = dinfo.pop("_notation_mask")
         info["dark_cleanup"] = dinfo
+        if dinfo["plate"] != "opaque":
+            # a translucent plate: lighter content is judged as video (TRANSLUCENT_PLATE_GRAY), not protected
+            weak = np.zeros_like(weak)
         if dinfo["kept_flagged"] or dinfo.get("reason"):
             info["issues"].append(LOW_CONTRAST_KEPT)
     else:
@@ -1512,6 +1657,15 @@ def finish_strip(comp: np.ndarray, *, members: Optional[Sequence[np.ndarray]] = 
         info["dark_cleanup"]["static_background"] = dict(
             dark_background["info"], removed_px=int(changed.sum()), paper=paper)
     surv = finishing_survival(norm, out, notation)
+    # weak marks: survival against the raw composite, so an erasure by the cleanup counts too
+    wsurv = finishing_survival(raw_norm, out, weak if remove is None else weak & ~remove)
+    surv["weak_marks"] = {"found": int(winfo["components"]), **wsurv}
+    surv["lost"] += wsurv["lost"]
+    surv["lost_boxes"] = surv["lost_boxes"] + wsurv["lost_boxes"]
+    if weak.any():
+        info["weak_marks"] = {"components": int(winfo["components"]), "boxes": winfo["boxes"]}
+    if weak_out is not None:
+        weak_out["mask"] = weak
     if staff_drawn:
         surv["staff"] = staff_survives(out, *staff)
         if not surv["staff"]:
@@ -1525,8 +1679,12 @@ def finish_strip(comp: np.ndarray, *, members: Optional[Sequence[np.ndarray]] = 
 def _finishing_boxes_to_crop(info: Dict[str, Any], origin: Sequence[int]) -> None:
     """``finish_strip`` boxes (composite pixels) -> crop coordinates (``*_boxes_crop``), in place."""
     ox, oy = int(origin[0]), int(origin[1])
-    for part, keys in (("dark_cleanup", ("kept_boxes", "flagged_boxes", "glyphlike_boxes")), ("survival", ("lost_boxes",))):
+    for part, keys in (("dark_cleanup", ("kept_boxes", "flagged_boxes", "glyphlike_boxes")), ("survival", ("lost_boxes",)),
+                       ("weak_marks", ("boxes",))):
         d = info.get(part) or {}
+        if part == "survival" and isinstance(d.get("weak_marks"), dict) and "lost_boxes" in d["weak_marks"]:
+            wm = d["weak_marks"]
+            wm["lost_boxes_crop"] = [[b[0] + ox, b[1] + oy, b[2] + ox, b[3] + oy] for b in wm.pop("lost_boxes")]
         for k in keys:
             if k in d:
                 d[k + "_crop"] = [[b[0] + ox, b[1] + oy, b[2] + ox, b[3] + oy] for b in d.pop(k)]
@@ -2102,12 +2260,15 @@ def build_alternates(minority: Dict[str, Any], box: Sequence[int], obs_by: Dict[
     best = max(used, key=representative_score)
     crop = load_image(obs_by[members[best]["obs_id"]])[box[1]:box[3],box[0]:box[2]]
     norm, _ = sd.normalize_polarity(crop)
-    full, inv, flat, finfo = finish_strip(crop.copy(), members=[crop], gap=gap)
+    weak_out: Dict[str, Any] = {}
+    full, inv, flat, finfo = finish_strip(crop.copy(), members=[crop], gap=gap, weak_out=weak_out)
     required = minority.get("_member_masks", {}).get(best)
     if required is not None:
         full[required] = norm[required]
     _finishing_boxes_to_crop(finfo, box)
-    img, trimmed = trim_blank_rows(full, keep=keep_rows, pad=pad)
+    img, trimmed = trim_blank_rows(full, keep=keep_weak_mark_rows(keep_rows, weak_out.get("mask")), pad=pad)
+    audit_weak_marks_cropped(finfo, weak_out.get("mask"), (trimmed[0], full.shape[0] - trimmed[1]),
+                             origin=box[:2], boxes_key="lost_boxes_crop")
     abox = [int(box[0]),int(box[1])+trimmed[0],int(box[2]),int(box[3])-trimmed[1]]
     for ei, e in enumerate(events):
         r = max(2, int(round(gap)))
@@ -2151,9 +2312,49 @@ def job_screen_chrome(manifest: Dict[str, Any], load_image: ImageLoader) -> Tupl
     images = [load_image(o) for o in picks]
     shapes = [im.shape for im in images]
     shape = max(set(shapes), key=shapes.count)
-    mask, info = oc.screen_fixed_chrome([im for im in images if im.shape == shape])
+    same = [(o, im) for o, im in zip(picks, images) if im.shape == shape]
+    zone, gap = score_row_zone([o for o, _im in same], shape[:2])
+    mask, info = oc.screen_fixed_chrome([im for _o, im in same], protect=zone, gap=gap)
     info = dict(info, shape=[int(shape[1]), int(shape[0])])
     return (mask if mask.any() else None), info
+
+
+ROW_ZONE_V_GAPS = 8.0  # score-row zone: marks above/below the staff (labels, tempo, lyrics) reach this far
+ROW_ZONE_H_GAPS = 3.0  # ... and a label before the staff start / after its end this far
+
+
+def score_row_zone(observations: Sequence[Dict[str, Any]], shape: Tuple[int, int]) -> Tuple[Optional[np.ndarray], Optional[float]]:
+    """The rows of the score in crop coordinates (from the raw observations' staff regions, never
+    from a cleaned image) and the median staff gap: for each staff, its owned allocation (halfway
+    to a neighbouring staff, else the crop edge) within ``ROW_ZONE_V_GAPS`` gaps of the staff, over
+    its columns widened by ``ROW_ZONE_H_GAPS`` gaps, plus its notation envelope. A symbol-sized
+    colored object here may be a section mark, a boxed label or a mark above or below the staff,
+    so it is never screen chrome (overlay_composite.screen_fixed_chrome ``protect``)."""
+    h, w = shape
+    zone = np.zeros((h, w), bool)
+    gaps: List[float] = []
+    for obs in observations:
+        regions = [r for r in obs.get("system_regions") or [] if float(r.get("staff_gap_px") or 0) > 0]
+        for r in regions:
+            g = float(r["staff_gap_px"])
+            gaps.append(g)
+            top, bottom = float(r["staff_y"][0]), float(r["staff_y"][-1])
+            above = [float(o["staff_y"][-1]) for o in regions if o is not r and float(o["staff_y"][-1]) < top]
+            below = [float(o["staff_y"][0]) for o in regions if o is not r and float(o["staff_y"][0]) > bottom]
+            lo = max((max(above) + top) / 2 if above else 0.0, top - ROW_ZONE_V_GAPS * g)
+            hi = min((bottom + min(below)) / 2 if below else float(h), bottom + ROW_ZONE_V_GAPS * g)
+            x0 = float(r["staff_x"][0]) - ROW_ZONE_H_GAPS * g
+            x1 = float(r["staff_x"][1]) + ROW_ZONE_H_GAPS * g
+            y0i, y1i = max(0, int(np.floor(lo))), min(h, int(np.ceil(hi)))
+            x0i, x1i = max(0, int(np.floor(x0))), min(w, int(np.ceil(x1)))
+            zone[y0i:y1i, x0i:x1i] = True
+            env = r.get("envelope_bbox")
+            if env:
+                ex0, ey0, ex1, ey1 = (int(v) for v in env)
+                zone[max(0, ey0):min(h, ey1), max(0, ex0):min(w, ex1)] = True
+    if not gaps or not zone.any():
+        return None, None
+    return zone, float(np.median(gaps))
 
 
 def _reference_member(system: Dict[str, Any], obs_by: Dict[str, Dict[str, Any]]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
@@ -2354,6 +2555,7 @@ def build_strip(system: Dict[str, Any], manifest: Dict[str, Any], load_image: Im
                 obs_by: Optional[Dict[str, Dict[str, Any]]] = None,
                 next_systems: Sequence[Dict[str, Any]] = (),
                 chrome: Any = None, chrome_appearance: Optional[np.ndarray] = None,
+                chrome_protected: Optional[np.ndarray] = None,
                 evidence_dir: Optional[Path] = None, ledger: bool = False,
                 frame_foreground: Optional[Dict[str, np.ndarray]] = None,
                 evidence_lock: Any = None,
@@ -2363,6 +2565,8 @@ def build_strip(system: Dict[str, Any], manifest: Dict[str, Any], load_image: Im
     ``chrome``: the job's screen-fixed chrome mask in crop coordinates (``job_screen_chrome``);
     None computes it from the manifest, False means none. ``chrome_appearance``: its steady colors
     (``job_screen_chrome`` info ``_appearance``), what settle_chrome may paper-fill.
+    ``chrome_protected``: screen-fixed colored symbols in the score rows kept as content
+    (``job_screen_chrome`` info ``_protected``); computed with ``chrome`` when that is None.
 
     ``next_systems``: the occurrences that follow in display order (nearest first);
     a preview tail is cut only when one of them is verified to start with it."""
@@ -2384,6 +2588,9 @@ def build_strip(system: Dict[str, Any], manifest: Dict[str, Any], load_image: Im
     if chrome is None:
         chrome, _cinfo = job_screen_chrome(manifest, load_image)
         chrome_appearance = _cinfo.get("_appearance")
+        chrome_protected = _cinfo.get("_protected")
+    if chrome_protected is not None and chrome_protected.shape != (h, w):
+        chrome_protected = None
     if chrome is False or chrome is None or chrome.shape != (h, w):
         chrome = None
     if chrome is None or chrome_appearance is None or chrome_appearance.shape[:2] != (h, w):
@@ -2448,7 +2655,9 @@ def build_strip(system: Dict[str, Any], manifest: Dict[str, Any], load_image: Im
     crops = [c for _k, c in pairs]
     ov_memo: Dict[Any, np.ndarray] = {}  # overlay columns per (observation, crop box), shared by the steps below
     chrome_box = display_chrome(crops, chrome[box[1]:box[3], box[0]:box[2]]) if chrome is not None else None
-    comp, cinfo = compose_members(crops, g, keys=[k_ for k_, _c in pairs], memo=ov_memo, chrome=chrome_box, ledger_members=True)
+    protected_box = chrome_protected[box[1]:box[3], box[0]:box[2]] if chrome_protected is not None else None
+    comp, cinfo = compose_members(crops, g, keys=[k_ for k_, _c in pairs], memo=ov_memo, chrome=chrome_box, ledger_members=True,
+                                  protected=protected_box)
     if ledger:
         # Content-addressed ledger files can have the same path for several systems.
         # Serialize their check/write/hash sequence; all other cleaning stays parallel.
@@ -2482,6 +2691,9 @@ def build_strip(system: Dict[str, Any], manifest: Dict[str, Any], load_image: Im
     chrome_kept = chrome_info.pop("_kept_mask", None)
     chrome_info["touched_box_crop"] = [[b[0] + box[0], b[1] + box[1], b[2] + box[0], b[3] + box[1]] for b in chrome_info.pop("touched")]
     chrome_issue = OVERLAY_COVERS_NOTATION if chrome_info["touched_box_crop"] else None
+    if protected_box is not None and protected_box.any():
+        # screen-fixed colored symbols in the score rows, kept as content (never paper-filled)
+        chrome_info["protected_px"] = int(protected_box.sum())
     comp_box = list(box)
     minority = check_minority_content(system, comp, comp_box, obs_by, load_image, g, memo=ov_memo, chrome=chrome_box,
         native_scale=float((manifest.get("work_scale") or {}).get("scale", 1.0)), member_shifts=ledger_shifts,
@@ -2598,9 +2810,11 @@ def build_strip(system: Dict[str, Any], manifest: Dict[str, Any], load_image: Im
     if dark_background is not None and dark_background["mask"].shape == (h, w):
         background_box = {"mask": dark_background["mask"][comp_box[1]:comp_box[3], comp_box[0]:comp_box[2]],
                           "info": dark_background["info"]}
+    weak_out: Dict[str, Any] = {}
     full_strip, inv2, flattened, finish_info = finish_strip(comp, members=crops, gap=g, staff=staff_c,
-                                                         dark_background=background_box)
+                                                         dark_background=background_box, weak_out=weak_out)
     _finishing_boxes_to_crop(finish_info, comp_box)
+    weak_mask = weak_out.get("mask")
     inverted = inverted or inv2
     keep_rows = (max(0, env[1] - box[1]), max(0, min(box[3], env[3]) - box[1]))
     # rows holding content kept in a chrome area (any tint or darkness) or a minority event are never
@@ -2616,6 +2830,7 @@ def build_strip(system: Dict[str, Any], manifest: Dict[str, Any], load_image: Im
         extra_rows += [int(b_[1]) - comp_box[1], int(b_[3]) - comp_box[1]]
     if extra_rows:
         keep_rows = (min(int(keep_rows[0]), min(extra_rows)), max(int(keep_rows[1]), max(extra_rows)))
+    keep_rows = keep_weak_mark_rows(keep_rows, weak_mask)  # weak marks (audit F11): lighter than the trim's ink cutoff
     alternate_keep = keep_rows
     for e in minority["events"]:
         alternate_keep = (min(alternate_keep[0], int(e["box"][1])), max(alternate_keep[1], int(e["box"][3])))
@@ -2636,6 +2851,9 @@ def build_strip(system: Dict[str, Any], manifest: Dict[str, Any], load_image: Im
     strip, trimmed = trim_blank_rows(strip, keep=keep_rows, pad=pad)
     box = [box[0], box[1] + trimmed[0], box[2], box[3] - trimmed[1]]
     box = [int(v) for v in box]
+    # the final survival check covers the crop too: a weak mark outside the kept rows is lost
+    audit_weak_marks_cropped(finish_info, weak_mask, (box[1] - comp_box[1], box[3] - comp_box[1]),
+                             origin=comp_box[:2], boxes_key="lost_boxes_crop")
     if unrec_mask is not None:
         # only what stays in the strip counts: a covered row trimmed away as blank paper does not
         kept_unrec = unrec_mask[box[1] - comp_box[1]:box[3] - comp_box[1], box[0] - comp_box[0]:box[2] - comp_box[0]]
@@ -2899,7 +3117,8 @@ def build_strips(occurrences: Dict[str, Any], manifest: Dict[str, Any], load_ima
 
         return build_strip(s, manifest, load_held, obs_by=obs_by, next_systems=systems[i + 1:], frame_foreground=foreground,
                            chrome=chrome if chrome is not None else False,
-                           chrome_appearance=chrome_info.get("_appearance"), ledger=ledger,
+                           chrome_appearance=chrome_info.get("_appearance"),
+                           chrome_protected=chrome_info.get("_protected"), ledger=ledger,
                            evidence_dir=out_dir.parent / "ledger_evidence" if ledger else None,
                            evidence_lock=evidence_lock, dark_background=dark_background)
 

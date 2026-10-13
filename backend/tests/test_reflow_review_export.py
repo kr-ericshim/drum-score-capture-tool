@@ -454,6 +454,14 @@ class ReflowJobPathTest(unittest.TestCase):
         self.assertEqual(job.status, JobStatus.ERROR)
         self.assertEqual(job.error_code, "NO_SCORE_SYSTEMS")
 
+    def test_incomplete_decode_is_an_explicit_error(self):
+        from app.pipeline.observations import VideoDecodeIncompleteError
+        job = self._run(VideoDecodeIncompleteError(1.0, 6.0))
+        self.assertEqual(job.status, JobStatus.ERROR)
+        self.assertEqual(job.error_code, "VIDEO_DECODE_INCOMPLETE")
+        self.assertEqual(job.result["reflow_state"], "decode_incomplete")
+        self.assertIsNone(job.result["pdf"])
+
 
 if __name__ == "__main__":
     unittest.main()

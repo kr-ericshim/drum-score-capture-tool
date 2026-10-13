@@ -63,7 +63,7 @@ class FamilyAtViewTransitionTest(unittest.TestCase):
     def test_content_step_after_a_view_transition_keeps_each_part_in_normal_order(self):
         tracking, occ, recs, td = pipeline(view_transition_frames())
         self.addCleanup(td.cleanup)
-        row0 = [e for e in tracking["episodes"] if e["slot_id"] == "slot-00"]
+        row0 = [e for e in tracking["episodes"] if e["slot_id"] == "slot-00" and not e.get("transient_display")]
         self.assertEqual([e["started_by"] for e in row0], ["first_observation", "view_transition", "content_step"])
         # the part before the transition is its own display (no family); the two states after it are one family
         self.assertNotIn("content_family", row0[0])
@@ -90,18 +90,21 @@ class FamilyAtViewTransitionTest(unittest.TestCase):
         self.assertLess(ids.index(after["id"]), ids.index(row1_after["id"]))
         self.assertGreater(ids.index(later["id"]), ids.index(row1_after["id"]))
 
-    def test_playhead_reset_inside_a_family_uses_normal_occurrence_join(self):
+    def test_playhead_reset_inside_a_family_keeps_every_part_with_notices(self):
+        # audit F03: a reset never joins; each part is printed and later parts carry the ‡ notice
         frames = with_marks(show(strip(5), 0.0, 4.0, seed=1) + show(strip(5), 4.0, 4.0, seed=2), range(24, 32), stroke)
         tracking, occ, recs, td = pipeline(frames)
         self.addCleanup(td.cleanup)
         eps = tracking["episodes"]
         self.assertEqual([e["started_by"] for e in eps], ["first_observation", "playhead_reset", "content_step"])
         self.assertEqual(len({e["content_family"]["id"] for e in eps}), 1)  # the reset keeps the family
-        self.assertEqual(sum(s["included"] for s in occ["systems"]), 2)
-        first, later = occ["systems"]
-        self.assertEqual(first["episode_ids"], [eps[0]["id"], eps[1]["id"]])
-        self.assertEqual(later["episode_ids"], [eps[2]["id"]])
-        self.assertEqual(later["possible_repeat_of"], first["id"])
+        self.assertEqual(sum(s["included"] for s in occ["systems"]), 3)
+        first, replay, later = occ["systems"]
+        self.assertEqual([s["episode_ids"] for s in occ["systems"]], [[e["id"]] for e in eps])
+        self.assertNotIn("possible_repeat_of", first)
+        self.assertEqual(replay["possible_repeat_of"], first["id"])
+        self.assertEqual(later["possible_repeat_of"], replay["id"])
+        self.assertEqual(occ["joins"], [])
 
 
 class Round5PathsTest(unittest.TestCase):

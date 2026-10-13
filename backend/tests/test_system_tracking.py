@@ -38,9 +38,13 @@ class BottomBarEpisodesTest(unittest.TestCase):
         frames = show(a, 0.0, 4.0, seed=1)
         frames[8] = (frames[8][0], frame(b, 0.5, seed=99))
         out, _ = track(frames)
-        self.assertEqual(len(out["episodes"]), 1)
-        self.assertEqual(len(out["transient_observations"]), 1)
-        self.assertEqual(out["transient_observations"][0]["obs_id"], "obs-000008")
+        # the display around the glitch is not split; the glitch frame is a one-observation
+        # transient display of its own (audit F01: listed in review unless hidden with evidence)
+        ordinary = [e for e in out["episodes"] if not e.get("transient_display")]
+        self.assertEqual(len(ordinary), 1)
+        self.assertEqual(ordinary[0]["n_obs"], len(frames) - 1)
+        self.assertEqual([e["observation_ids"] for e in out["episodes"] if e.get("transient_display")], [["obs-000008"]])
+        self.assertEqual(out["transient_observations"], [])
 
     def test_identical_next_system_split_by_playhead_reset(self):
         a = strip(5)

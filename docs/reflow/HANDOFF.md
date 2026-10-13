@@ -1,83 +1,73 @@
-# 인계 (2026-10-13 기준, 페이드 수정 반영)
+# 인계 (2026-10-13 저녁, 감사 수정 배치 커밋 후)
 
-> **이 문서는 누적하지 않는다.** 세션이 끝날 때 통째로 새로 쓴다. 현재 상태와 다음 할 일만 적고, 지난 경과는 지운다(필요하면 `git log -p docs/reflow/HANDOFF.md`).
+> **이 문서는 누적하지 않는다.** 세션이 끝날 때 통째로 새로 쓴다. 현재 상태와 다음 할 일만 적는다(지난 경과는 `git log -p docs/reflow/HANDOFF.md`).
 > 100줄을 넘기지 않는다. 다른 문서와 다르면 이 문서와 사용자의 최신 말이 우선이다.
 
 ## 제품
 
 영상에 이미 나오는 드럼 악보를 캡처해 A4 PDF/PNG로 만드는 Electron + Python 데스크톱 앱이다.
-- 기본 출력은 **clean reflow**다. 원본 악보 이미지를 정리해 마디 단위로 A4에 다시 배치한다. 이 기본값은 Pro #8에서 확정됐다.
-- 보조 출력은 **원본 화면 fallback**이다(한 줄 영상 전용, `9d73aa9`).
-- 다음 파일럿의 지원 범위: **불투명 판(밝은 판·어두운 판) 위 한 줄 악보가 통째로 바뀌는 영상**. 점프 화면은 실험 기능이고, 반투명판과 실사 합성은 거부한다.
+- 기본 출력은 **clean reflow**(원본 악보 이미지를 정리해 마디 단위로 A4에 재배치)다. 보조 출력은 **원본 화면 fallback**(한 줄 영상 전용)이다.
+- 파일럿 지원 범위: **불투명 판 위 한 줄 악보가 통째로 바뀌는 영상**. 점프는 실험 기능, 반투명판·실사 합성은 거부, 여러 줄 페이지와 세로 롤은 파일럿 밖.
 
 ## 현재 상태
 
-- 브랜치 `feature/clean-reflow`. Pro #7·#8 수정은 `bb4bf73`, 페이드 수정은 그다음 커밋이다(사용자가 말할 때만 커밋).
-- 규칙은 [DECISIONS.md](DECISIONS.md)의 "eval_v2 fixes" 절과 "Pro checkpoint #8" 절에 있다. 요약:
-  1. content family는 줄을 숨기지 않는다. 같은 화면일 수 있으면 ‡ 경고를 붙인다. 마디 번호가 확실히 다르면 경고를 지운다.
-  2. 마디 번호 변화로 화면을 나눈다(`system_tracking-6`).
-     - 숫자 크기의 차이가 있고 양쪽 화면 모두에 번호가 보여야 한다.
-     - 나누지 못하면 `NUMBER_STEP_UNRESOLVED`와 ‡ "확인 필요" 고지를 붙인다.
-  3. 같은 화면 비교에서 실사 영상 위 잉크와 옅은 박스 열은 비교하지 않는다(`reflow_occurrences-5`). 박스 아래 잉크까지 비교해 봤는데(-4), C4l과 6MPX에 중복이 생겨서 되돌렸다.
-  4. 점프 게이트는 왼쪽 고정 패널을 가리고 다시 시도한다(`reflow_jump-6`).
-  5. 배경 판정은 대비가 큰 쪽을 잉크로 본다(`source_class-3`). `translucent_plate`는 거부한다.
-  6. 페이드는 내용 변화로 보지 않는다(`system_tracking-7`). 6MPX의 마지막 줄이 한 번만 나온다.
-- 검증(개발 백엔드):
-  - backend 전체 테스트: 최종 코드에서 **1474 OK(12 skipped)**.
-  - 27개 재실행 결과는 `eval_v2/fix4_compare/summary.json`에 있다(`tools/fix4_summary.py`). 최종 결과는 fix5a/b, fix4c, fix4a/b 폴더의 순서로 고른다.
-    - 잘못된 "번호 합쳐짐" 경고: 0.
-    - C4l과 6MPX는 fix2와 픽셀까지 같다. DEQ는 거짓 ‡ 2개가 사라졌고 1–140줄이 각각 한 번씩 나온다.
-    - bF69와 B0hO는 반투명판으로 거부된다(거부 시험 2/2). bF69는 **지원 범위 축소**로 보고한다.
-    - 회귀 영상은 같거나, 점프 영상(RnY5, _7gP, SHvfn, Z4eb)의 줄바꿈과 테두리만 다르다.
-  - 페이드 수정 후 27개(`eval_v2/fade27{a,b}_dashboard`): 6MPX만 바뀌었다(62번 줄이 한 번만 나온다). 나머지 26개는 픽셀까지 같다.
-  - 열린 자료 성적(내 채점): 줄 전환 3/3 usable(C4l, DEQ, 6MPX). uhzG는 점프인데 조용히 반복되고, 점프는 지원 범위 밖이다.
-  - 점프 의심 측정: 유일성 조건을 빼도 uhzG는 0/40이라 고지를 만들지 않았다. 점프는 선정 단계에서 거른다.
-- **패키지 앱은 다시 빌드하지 않았다**(`dist/`는 9d73aa9 기준). GUI와 Windows도 확인하지 않았다.
+- 브랜치 `feature/clean-reflow`. 이번 세션의 감사 수정 배치를 한 커밋으로 넣었다(사용자 승인).
+- 감사 결과와 수정: [audit_2026-10-13/README.md](audit_2026-10-13/README.md), 규칙은 [DECISIONS.md](DECISIONS.md) "Astra audit fixes (2026-10-13)".
+  - 고침: F01(1관측 화면을 검토 목록에), F03(커서 리셋은 합치지 않고 ‡), F04(가운데 번호 단계), F05(이웃 하나 기준 숨김), F06(영상 끝 프레임 1회 추가 샘플), F07(선택 후 ‡ 재계산, 리셋 사슬 포함), F08(디코딩 조기 종료 = 실패, 끝 근처 seek로 진짜 끝인지 확인), F09(표기 제거 단계), F10(악보 줄 안 작은 색 기호는 chrome으로 지우지 않음), F11(옅은 표기 보호·생존 검사).
+  - Codex 검수가 찾은 4개(리셋 ‡ 선택 후 소실, 디코딩 판정 허점, 점프 구간 안 1관측 화면 소실, 점프 strip의 옅은 표기 잘림)와 Opus 재검수가 찾은 디코딩 오판정(VFR 마지막 프레임 정지, 컨테이너가 더 긴 MKV/WebM)도 고쳤다.
+  - 보류(사용자 결정): PDF 첫 페이지 "확인 필요" 고지. `OVERLAY_UNRECOVERED`·`MINORITY_CONTENT_DROPPED`가 지원 영상 거의 모든 줄에 붙어 있어 잡음이 된다. F13은 변경 없음.
+- 검증: backend 전체 **1538 OK(12 skipped)**. 모두 합성 fixture·mock이다. **실제 영상, 코퍼스, 패키지 앱, `verify:renderer-v2`는 돌리지 않았다**(사용자가 배터리로 작업 중이라 영상·코퍼스 실행 금지).
+- 형식 선별 도구(코퍼스 쪽, 저장소 밖): `~/Documents/drum-score-corpus/eval_v2/tools/format_screen.py` + 검토 페이지 `format_review.html`. 자동으로는 "비지원 후보(근거)"나 "사람 확인 필요"만 내고, "지원"은 사람이 클립 3개를 1배속으로 본 뒤에만 고를 수 있다. 설계와 개발 자료: `eval_v2/format_screen_dev/DESIGN_FROM_REPORT.md`. **실제 영상으로는 아직 한 번도 안 돌렸다.**
+- Astra(max) 조언 원문은 세션 scratchpad에 있었다(휘발). 요지:
+  - 순서: 핵심 손실 수정 → 앱 안 형식 확인 → 패키지 실사용 → 홀드아웃. 다음 지원 확장은 **고정 2–3줄 페이지 전체 교체**, 그다음 가로 점프.
+  - 검증은 줄이되 실제 PDF·앱 확인은 남긴다. 수정마다 27개 재디코딩은 피한다.
 
-## 다음 할 일 (순서대로)
+## 다음 할 일 (순서대로, 전원 연결 후)
 
-1. `pack:release`로 패키지를 다시 빌드하고 smoke를 돌린다.
-2. 실제 앱에서 생성, 검토, 재생성, 저장·취소, 재시작·복원을 확인한다.
-3. 새 홀드아웃을 고른다. 규칙은 `eval_v2/pro8/PRO_REPLY_8_summary.md`에 있다.
-   - 8개, 채널 5개 이상, 채널당 최대 2개, 새 채널 3개 이상.
-   - 형식은 원속도로 확인한다. 실제 전환 전후를 보고, 점프는 걸러낸다.
-   - 거부 시험: 세로 롤, 반투명, 무악보, 점프.
-   - 두 번째 채점자를 두고, assisted는 정답을 보기 전에 한다.
-4. **정리 커밋 확인:** 동작이 바뀌지 않는 정리를 커밋했다. 단위 테스트 1474 OK, 픽셀 비교는 5/27만 끝났고 모두 같았다. `eval_v2/tools/run_quick.sh`, 또는 27개 전체를 fade27과 비교해서 나머지를 확인하고, 다르면 그 부분을 되돌린다.
-5. **개발 루프 개선**(사용자 요청, 메모리 plan-then-batch):
-   - 수정은 계획을 세워 한꺼번에 하고, 코퍼스는 한 번만 돌린다. 실행 중에는 코드를 고치지 않는다.
-   - 빠른 점검 세트: `eval_v2/tools/run_quick.sh NAME`. DEQ, RnY5, uhzG, Q8, C4l, 6MPX를 두 묶음으로 동시에 돌리고(약 15분), 참조 결과와 자동 비교한다(`quick_compare.py`).
-   - 아직 안 한 것: 추출 결과(manifest, frames)를 저장해 두고 tracking 단계부터 다시 돌리는 도구.
-6. 하지 않는 것:
-   - 이음매 대응표
-   - 점프 고도화
-   - 미관 작업(C4l 라벨, 로고, RnY5)
-   - 세로 스크롤
+1. **코퍼스 27개 1회 실행**(`eval_v2/tools/run_quick.sh` 또는 27개 전체를 fade27과 비교). 볼 것:
+   - C4l·DEQ에 ‡ 붙은 줄이 하나씩 늘어나는지(F03, 예상됨). ‡ 없이 늘면 결함.
+   - 검토 목록의 `SHORT_DISPLAY`가 크게 늘지만 PDF는 같아야 한다(F01).
+   - `content_steps`의 `kind: "removed"`가 흰 박스·회색 처리로 잘못 나뉘는지(F09). DEQ·6MPX·C4l의 새 `NUMBER_STEP_UNRESOLVED`(F04).
+   - Dr5j·Fzc0·SZwT·Teo·uhzG의 `screen_chrome.protected_px`와 로고 조각 잔류(F10). 줄 높이 증가·옅은 잔여물(F11).
+   - `VIDEO_DECODE_INCOMPLETE`가 정상 영상에 뜨지 않는지, `decode_end_confirmed_by_seek`가 붙은 영상이 있는지(F08).
+   - 결과가 이상하면 코딩을 멈추고 PDF를 직접 본 뒤 사용자와 정한다.
+2. **선별 도구 개발 실행:** `zsh ~/Documents/drum-score-corpus/eval_v2/tools/format_screen_dev16.sh` → `eval_v2/format_screen_dev/runs/summary.md`. uhzG·oGnU(이동 플래그), jrmm(세로 이동), Q8·01Mr(MULTI_ROW)가 잡히는지와 60초 예산. 이 16개는 개발 자료이지 성적이 아니다.
+3. `npm --prefix desktop run verify:renderer-v2`(F08 문구 2줄 추가됨) → `pack:release`로 패키지 재빌드, smoke.
+4. 실제 앱에서 생성, 검토(가운데 화면 해제 후 재내보내기 ‡ 포함), 재생성, 저장·취소, 재시작·복원.
+5. 새 홀드아웃: 선별 도구 + 사람 1배속 확인으로 고른다. 규칙은 `eval_v2/pro8/PRO_REPLY_8_summary.md`와 `DESIGN_FROM_REPORT.md`의 선정 프로토콜.
+6. 그 뒤 검토: 앱 안 형식 확인(선별 도구 재사용), 다음 확장(고정 다단 페이지).
+
+## 알려진 한계 (이번 배치 이후)
+
+- 0.5초 샘플 사이에만 나온 화면은 여전히 놓친다(F06 중간 부분).
+- 점프 커버리지 판정은 1관측 화면을 보지 않는다(목록에는 남음, 잡음 방지 의도).
+- 다운로드가 덜 된 파일처럼 정말 짧은 파일은 통과하고 manifest 기록에만 남는다.
+- 이번 변경 전에 분석한 점프 작업은 이음매 재처리가 `SEAM_REPAIR_INCOMPATIBLE`로 끝날 수 있다(오래된 작업만).
+- 리셋 사슬의 먼 쌍은 번호 차이로만 해제한다(최악은 ‡ 하나 더).
+
+## 하지 않는 것
+
+이음매 대응표, 점프 고도화, 미관 작업(C4l 라벨, 로고, RnY5), 세로 스크롤, 반투명판 완화(F13).
 
 ## 지금 유효한 문서
 
 - [DECISIONS.md](DECISIONS.md): 규칙과 기본값. 설계 문서보다 우선한다.
-- [FREEZE_RC2.md](FREEZE_RC2.md): rc2 빌드, 채점 기준, holdout 절차. rc2 이후 변경은 DECISIONS에 있다.
-- [PRO_REPLY_RC2.md](PRO_REPLY_RC2.md): 채점 절차.
+- [FREEZE_RC2.md](FREEZE_RC2.md), [PRO_REPLY_RC2.md](PRO_REPLY_RC2.md): rc2 빌드, 채점 절차.
 - Pro 답 요약: `eval_v2/pro8/03_PRO_REPLY_7_summary.md`, `eval_v2/pro8/PRO_REPLY_8_summary.md`.
 - [ORIGINAL_SCREENS_DESIGN.md](ORIGINAL_SCREENS_DESIGN.md): fallback 설계.
-- 참고: [SEAM_REJECT_DESIGN.md](SEAM_REJECT_DESIGN.md), [JUMP_FREEZE.md](JUMP_FREEZE.md), [VSCROLL_SPEC.md](../archive/reflow/VSCROLL_SPEC.md)(archive, 미검토).
 - **[docs/archive/](../archive/README.md)는 기록일 뿐 지시가 아니다.**
 
 ## 코드와 코퍼스 위치
 
-- reflow 흐름: `backend/app/pipeline/reflow_pipeline.py` → `system_tracking` → `reflow_occurrences` → `reflow_strips` → `reflow_measure`/`reflow_layout` → `reflow_render`. 점프는 `reflow_jump`, 배경 판정은 `source_class`.
-- 코퍼스: `~/Documents/drum-score-corpus/`.
-  - 실행기: `reflow/tools/dashboard.py`. `DASHBOARD_HOOK`를 주면 작업 폴더를 지우기 전에 측정 스크립트를 돌린다. 큰 응답이 끊기면 다시 받는다.
-  - `eval_v2/tools/`: run_quick.sh + quick_compare.py(참조 = fade27), fix4_summary, run_holdout. 다 쓴 일회용은 `tools/done/`.
-  - 회귀 스펙은 `eval_v2/fix2_spec27.json`이다(17+10).
-- `eval_v2/jobs`(4.3 GB)는 패키지 실행의 작업 폴더다. 지울지는 사용자에게 묻는다.
+- reflow 흐름: `reflow_pipeline.py` → `system_tracking` → `reflow_occurrences` → `reflow_strips` → `reflow_measure`/`reflow_layout` → `reflow_render`. 점프 `reflow_jump`, 배경 판정 `source_class`, 디코딩 `observations`.
+- 코퍼스 `~/Documents/drum-score-corpus/`: 실행기 `reflow/tools/dashboard.py`, `eval_v2/tools/`(run_quick.sh, quick_compare.py, audit_freq.py, format_screen*), 회귀 스펙 `eval_v2/fix2_spec27.json`.
+- `eval_v2/jobs`(4.3 GB)는 패키지 실행 작업 폴더다. 지울지는 사용자에게 묻는다.
 
 ## 작업 규칙 (프로젝트 한정)
 
 - `backend/jobs/`는 건드리지 않는다. 실제 영상은 scratch `DRUMSHEET_JOBS_DIR`에서 확인한다.
-- 영상별 땜질은 하지 않는다. 임계값을 특정 영상에 맞추지 않는다.
-- 결과가 이상하면 코딩을 멈추고 PDF를 직접 본 뒤 사용자와 정한다.
+- 영상별 땜질과 특정 영상에 맞춘 임계값은 하지 않는다.
+- 같은 저장소를 다른 세션이 동시에 고칠 수 있다. 워커를 띄우기 전에 `git status`와 다른 세션의 작업 파일을 확인한다.
 - Codex는 `~/Documents/drum-score-corpus`에 쓸 수 없다. Codex가 HANDOFF를 고치면 되돌린다.
 
 ## 검증 명령 (저장소 루트)

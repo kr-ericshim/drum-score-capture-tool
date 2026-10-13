@@ -74,6 +74,7 @@ except ImportError:
     def should_block_roi_capture(analysis: Dict[str, object]) -> bool:
         return str(analysis.get("risk_level") or "info").strip().lower() == "critical"
 from app.pipeline.detect import detect_sheet_regions
+from app.pipeline.observations import VideoDecodeIncompleteError
 from app.pipeline.rectify import rectify_frames
 from app.pipeline.overlay_composite import compose_overlay_free_captures
 from app.pipeline.paper_tone import flatten_capture_backgrounds
@@ -2174,10 +2175,9 @@ def _compose_header(header: Dict[str, Any], coverage: Optional[Dict[str, Any]],
                if "SOURCE_CLIPPED" in (s.get("issues") or []) or s.get("source_clipped")]
     if clipped:
         out["source_clipped"] = clipped
-    composed_ids = {s["id"] for s in composed}
-    possible_repeats = [{"system_id": s["id"], "of_system_id": s["possible_repeat_of"]} for s in composed
-                        if "POSSIBLE_SAME_DISPLAY" in (s.get("issues") or [])
-                        and s.get("possible_repeat_of") in composed_ids]
+    from app.pipeline import reflow_occurrences
+
+    possible_repeats = reflow_occurrences.possible_repeat_pairs(composed)
     out.pop("possible_repeats", None)
     if possible_repeats:
         out["possible_repeats"] = possible_repeats
@@ -2267,6 +2267,14 @@ def _execute_reflow_job(
         result["reflow_state"] = "no_systems"
         result["images"], result["pdf"] = [], None
         job_store.set_state(job_id, JobStatus.ERROR, 1.0, "no_systems", str(exc), result=result, error_code="NO_SCORE_SYSTEMS")
+        return
+    except VideoDecodeIncompleteError as exc:
+        # fail closed: the decoded head of the video is never passed off as the whole video
+        result["reflow_state"] = "decode_incomplete"
+        result["images"], result["pdf"] = [], None
+        job_store.log(job_id, f"job stopped: {exc}")
+        job_store.set_state(job_id, JobStatus.ERROR, 1.0, "decode_incomplete", str(exc), result=result,
+                            error_code=VideoDecodeIncompleteError.code)
         return
     except reflow_pipeline.UnsupportedSourceError as exc:
         # source-class gate: notation over live imagery is refused with its evidence, not processed

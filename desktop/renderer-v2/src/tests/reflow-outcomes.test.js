@@ -42,6 +42,7 @@ test("job error codes map to specific messages; unknown codes keep the backend d
     assert.equal(formatExportJobMessage("x", { status: "error", locale, errorCode: "UNSUPPORTED_SOURCE" }), t("export.failedUnsupportedSource", { locale }));
     assert.equal(formatExportJobMessage("x", { status: "error", locale, errorCode: "LAYOUT_CONFLICT" }), t("export.failedLayoutConflict", { locale }));
     assert.equal(formatExportJobMessage("x", { status: "error", locale, errorCode: "LEDGER_VERIFICATION_FAILED" }), t("export.failedLedgerVerification", { locale }));
+    assert.equal(formatExportJobMessage("x", { status: "error", locale, errorCode: "VIDEO_DECODE_INCOMPLETE" }), t("export.failedDecodeIncomplete", { locale }));
   }
   assert.equal(exportErrorCodeMessage("SOMETHING_ELSE", "en"), "");
   assert.equal(formatExportJobMessage("job failed: disk full", { status: "error", locale: "en", errorCode: "SOMETHING_ELSE" }), "disk full");

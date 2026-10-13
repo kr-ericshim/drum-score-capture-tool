@@ -162,7 +162,41 @@ def _drop_moving_objects(core: np.ndarray, reps: Sequence[np.ndarray]) -> Tuple[
     return out, moving
 
 
-def screen_fixed_chrome(images: Sequence[np.ndarray]) -> Tuple[np.ndarray, Dict[str, object]]:
+# Score-row protection (audit F10): a repeated place and color does not prove that an object is
+# not notation (a red section mark at the same spot on several lines). Inside the rows of the
+# score, an object no larger than a score symbol or label is never chrome; only what is clearly
+# larger (a band, a frame, a logo) or lies outside the rows can be.
+SYMBOL_MAX_H_GAPS = 4.0   # a symbol, a letter, a boxed rehearsal label: at most this many staff gaps tall
+SYMBOL_MAX_W_GAPS = 12.0  # ... and this many wide (a boxed word label)
+
+
+def _protect_symbols(core: np.ndarray, protect: np.ndarray, gap: float) -> Tuple[np.ndarray, np.ndarray, List[List[int]]]:
+    """Remove from ``core`` every chrome object (pieces within 2 x ``CHROME_DILATE_PX`` joined)
+    that touches the score-row zone ``protect`` and is symbol-sized (``SYMBOL_MAX_H_GAPS`` x
+    ``SYMBOL_MAX_W_GAPS`` staff gaps). Returns (core, protected pixels, their object boxes)."""
+    n, lab, _stats = _objects(core)
+    out = core.copy()
+    protected = np.zeros(core.shape, bool)
+    boxes: List[List[int]] = []
+    on = core > 0
+    for k in range(1, n):
+        obj = (lab == k) & on
+        if not obj.any():
+            continue
+        ys, xs = np.nonzero(obj)
+        bw, bh = int(xs.max() - xs.min() + 1), int(ys.max() - ys.min() + 1)
+        if bh > SYMBOL_MAX_H_GAPS * gap or bw > SYMBOL_MAX_W_GAPS * gap:
+            continue  # larger than a score symbol: a band, a frame, a logo
+        if not (obj & protect).any():
+            continue  # outside the score rows
+        out[obj] = 0
+        protected |= obj
+        boxes.append([int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1])
+    return out, protected, boxes
+
+
+def screen_fixed_chrome(images: Sequence[np.ndarray], *, protect: Optional[np.ndarray] = None,
+                        gap: Optional[float] = None) -> Tuple[np.ndarray, Dict[str, object]]:
     """Mask (dilated by ``CHROME_DILATE_PX``) of screen-fixed chrome in same-size
     images (crop coordinates): pixels colored in at least ``CHROME_MIN_SHARE`` of the
     images that show different notation (at least ``CHROME_MIN_DISPLAYS`` of them)
@@ -171,7 +205,12 @@ def screen_fixed_chrome(images: Sequence[np.ndarray]) -> Tuple[np.ndarray, Dict[
     in it. Returns (mask, info); ``info["_appearance"]`` (H x W x 3 float, NaN elsewhere) is
     the chrome's mean color over the displays on its colored core and on enclosed pixels
     steady across all displays - its own steady
-    appearance, the only thing besides paper a strip may paper-fill."""
+    appearance, the only thing besides paper a strip may paper-fill.
+
+    ``protect`` (same size, bool) and ``gap`` (staff gap px): the score-row zone. A candidate
+    object that touches it and is symbol-sized (``_protect_symbols``) is kept out of the mask,
+    the appearance and the enclosed areas (``info["protected_objects"]``; ``info["_protected"]``:
+    their pixels, a steady printed object for the composite's unrecovered count)."""
     info: Dict[str, object] = {"samples": len(images), "displays": 0, "chrome_px": 0}
     if not images:
         return np.zeros((0, 0), bool), info
@@ -209,6 +248,13 @@ def screen_fixed_chrome(images: Sequence[np.ndarray]) -> Tuple[np.ndarray, Dict[
         return empty, info
     core, moving = _drop_moving_objects(core, reps)
     info["moving_objects"] = moving
+    protected = np.zeros(shape[:2], bool)
+    if protect is not None and gap and gap > 0 and protect.shape == shape[:2] and core.any():
+        core, protected, boxes = _protect_symbols(core, protect.astype(bool), float(gap))
+        info["protected_objects"] = boxes
+        info["protected_px"] = int(protected.sum())
+        if protected.any():
+            info["_protected"] = protected
     if not core.any():
         return empty, info
     # an area a chrome frame closes in (not touching the image border through non-chrome)
@@ -216,6 +262,10 @@ def screen_fixed_chrome(images: Sequence[np.ndarray]) -> Tuple[np.ndarray, Dict[
     n, lab = cv2.connectedComponents(inv, connectivity=4)
     border = set(np.unique(np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]])).tolist())
     holes = np.isin(lab, [k for k in range(1, n) if k not in border])
+    if protected.any():
+        # a protected symbol (and its anti-aliased rim) is never chrome, also inside a chrome frame
+        r = CHROME_DILATE_PX
+        holes &= ~(cv2.dilate(protected.astype(np.uint8), np.ones((2 * r + 1, 2 * r + 1), np.uint8)) > 0)
     colored_core = core > 0
     core = colored_core | holes
     # the chrome's own steady appearance: its mean color over the displays, on the colored core only
@@ -232,6 +282,7 @@ def screen_fixed_chrome(images: Sequence[np.ndarray]) -> Tuple[np.ndarray, Dict[
     info["_appearance"] = appearance
     r = CHROME_DILATE_PX
     mask = cv2.dilate(core.astype(np.uint8), np.ones((2 * r + 1, 2 * r + 1), np.uint8)) > 0
+    mask &= ~protected
     info.update(chrome_px=int(core.sum()), enclosed_px=int(holes.sum()))
     if core.any():
         ys2, xs2 = np.nonzero(core)

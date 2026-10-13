@@ -129,6 +129,7 @@ export function exportErrorCodeMessage(errorCode, locale = "en") {
   if (code === "UNSUPPORTED_SOURCE") return t("export.failedUnsupportedSource", { locale });
   if (code === "UNSUPPORTED_LAYOUT") return t("export.failedUnsupportedLayout", { locale });
   if (code === "NO_SCORE_SYSTEMS") return t("export.failedNoSystems", { locale });
+  if (code === "VIDEO_DECODE_INCOMPLETE") return t("export.failedDecodeIncomplete", { locale });
   return "";
 }
 

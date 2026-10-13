@@ -67,12 +67,20 @@ class OccurrenceRulesTest(unittest.TestCase):
         self.assertEqual([r["final_system_id"] for r in remaps], [s["id"] for s in out["systems"]])
         self.assertEqual([r["exclusion"] for r in remaps], [None, "short_listed_excluded", None, None])
 
-    def test_playhead_reset_split_is_one_display(self):
+    def test_playhead_reset_split_is_two_systems_with_a_possible_repeat_notice(self):
+        # audit F03: a reset alone never joins; without pixels the identity is uncertain, so the
+        # later part is a possible repeat (‡) and both are printed
         eps = [ep("e1", "slot-00", 0.0, 4.0, ended="playhead_reset"), ep("e2", "slot-00", 4.25, 8.0, started="playhead_reset", ended="end_of_source")]
         out = self.run_occ(eps)
-        self.assertEqual(len(out["systems"]), 1)
-        self.assertEqual(out["systems"][0]["episode_ids"], ["e1", "e2"])
-        self.assertTrue(out["systems"][0]["terminal_display"])
+        first, later = out["systems"]
+        self.assertEqual([s["episode_ids"] for s in out["systems"]], [["e1"], ["e2"]])
+        self.assertTrue(first["included"] and later["included"])
+        self.assertTrue(later["terminal_display"])
+        self.assertEqual(later["issues"], ["POSSIBLE_SAME_DISPLAY"])
+        self.assertEqual(later["possible_repeat_of"], first["id"])
+        self.assertEqual(out["joins"], [])
+        self.assertEqual([(r["a"], r["b"], r["possible_repeat"]) for r in out["reset_splits"]], [("e1", "e2", True)])
+        self.assertEqual(ro.possible_repeat_pairs(out["systems"]), [{"system_id": later["id"], "of_system_id": first["id"]}])
 
     def test_returns_are_placed_again_in_video_order(self):
         eps = [ep("a1", "slot-00", 0.0, 4.0, started="first_observation"), ep("b", "slot-00", 4.25, 8.0), ep("a2", "slot-00", 8.25, 12.0)]

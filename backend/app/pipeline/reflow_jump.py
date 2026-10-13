@@ -1891,7 +1891,13 @@ def panorama_preservation(chain: Sequence[str], info: Dict[str, Any], pano: np.n
     if chrome_info is None:
         shapes = [composites[d].shape for d in comparison]
         shape = max(set(shapes), key=shapes.count)
-        chrome, chrome_info = oc.screen_fixed_chrome([composites[d] for d in comparison if composites[d].shape == shape])
+        same = [d for d in comparison if composites[d].shape == shape]
+        # the score rows (audit F10) from the displays' raw observations: a symbol-sized colored
+        # object there is score content, never chrome (the composites are full crops)
+        zone_obs = [obs_by[eps[d]["observation_ids"][len(eps[d]["observation_ids"]) // 2]] for d in same
+                    if eps[d].get("observation_ids") and eps[d]["observation_ids"][len(eps[d]["observation_ids"]) // 2] in obs_by]
+        zone, zone_gap = rs.score_row_zone(zone_obs, shape[:2])
+        chrome, chrome_info = oc.screen_fixed_chrome([composites[d] for d in same], protect=zone, gap=zone_gap)
     appearance = chrome_info.get("_appearance")
     reference = rs.nearest_appearance(appearance) if appearance is not None else None
     chrome_evidence = {k: v for k, v in chrome_info.items() if not k.startswith("_")}
@@ -2105,8 +2111,10 @@ def _strip_conflicts(ledger: Dict[str, Any], x0: int, x1: int, first_k: bool, la
         sy = _episode_staff_y(ep, obs_by)
         pad = int(round(rs.PAD_V_GAPS * gap))
         keep = (max(0, int(sy[0] - pad)), min(h, int(np.ceil(sy[-1] + pad)) + 1)) if sy else (0, h)
-        full, inverted, flattened, finish_info = rs.finish_strip(comp)
-        img, trimmed = rs.trim_blank_rows(full, keep=keep, pad=pad)
+        weak_out: Dict[str, Any] = {}
+        full, inverted, flattened, finish_info = rs.finish_strip(comp, weak_out=weak_out)
+        img, trimmed = rs.trim_blank_rows(full, keep=rs.keep_weak_mark_rows(keep, weak_out.get("mask")), pad=pad)
+        rs.audit_weak_marks_cropped(finish_info, weak_out.get("mask"), (trimmed[0], full.shape[0] - trimmed[1]))
         abox = [0, int(trimmed[0]), int(w), int(h - trimmed[1])]
         suffix = f"alt{len(minority['alternates']) + 1}"
         (out_dir / "alt").mkdir(parents=True, exist_ok=True)
@@ -2283,6 +2291,26 @@ def _with_prefix(img: np.ndarray, staff_top: float, prefix: Dict[str, Any], lead
     return out, int(aligned.shape[1] + lead)
 
 
+def finish_panorama_chunk(raw: np.ndarray, lines: Sequence[float], gap: float
+                          ) -> Tuple[np.ndarray, bool, bool, Dict[str, Any], List[int]]:
+    """One panorama chunk finished (``reflow_strips.finish_strip``) and trimmed to its rows: blank
+    paper rows above/below the ink go, the staff with its padding and the rows of weak marks
+    (``weak_out``, audit F11: lighter than the trim's ink cutoff) stay, and the weak-mark survival
+    check covers the delivered rows. Returns (image, inverted, paper flattened, finish info,
+    [rows trimmed at the top, at the bottom])."""
+    weak_out: Dict[str, Any] = {}
+    img, inverted, flattened, finish_info = rs.finish_strip(raw, gap=gap, staff=(lines, 0, raw.shape[1]),
+                                                            weak_out=weak_out)
+    if img.shape != raw.shape:
+        raise ValueError("jump ledger needs finish_strip crop geometry")
+    pad = int(round(rs.PAD_V_GAPS * gap))
+    keep = (max(0, int(lines[0] - pad)), min(img.shape[0], int(np.ceil(lines[4] + pad)) + 1))
+    weak = weak_out.get("mask")
+    out, trimmed = rs.trim_blank_rows(img, keep=rs.keep_weak_mark_rows(keep, weak), pad=pad)
+    rs.audit_weak_marks_cropped(finish_info, weak, (trimmed[0], img.shape[0] - trimmed[1]))
+    return out, inverted, flattened, finish_info, trimmed
+
+
 def build_jump_systems(jump: Dict[str, Any], tracking: Dict[str, Any], manifest: Dict[str, Any], out_dir: Path, *,
                        composites: Dict[str, np.ndarray], covered: Dict[str, np.ndarray],
                        load: Optional[ImageLoader] = None,
@@ -2406,10 +2434,7 @@ def build_jump_systems(jump: Dict[str, Any], tracking: Dict[str, Any], manifest:
             for k in range(len(edges) - 1):
                 x0, x1 = edges[k], edges[k + 1]
                 raw = pano[:, x0:x1]
-                img, inverted, flattened, finish_info = rs.finish_strip(
-                    raw, gap=gap, staff=(lines, 0, raw.shape[1]))
-                if img.shape != raw.shape:
-                    raise ValueError("jump ledger needs finish_strip crop geometry")
+                img, inverted, flattened, finish_info, trimmed = finish_panorama_chunk(raw, lines, gap)
                 owned = [o for o in info["owners"] if o["pano_cols"][1] > x0 and o["pano_cols"][0] < x1]
                 # staff extent in strip columns: the displays' own staff_x at the chain ends
                 o0, o1 = owned[0], owned[-1]
@@ -2422,10 +2447,6 @@ def build_jump_systems(jump: Dict[str, Any], tracking: Dict[str, Any], manifest:
                 sx0 = max(0, int((r0.get("staff_x") or [0, 0])[0]) + o0["offset_x"] - x0) if x0 == 0 else 0
                 sx1 = min(x1 - x0 - 1, int((r1.get("staff_x") or [0, 10 ** 9])[1]) + o1["offset_x"] - x0) \
                     if x1 == pano.shape[1] else x1 - x0 - 1
-                # blank paper rows above/below the ink go (the staff and its padding stay)
-                pad = int(round(rs.PAD_V_GAPS * gap))
-                keep = (max(0, int(lines[0] - pad)), min(img.shape[0], int(np.ceil(lines[4] + pad)) + 1))
-                img, trimmed = rs.trim_blank_rows(img, keep=keep, pad=pad)
                 top = int(trimmed[0])
                 staff_y = [round(float(y) - top, 2) for y in lines]
                 sid = f"jmp-{ri + 1:02d}-{chunk_no + 1:03d}"

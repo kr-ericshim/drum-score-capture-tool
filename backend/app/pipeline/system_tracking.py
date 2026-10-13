@@ -12,7 +12,12 @@ Rules implemented here:
   ``REGISTRATION_TOL_GAPS`` staff gaps) and there is no persistent content
   change. A change is persistent when two consecutive observations agree with
   each other and differ from the episode; a single differing observation is
-  recorded as a transient observation and the episode continues.
+  recorded as a transient observation and the episode continues. That observation is
+  also a one-observation display of its own (``transient_display``, started_by
+  ``transient_change``; audit F01): reflow_occurrences hides it only with evidence and
+  otherwise lists it in review. It takes part in no join, continuity link, layout
+  classification or jump-view analysis (``without_transient_displays``), so A -> B -> A
+  keeps A one display.
 * An episode is confirmed with >= 3 observations spanning >= 0.5 s; shorter
   ones are kept with the ``SHORT_EPISODE`` flag. Episodes still open at the end
   of the source carry ``TERMINAL``.
@@ -23,8 +28,13 @@ Rules implemented here:
 * A view transition (>= 2 consecutive non-matching observations in this row
   while another row also changes at the same time) splits an episode even when
   the row looks the same before and after it (identical rows on the next page).
+* A stable measure-number change in the middle of an episode whose endpoints agree
+  (33 -> 37 -> 33 without a cursor; audit F04) is found from the members' raw
+  measure-number areas (``_middle_runs``) and split like a number step; a run of two or
+  more members too short to stand alone flags the episode (``NUMBER_STEP_UNRESOLVED``).
 * A stable content step below page_diff's change threshold (notation added or
-  removed: a dot, a short stroke) splits an episode too. Each member keeps its
+  removed: a dot, a short stroke) splits an episode too; ink the majority draws and a
+  minority state lacks counts as well as ink a minority adds (audit F09). Each member keeps its
   neutral ink mask; ink that the episode majority does not draw, outside that
   member's overlay columns (colored ink, the detected playhead, a cursor track)
   and not on video seen through the band, shown by >= 2 consecutive members, is
@@ -71,7 +81,7 @@ from app.pipeline import minority_content as mc
 from app.pipeline import page_diff
 from app.pipeline import system_detect
 
-TRACKING_VERSION = "system_tracking-7"  # 7: in a fade, members on paper that is not clearly light are not judged for content steps
+TRACKING_VERSION = "system_tracking-8"  # 8: one-observation transient displays, removal steps, middle number steps (audit 2026-10-13)
 
 # layouts the tracker labels but the reflow refuses (reflow_pipeline.layout_gate)
 UNSUPPORTED_LAYOUTS = {"horizontal_scroll": "UNSUPPORTED_HORIZONTAL_SCROLL", "vertical_scroll": "UNSUPPORTED_VERTICAL_SCROLL"}
@@ -87,6 +97,8 @@ CLEAN_INK_MAX = 110
 
 SHORT_EPISODE = "SHORT_EPISODE"
 TERMINAL = "TERMINAL"
+# boundary of a one-observation display the tracker passed over as a transient
+TRANSIENT_DISPLAY = "transient_change"
 
 ImageLoader = Callable[[Dict[str, Any]], np.ndarray]
 
@@ -232,6 +244,7 @@ class _Member:
     ink_on_paper: Optional[np.ndarray] = None  # packed: ink-dark neutral ink, without components on video seen through the band
     overlay_cols: Optional[np.ndarray] = None  # colored-overlay and playhead columns of the band
     paper: Optional[float] = None  # paper level of the raw band inside the staff (75th percentile)
+    number_zone: Optional[Tuple[int, np.ndarray]] = None  # raw measure-number area ink (_number_zone)
 
 
 def _attach_ink(m: "_Member", band: np.ndarray, region: Dict[str, Any], raw_band: Optional[np.ndarray] = None) -> None:
@@ -252,6 +265,7 @@ def _attach_ink(m: "_Member", band: np.ndarray, region: Dict[str, Any], raw_band
         top = int(round(WINDOW_ABOVE_GAPS * m.gap))
         rows = g[max(0, top):min(g.shape[0], int(round(top + 4 * m.gap)))]
         m.paper = float(np.percentile(rows if rows.size else g, 75))
+        m.number_zone = _number_zone(raw_band, region, m.gap)
 
 
 @dataclass
@@ -309,6 +323,16 @@ def build_episodes(
     has_coarse = any(o.get("sample_kind") == "coarse" for o in observations)
     layout_feats = _LayoutFeatures()
 
+    # every observation dropped as a transient is also a one-observation display of its own
+    # (DECISIONS: a short display is hidden only with evidence, otherwise listed in review);
+    # the episode around it is not split, so A -> B -> A stays one display A plus B
+    transient_displays: List[_Episode] = []
+
+    def transient_display(m: _Member, slot: str, ended_by: str = TRANSIENT_DISPLAY) -> None:
+        td = _Episode(slot, [m], started_by=TRANSIENT_DISPLAY, ended_by=ended_by)
+        td.release_anchor()
+        transient_displays.append(td)
+
     def close(slot: str, reason: str) -> None:
         ep = open_eps.pop(slot)
         ep.ended_by = reason
@@ -317,6 +341,7 @@ def build_episodes(
         for m in pending.pop(slot, []):
             transients.append({"obs_id": m.obs_id, "region_id": m.region_id, "t": m.t, "slot_id": slot,
                                "reason": "unconfirmed_change_at_episode_end"})
+            transient_display(m, slot, reason if reason == "end_of_source" else TRANSIENT_DISPLAY)
 
     for obs in observations:
         crop = None
@@ -349,6 +374,7 @@ def build_episodes(
                     rec = {"obs_id": p.obs_id, "region_id": p.region_id, "t": p.t, "slot_id": slot, "reason": "transient_change"}
                     ep.transients.append(rec)
                     transients.append(rec)
+                    transient_display(p, slot)
                 m.band = None
                 ep.members.append(m)
                 continue
@@ -371,6 +397,7 @@ def build_episodes(
                     rec = {"obs_id": p.obs_id, "region_id": p.region_id, "t": p.t, "slot_id": slot, "reason": "transient_change"}
                     ep.transients.append(rec)
                     transients.append(rec)
+                    transient_display(p, slot)
             m.band = region_window(crop, r)
             _attach_ink(m, m.band, r, region_window(norm, r))
             pending[slot] = [m]
@@ -396,6 +423,8 @@ def build_episodes(
         y0 = _band_top(ep0.members)
         gaps.append(float(np.median([m.gap for m in ep0.members])))
         for e in pre[k]:
+            if e["kind"] != "added":
+                continue  # screen-fixed specks are judged on added ink (as before removals were seen)
             x0, b0, x1, b1 = e["box"]
             items.append({"display": k, "box": [x0, b0 + y0, x1, b1 + y0], "area_px": e["area_px"],
                           "t": [round(ep0.members[e["runs"][0][0]].t, 4), round(ep0.members[e["runs"][-1][1]].t, 4)]})
@@ -410,18 +439,28 @@ def build_episodes(
                 for part in _split_on_view_transitions(ep, transients, closed):
                     episodes.extend(_split_on_playhead_resets(part))
     _rekey_families_at_view_transitions(episodes, content_steps)
+    # an observation shown as its own transient display is a member of that display, no longer a
+    # transient of the display around it (the view-transition split above has used it)
+    shown = {(td.slot_id, td.members[0].obs_id) for td in transient_displays}
+    transients = [r for r in transients if (r["slot_id"], r["obs_id"]) not in shown]
+    for ep in episodes:
+        ep.transients = [r for r in ep.transients if (r["slot_id"], r["obs_id"]) not in shown]
+    episodes.extend(transient_displays)
     for ep in episodes:
         for m in ep.members:
-            m.ink = m.ink_on_paper = m.overlay_cols = None
+            m.ink = m.ink_on_paper = m.overlay_cols = m.number_zone = None
     episodes.sort(key=lambda e: (e.members[0].t, e.members[0].staff_top))
     out = []
     for i, ep in enumerate(episodes):
         out.append(_episode_record(f"ep-{i:04d}", ep, last_t))
-    _link_continuity(out, episodes, load_image, manifest)
-    layout = classify_layout(manifest, out, load_image, features=layout_feats.feats)
+    # continuity links and the layout are judged on the ordinary displays only
+    ordinary = [(rec, ep) for rec, ep in zip(out, episodes) if not rec.get("transient_display")]
+    _link_continuity([rec for rec, _ep in ordinary], [ep for _rec, ep in ordinary], load_image, manifest)
+    layout = classify_layout(manifest, [rec for rec, _ep in ordinary], load_image, features=layout_feats.feats)
     for e in out:
         e["layout"] = _layout_at(layout, e["t_start"])
-    logger(f"episodes: {len(out)}, transients: {len(transients)}, content steps split: {len(content_steps)}, number steps split: {len(number_steps)}")
+    logger(f"episodes: {len(out)} ({len(transient_displays)} one-observation transient displays), "
+           f"transients: {len(transients)}, content steps split: {len(content_steps)}, number steps split: {len(number_steps)}")
     return {
         "schema_version": 1,
         "kind": "display_episodes",
@@ -442,13 +481,103 @@ def build_episodes(
         # specks judged part of the screen (minority_content.screen_fixed_spots): on record, not split
         "screen_fixed_minority": {"spots": spots, "events": [{k: v for k, v in it.items() if k != "display"} for it in screen_fixed]},
         "transient_observations": transients,
+        "transient_displays": [e["id"] for e in out if e.get("transient_display")],
         "layout_intervals": layout,
     }
+
+
+def without_transient_displays(tracking: Dict[str, Any]) -> Dict[str, Any]:
+    """``tracking`` without the one-observation transient displays (``transient_display``):
+    the episode list the jump analysis and the coverage accounting work on."""
+    if not any(e.get("transient_display") for e in tracking.get("episodes", [])):
+        return tracking
+    return dict(tracking, episodes=[e for e in tracking.get("episodes", []) if not e.get("transient_display")])
 
 
 CONTENT_STEP_MIN_OBS = 4
 CONTENT_STEP_MAX_DEPTH = 8
 NUMBER_STEP_MAX_DEPTH = 8
+
+
+NUMBER_ZONE_RIGHT_GAPS = 8.0   # the measure-number area of reflow_occurrences (left 4 gaps, right 8 gaps)
+NUMBER_ZONE_LEFT_GAPS = 4.0
+NUMBER_ZONE_INK = 200          # reflow_occurrences.WRITTEN_INK_THRESHOLD (a gray-180 digit counts)
+NUMBER_ZONE_MIN_PX = 8         # reflow_occurrences.WRITTEN_MIN_AREA_PX
+NUMBER_ZONE_MIN_AREA_GAPS = 0.04  # reflow_occurrences.NUMBER_CHANGE_MIN_PIECE_GAPS area
+
+
+def _number_zone(raw_band: np.ndarray, region: Dict[str, Any], gap: float) -> Optional[Tuple[int, np.ndarray]]:
+    """The raw ink (gray < NUMBER_ZONE_INK, colored pixels left out) of a member's measure-number
+    area - above the top staff line from 4 gaps left of the staff start to 8 gaps into the staff,
+    and the margin left of the staff start - as (first column, mask). A cheap in-memory
+    pre-filter for the middle of an episode (``_number_zone_differs``); the decision is always
+    reflow_occurrences.measure_number_area_differs on the raw windows."""
+    sx = region.get("staff_x")
+    if not sx:
+        return None
+    h, w = raw_band.shape[:2]
+    top = int(round(WINDOW_ABOVE_GAPS * gap))
+    x0 = int(sx[0])
+    xl, xr = max(0, int(x0 - NUMBER_ZONE_LEFT_GAPS * gap)), min(w, max(0, int(x0 + NUMBER_ZONE_RIGHT_GAPS * gap)))
+    rows = min(h, int(top + 5 * gap))
+    if xr <= xl or rows <= 0:
+        return None
+    sub = raw_band[:rows, xl:xr]
+    g = cv2.cvtColor(sub, cv2.COLOR_BGR2GRAY) if sub.ndim == 3 else sub
+    ink = g < NUMBER_ZONE_INK
+    if sub.ndim == 3:
+        ink &= cv2.cvtColor(sub, cv2.COLOR_BGR2HSV)[..., 1] <= 80
+    area = np.zeros(ink.shape, bool)
+    area[:max(0, top - 1)] = True
+    area[:, :max(0, x0 - 1 - xl)] = True
+    return xl, ink & area
+
+
+def _number_zone_differs(a: Tuple[int, np.ndarray], b: Tuple[int, np.ndarray], gap: float) -> bool:
+    """Ink in two members' number zones that one draws and the other does not (1 px tolerance),
+    in pieces of at least a digit stroke's area; no shift search, so it flags at least what the
+    strict comparison would."""
+    (xa, ma), (xb, mb) = a, b
+    lo, hi = max(xa, xb), min(xa + ma.shape[1], xb + mb.shape[1])
+    h = min(ma.shape[0], mb.shape[0])
+    if hi <= lo or h <= 0:
+        return False
+    ia = ma[:h, lo - xa:hi - xa].astype(np.uint8)
+    ib = mb[:h, lo - xb:hi - xb].astype(np.uint8)
+    k = np.ones((3, 3), np.uint8)
+    residue = (ia & (1 - cv2.dilate(ib, k))) | (ib & (1 - cv2.dilate(ia, k)))
+    if not residue.any():
+        return False
+    r = max(1, int(round(0.15 * gap)))
+    n, lab = cv2.connectedComponents(cv2.dilate(residue, np.ones((2 * r + 1, 2 * r + 1), np.uint8)), connectivity=8)
+    sizes = np.bincount(lab[residue > 0].ravel(), minlength=n)[1:]
+    return bool(sizes.size and sizes.max() >= max(NUMBER_ZONE_MIN_PX, NUMBER_ZONE_MIN_AREA_GAPS * gap * gap))
+
+
+def _middle_runs(ms: Sequence[_Member]) -> List[Tuple[int, bool]]:
+    """(middle member, stable) of each run of two or more consecutive members whose number zone
+    differs from the first member's (``_number_zone_differs``) and that ends before the episode's
+    last member: a state shown, then gone again (audit F04: 33 -> 37 -> 33 without a cursor; the
+    endpoints agree). ``stable``: the run lasts like a confirmed display (``mc.stable_run``)."""
+    n = len(ms)
+    if n < 3 or ms[0].number_zone is None:
+        return []
+    flagged = [False] + [m.number_zone is not None and _number_zone_differs(ms[0].number_zone, m.number_zone, m.gap)
+                         for m in ms[1:]]
+    times = [m.t for m in ms]
+    out: List[Tuple[int, bool]] = []
+    i = 1
+    while i < n:
+        if not flagged[i]:
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and flagged[j + 1]:
+            j += 1
+        if j < n - 1 and j > i:
+            out.append(((i + j) // 2, mc.stable_run(times, i, j)))
+        i = j + 1
+    return out
 
 
 def _split_on_number_steps(ep: _Episode, obs_by: Dict[str, Dict[str, Any]], load_image: ImageLoader,
@@ -460,8 +589,11 @@ def _split_on_number_steps(ep: _Episode, obs_by: Dict[str, Dict[str, Any]], load
     Top-level endpoint agreement costs just two windows. Differing endpoints trigger
     bisection, then every left member must agree. A recursive suffix scans every member
     against its first, even when its endpoints agree, before accepting one state.
-    Sub-digit residue counts as agreement; a certain endpoint change without a clean
-    cut remains flagged for review.
+    When the endpoints agree, the middle of each stable run of members whose number zone
+    differs from the first one (``_middle_runs``) is compared too (audit F04: 33 -> 37 -> 33): a
+    certain digit-scale difference there makes the episode scanned member by member like a
+    suffix. Sub-digit residue counts as agreement; a certain change without a clean cut
+    remains flagged for review (``NUMBER_STEP_UNRESOLVED``).
     """
     if len(ep.members) < 2 or (depth == 0 and len(ep.members) < CONTENT_STEP_MIN_OBS):
         return [ep]
@@ -486,12 +618,24 @@ def _split_on_number_steps(ep: _Episode, obs_by: Dict[str, Dict[str, Any]], load
     def window(i):
         return _raw_window_of(obs_by, load_image, ms[i].obs_id, ms[i].region_id)
 
+    middle = False
     try:
         first, last = window(0), window(len(ms) - 1)
         evidence = measure_number_area_differs(first, last, require_digit_scale=True)
-        if depth == 0 and (evidence is None or evidence.get("reason") != "measure_number_area_differs"):
-            return [ep]
         comparisons = {len(ms) - 1: evidence}
+        if depth == 0 and (evidence is None or evidence.get("reason") != "measure_number_area_differs"):
+            for i, stable in _middle_runs(ms):
+                probe = measure_number_area_differs(first, window(i), require_digit_scale=True)
+                comparisons[i] = probe
+                if probe is not None and probe.get("reason") == "measure_number_area_differs":
+                    evidence, middle = probe, True
+                    if not stable:
+                        # too short to be a display of its own: never split (that would print the
+                        # surrounding display twice); the line carries the notice
+                        return not_split("unstable_middle_run", obs_id=ms[i].obs_id)
+                    break
+            if not middle:
+                return [ep]
 
         def comparison(i):
             if i not in comparisons:
@@ -499,7 +643,7 @@ def _split_on_number_steps(ep: _Episode, obs_by: Dict[str, Dict[str, Any]], load
                                                             require_digit_scale=True)
             return comparisons[i]
 
-        if depth > 0:
+        if depth > 0 or middle:
             cut = next((i for i in range(len(ms)) if comparison(i) is not None), None)
             if cut is None:
                 return [ep]
@@ -521,7 +665,7 @@ def _split_on_number_steps(ep: _Episode, obs_by: Dict[str, Dict[str, Any]], load
         left_stable = cut > 0 and mc.stable_run(times, 0, cut - 1)
         right_stable = mc.stable_run(times, cut, len(ms) - 1)
         if not (left_stable and right_stable):
-            if depth > 0 or evidence.get("number_present") != [True, True]:
+            if depth > 0 or middle or evidence.get("number_present") != [True, True]:
                 return not_split("unstable_side")
             # A short edge at an actual line change is a hand-over, not two stable
             # displays merged together. Keep it as a separate short episode; only
@@ -592,14 +736,16 @@ def _faded_members(members: List[_Member]) -> List[bool]:
 
 
 def _content_step_events(members: List[_Member]) -> List[Dict[str, Any]]:
-    """Minority content of an episode's members: neutral ink some members show and the
-    majority of the members does not draw. Columns a member's overlay covers are not judged
-    for that member, nor are components on video seen through the band, nor the ink members
-    of a fade add (``_faded_members``).
+    """Minority content of an episode's members, both ways (DECISIONS round 4: notation added
+    or removed):
 
-    Only ink a minority shows counts. A state that lacks some majority ink loses nothing
-    from the composite; when the state that has the ink is the minority, that ink is
-    minority content itself (a stable change either way splits the episode)."""
+    * ``added``: neutral ink some members show and the majority of the members does not draw;
+    * ``removed``: neutral ink the majority draws (as ink-dark ink on paper) and some members
+      do not draw at all (audit F09: a mark shown in the first 20 observations and gone in
+      the last 12 - the state without it is the minority).
+
+    Columns a member's overlay covers are not judged for that member, nor are components on
+    video seen through the band, nor the members of a fade (``_faded_members``)."""
     if any(m.ink is None or m.ink_on_paper is None or m.ink_shape is None for m in members):
         return []
     # bands of one episode share their top row; their height can differ by a rounding pixel
@@ -611,24 +757,31 @@ def _content_step_events(members: List[_Member]) -> List[Dict[str, Any]]:
 
     cols = [m.overlay_cols[:shape[1]] if m.overlay_cols is not None else np.zeros(shape[1], bool) for m in members]
     count = np.zeros(shape, np.uint16)
+    count_dark = np.zeros(shape, np.uint16)
     seen = np.zeros(shape[1], np.uint16)
     for m, cv in zip(members, cols):
         count += (unpack(m.ink, m) & ~cv[None, :]).astype(np.uint16)
+        count_dark += (unpack(m.ink_on_paper, m) & ~cv[None, :]).astype(np.uint16)
         seen += (~cv).astype(np.uint16)
     majority = (count.astype(np.int32) * 2 > seen[None, :].astype(np.int32)) & (seen[None, :] > 0)
+    majority_dark = (count_dark.astype(np.int32) * 2 > seen[None, :].astype(np.int32)) & (seen[None, :] > 0)
     maj_d = mc._dilate(majority, mc.tolerance_px(g))
     added: Dict[int, np.ndarray] = {}
-    # members of a fade still vote for the majority (a state that lost ink stays a minority),
-    # but the background they show is not added content
+    removed: Dict[int, np.ndarray] = {}
+    # members of a fade still vote for the majority, but neither the background they show nor
+    # the ink they lose in it is judged
     faded = _faded_members(members)
     for i, (m, cv) in enumerate(zip(members, cols)):
         if faded[i]:
-            added[i] = np.zeros(shape, bool)
+            added[i] = removed[i] = np.zeros(shape, bool)
             continue
         mine = unpack(m.ink_on_paper, m)
         added[i] = mc.unexplained(mine, majority, cv, g, reference_dilated=maj_d)[0]
+        # the member's own ink at any darkness explains the majority's ink (a lighter stroke is not gone)
+        removed[i] = mc.unexplained(majority_dark, unpack(m.ink, m), cv, g)[0]
     added, _track = mc.remove_cursor_track(added, g)
-    return [dict(e, kind="added") for e in mc.minority_events(added, g)]
+    return ([dict(e, kind="added") for e in mc.minority_events(added, g)]
+            + [dict(e, kind="removed") for e in mc.minority_events(removed, g)])
 
 
 def _split_on_content_steps(ep: _Episode, transients: List[Dict[str, Any]], log: List[Dict[str, Any]],
@@ -665,10 +818,11 @@ def _split_on_content_steps(ep: _Episode, transients: List[Dict[str, Any]], log:
         for i0, i1 in e["runs"]:
             if not mc.stable_run(times, i0, i1):
                 continue
+            # an added run is the state that shows the ink; a removed run the state that lacks it
             if i0 <= first and i1 < last:
-                k, shows_left = i1 + 1, True
+                k, shows_left = i1 + 1, e["kind"] == "added"
             elif i1 >= last and i0 > first:
-                k, shows_left = i0, False
+                k, shows_left = i0, e["kind"] != "added"
             else:
                 continue
             if best is None or e["area_px"] > best["area_px"]:
@@ -861,6 +1015,7 @@ def _episode_record(eid: str, ep: _Episode, last_t: float) -> Dict[str, Any]:
         "continuity_links": [],
         **({"content_family": {"id": ep.family, "score": ep.family_score}} if ep.family else {}),
         **({"number_step_unresolved": True} if ep.number_step_unresolved else {}),
+        **({"transient_display": True} if ep.started_by == TRANSIENT_DISPLAY else {}),
     }
 
 
