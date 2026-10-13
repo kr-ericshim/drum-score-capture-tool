@@ -45,7 +45,6 @@ class OccurrenceRulesTest(unittest.TestCase):
         self.assertEqual(second["possible_repeat_of"], first["id"])
         self.assertEqual(second["issues"], ["POSSIBLE_SAME_DISPLAY"])
         self.assertTrue(all("alternate_of" not in s and "alternate_kind" not in s for s in out["systems"]))
-        self.assertEqual(out["exclusions"]["content_step_alternates"], [])
 
     def test_family_repeat_links_include_listed_parts_and_stay_within_the_family(self):
         eps = [ep("a", "slot-00", 0, 4, started="first_observation", ended="content_step"),
@@ -64,7 +63,6 @@ class OccurrenceRulesTest(unittest.TestCase):
         self.assertEqual(last["possible_repeat_of"], short["id"])
         self.assertNotIn("possible_repeat_of", other)
         self.assertEqual(out["exclusions"]["short_listed_excluded"], [short["id"]])
-        self.assertEqual(out["exclusions"]["content_step_alternates"], [])
         remaps = out["ledger"]["occurrence_remaps"]
         self.assertEqual([r["final_system_id"] for r in remaps], [s["id"] for s in out["systems"]])
         self.assertEqual([r["exclusion"] for r in remaps], [None, "short_listed_excluded", None, None])
@@ -417,7 +415,7 @@ class SimilarStripTest(unittest.TestCase):
 class OccurrencePipelineTest(unittest.TestCase):
     """Real tracker on rendered frames: A, B, A again."""
 
-    def test_return_is_kept_and_suggested_as_duplicate(self):
+    def test_return_is_kept(self):
         a, b = strip(1), strip(2)
         frames = show(a, 0.0, 3.0, seed=1) + show(b, 3.0, 3.0, seed=2) + show(a, 6.0, 3.0, seed=3)
         manifest, images = build(frames)
@@ -427,8 +425,6 @@ class OccurrencePipelineTest(unittest.TestCase):
         included = [s for s in out["systems"] if s["included"]]
         self.assertEqual(len(included), 3, [(s["t_start"], s["t_end"]) for s in out["systems"]])
         self.assertEqual([round(s["t_start"]) for s in included], [0, 3, 6])
-        dups = ro.suggest_duplicates(included, manifest, load)
-        self.assertEqual([(d["system_id"], d["of_system_id"]) for d in dups], [(included[2]["id"], included[0]["id"])])
 
 
 if __name__ == "__main__":

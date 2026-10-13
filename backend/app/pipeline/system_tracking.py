@@ -1,6 +1,6 @@
 """Display episodes per screen slot from an observation manifest.
 
-Design reference: docs/reflow/DESIGN_astra.md section 1 (decision procedure,
+Design reference: docs/archive/reflow/DESIGN_astra.md section 1 (decision procedure,
 first block), section 2 (shared acquisition/tracking defaults, per-layout
 algorithms) and section 5 (``system_tracking.py``: display episodes, playhead
 tracks, layout classification).
@@ -32,7 +32,8 @@ Rules implemented here:
   first member or ends at its last one and lasts like a confirmed display
   (>= 3 observations over >= 0.5 s), the episode is split there
   (``content_step``); the parts share a ``content_family`` and reflow_occurrences
-  places one of them (the others are listed as alternates). A family is one
+  places every part as an ordinary system. Later parts get ``POSSIBLE_SAME_DISPLAY``
+  (‡ notice), cleared only when measure numbers certainly differ. A family is one
   continuous display: a view transition starts a new family (the row shown again
   after it is placed again), a playhead reset does not; a family left with one
   part is no family. Specks at one screen
@@ -640,9 +641,10 @@ def _split_on_content_steps(ep: _Episode, transients: List[Dict[str, Any]], log:
     Runs in the middle (shown, then gone again) do not split here, nor do specks at a
     screen-fixed spot (``spots``). Each part is checked again (several steps).
 
-    The parts are one written system in different states: they share ``family`` and each
-    counts the steps at which it is the state that shows the step's ink (``family_score``);
-    reflow_occurrences places one of them and lists the others as alternates."""
+    The parts share ``family`` and each counts the steps at which it is the state that
+    shows the step's ink (``family_score``). reflow_occurrences places every part as an ordinary
+    system; later parts get ``POSSIBLE_SAME_DISPLAY`` (‡ notice), cleared only when measure
+    numbers certainly differ."""
     ms = ep.members
     n = len(ms)
     if n < CONTENT_STEP_MIN_OBS or depth > CONTENT_STEP_MAX_DEPTH:

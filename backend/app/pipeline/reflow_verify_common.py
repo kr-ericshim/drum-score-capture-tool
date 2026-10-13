@@ -1,4 +1,4 @@
-"""Shared primitives of the staged delivered verification (LEDGER_2D_INTERFACE §12).
+"""Shared primitives of the staged delivered verification (docs/archive/reflow/LEDGER_2D_INTERFACE.md §12).
 
 Contrast space, strong/weak pixels, strip features tiled to local regions, packed masks,
 3×3 local windows, grouped findings and digests. Stages A/B/C (reflow_verify_strip,

@@ -142,7 +142,6 @@ class Round5PathsTest(unittest.TestCase):
                          [("sys-001", False, ["SHORT_DISPLAY"]), ("sys-002", False, ["SHORT_DISPLAY", "POSSIBLE_SAME_DISPLAY"])])
         self.assertEqual(occ["systems"][1]["possible_repeat_of"], "sys-001")
         self.assertFalse(any(s.get("alternate_of") for s in occ["systems"]))
-        self.assertEqual(occ["exclusions"]["content_step_alternates"], [])
         self.assertEqual(occ["exclusions"]["short_listed_excluded"], ["sys-001", "sys-002"])
 
     def test_short_run_at_the_start_of_a_later_display_keeps_uncertain_ink(self):

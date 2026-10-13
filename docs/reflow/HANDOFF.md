@@ -43,11 +43,12 @@
    - 형식은 원속도로 확인한다. 실제 전환 전후를 보고, 점프는 걸러낸다.
    - 거부 시험: 세로 롤, 반투명, 무악보, 점프.
    - 두 번째 채점자를 두고, assisted는 정답을 보기 전에 한다.
-4. **개발 루프 개선**(사용자 요청, 메모리 plan-then-batch):
+4. **정리 커밋 확인:** 동작이 바뀌지 않는 정리를 커밋했다. 단위 테스트 1474 OK, 픽셀 비교는 5/27만 끝났고 모두 같았다. `eval_v2/tools/run_quick.sh`, 또는 27개 전체를 fade27과 비교해서 나머지를 확인하고, 다르면 그 부분을 되돌린다.
+5. **개발 루프 개선**(사용자 요청, 메모리 plan-then-batch):
    - 수정은 계획을 세워 한꺼번에 하고, 코퍼스는 한 번만 돌린다. 실행 중에는 코드를 고치지 않는다.
    - 빠른 점검 세트: `eval_v2/tools/run_quick.sh NAME`. DEQ, RnY5, uhzG, Q8, C4l, 6MPX를 두 묶음으로 동시에 돌리고(약 15분), 참조 결과와 자동 비교한다(`quick_compare.py`).
    - 아직 안 한 것: 추출 결과(manifest, frames)를 저장해 두고 tracking 단계부터 다시 돌리는 도구.
-5. 하지 않는 것:
+6. 하지 않는 것:
    - 이음매 대응표
    - 점프 고도화
    - 미관 작업(C4l 라벨, 로고, RnY5)
@@ -60,7 +61,7 @@
 - [PRO_REPLY_RC2.md](PRO_REPLY_RC2.md): 채점 절차.
 - Pro 답 요약: `eval_v2/pro8/03_PRO_REPLY_7_summary.md`, `eval_v2/pro8/PRO_REPLY_8_summary.md`.
 - [ORIGINAL_SCREENS_DESIGN.md](ORIGINAL_SCREENS_DESIGN.md): fallback 설계.
-- 참고: [SEAM_REJECT_DESIGN.md](SEAM_REJECT_DESIGN.md), [JUMP_FREEZE.md](JUMP_FREEZE.md), [VSCROLL_SPEC.md](VSCROLL_SPEC.md).
+- 참고: [SEAM_REJECT_DESIGN.md](SEAM_REJECT_DESIGN.md), [JUMP_FREEZE.md](JUMP_FREEZE.md), [VSCROLL_SPEC.md](../archive/reflow/VSCROLL_SPEC.md)(archive, 미검토).
 - **[docs/archive/](../archive/README.md)는 기록일 뿐 지시가 아니다.**
 
 ## 코드와 코퍼스 위치
@@ -68,7 +69,7 @@
 - reflow 흐름: `backend/app/pipeline/reflow_pipeline.py` → `system_tracking` → `reflow_occurrences` → `reflow_strips` → `reflow_measure`/`reflow_layout` → `reflow_render`. 점프는 `reflow_jump`, 배경 판정은 `source_class`.
 - 코퍼스: `~/Documents/drum-score-corpus/`.
   - 실행기: `reflow/tools/dashboard.py`. `DASHBOARD_HOOK`를 주면 작업 폴더를 지우기 전에 측정 스크립트를 돌린다. 큰 응답이 끊기면 다시 받는다.
-  - `eval_v2/tools/`: gate_suspect, fix4_summary, regression_compare, compare_outputs.
+  - `eval_v2/tools/`: run_quick.sh + quick_compare.py(참조 = fade27), fix4_summary, run_holdout. 다 쓴 일회용은 `tools/done/`.
   - 회귀 스펙은 `eval_v2/fix2_spec27.json`이다(17+10).
 - `eval_v2/jobs`(4.3 GB)는 패키지 실행의 작업 폴더다. 지울지는 사용자에게 묻는다.
 

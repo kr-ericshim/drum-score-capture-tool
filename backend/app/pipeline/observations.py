@@ -1,6 +1,6 @@
 """Observation manifest: timestamped score observations with ROI provenance.
 
-Design reference: docs/reflow/DESIGN_astra.md sections 5 ("Timestamp provenance
+Design reference: docs/archive/reflow/DESIGN_astra.md sections 5 ("Timestamp provenance
 needs extension", "Data shapes") and 2 ("Shared acquisition/tracking
 defaults").
 

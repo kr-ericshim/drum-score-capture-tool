@@ -1,4 +1,4 @@
-"""Independent strip-to-plan certificate (LEDGER_2D_INTERFACE §12.4).
+"""Independent strip-to-plan certificate (docs/archive/reflow/LEDGER_2D_INTERFACE.md §12.4).
 
 Coordinates in transforms are integer pixel centres; a half-open image box has
 centre-domain [x0-.5, x1-.5). Only those centres confer ownership, never the

@@ -1,4 +1,4 @@
-"""Adversarial cases from docs/reflow/DESIGN_astra.md section 6 for tracking + assembly,
+"""Adversarial cases from docs/archive/reflow/DESIGN_astra.md section 6 for tracking + assembly,
 plus regressions found on the calibration corpus."""
 
 import json

@@ -1,4 +1,4 @@
-"""Independent delivered-page verifier, LEDGER_2D_INTERFACE sections 12.5/12.6.
+"""Independent delivered-page verifier, docs/archive/reflow/LEDGER_2D_INTERFACE.md sections 12.5/12.6.
 
 No production renderer is imported. Coordinates are pixel centres, page indices
 are zero based, and arrays use OpenCV BGR order. ``pages=`` is a diagnostic/test

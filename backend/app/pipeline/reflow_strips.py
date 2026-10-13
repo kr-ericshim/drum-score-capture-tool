@@ -1359,12 +1359,6 @@ def staff_survives(img: np.ndarray, staff_y: Sequence[float], x0: int, x1: int) 
     return lines >= min(STAFF_SURVIVE_LINES, len(staff_y))
 
 
-def whiten_dark_theme_background(norm: np.ndarray, *, members: Optional[Sequence[np.ndarray]] = None,
-                                 gap: Optional[float] = None) -> np.ndarray:
-    """``dark_theme_cleanup`` image only."""
-    return dark_theme_cleanup(norm, members=members, gap=gap)[0]
-
-
 def finishing_survival(before: np.ndarray, after: np.ndarray, notation: np.ndarray) -> Dict[str, Any]:
     """Component survival after finishing: every notation component (``notation`` mask on the
     pre-finishing image ``before``) must still be darker than the finished paper in ``after``
@@ -2968,15 +2962,10 @@ def build_strips(occurrences: Dict[str, Any], manifest: Dict[str, Any], load_ima
                     disposition["equivalence_map"][1][2] -= origin[1]
                     disposition.pop("frame")
     spots = drop_screen_fixed_minority(records, alt_images_of)
-    # alternate strips: numbered per placed system ("sys-005-alt2"); an alternate of an alternate
-    # (a content-step state, reflow_occurrences) is numbered as another moment of the placed system
-    parent_of = {s["id"]: s.get("alternate_of") or s["id"] for s in systems}
+    # alternate strips: numbered per placed system ("sys-005-alt2")
     counter: Dict[str, int] = {}
-    for s in systems:
-        if s.get("alternate_of"):
-            counter[s["alternate_of"]] = counter.get(s["alternate_of"], 0) + 1
     for s, rec in zip(systems, records):
-        parent = parent_of[s["id"]]
+        parent = s["id"]
         for aimg, arec in zip(alt_images_of[s["id"]], rec["minority_content"]["alternates"]):
             counter[parent] = counter.get(parent, 0) + 1
             arec["suffix"] = f"alt{counter[parent]}"

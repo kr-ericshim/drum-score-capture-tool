@@ -1,6 +1,6 @@
 """Score locations from display episodes, with stored evidence for every merge.
 
-Design reference: docs/reflow/DESIGN_astra.md section 1 (entities, evidence
+Design reference: docs/archive/reflow/DESIGN_astra.md section 1 (entities, evidence
 families, contradictions, decision procedure, candidate ranking, printed-number
 matching without OCR, written order) and section 5 (assembly JSON shape).
 

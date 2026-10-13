@@ -1,7 +1,7 @@
 """Independent, conservative display-member -> delivered PDF evidence ledger.
 
 No imports from cleanup, tracking, measure accounting or render modules. See
-docs/reflow/LEDGER_2D_INTERFACE.md and LEDGER.md for the contract and hooks.
+docs/archive/reflow/LEDGER_2D_INTERFACE.md and docs/archive/reflow/LEDGER.md for the contract and hooks.
 Arrays are BGR uint8 (or grayscale); persisted crops are lossless embedded PNGs.
 """
 from __future__ import annotations
@@ -151,31 +151,6 @@ def record_marks(item: dict) -> None:
             "source_contrast":{"min":int(c.min()),"max":int(c.max()),"mean":round(float(c.mean()),2)},
             "pixels":int(mask.sum())})
     item["delivery_obligation"] = "clear_marks" if item["marks"] else "faint_only"
-
-
-def _mark_support(item: dict, views: Sequence[dict]) -> tuple[list[dict], list[dict]]:
-    """Qualify each core from raw registered arrays, including identical observations."""
-    marks,good = mark_masks(item),[]
-    counts = [{"eligible":0,"supporting":0,"minority":False} for _ in marks]
-    for view in views:
-        c = view.get("contrast_array")
-        c = unpack_crop(view["contrast"]) if c is None else c
-        free = view.get("free_array")
-        free = unpack_crop(view["usable_mask"])>0 if free is None else free
-        ink = c>=C_CLEAR
-        # Registration was applied to these arrays; residual search is one native pixel.
-        ink = cv2.dilate(ink.astype(np.uint8),np.ones((3,3),np.uint8))>0
-        for k,(b,_mask,core) in enumerate(marks):
-            x,y,e,f = b
-            if free[y:f,x:e][core].all():
-                counts[k]["eligible"] += 1
-                if float(ink[y:f,x:e][core].mean())>=COVER:
-                    counts[k]["supporting"] += 1
-                    if not any(v["observation_id"]==view["observation_id"] for v in good):
-                        good.append(view)
-    for count in counts:
-        count["minority"] = count["supporting"]==1
-    return counts,good
 
 
 def _project_mark(item: dict, transforms: Sequence[dict], b, mask):
@@ -1702,13 +1677,6 @@ def qualify_marks(ledger: dict, resolver=None) -> dict:
                 for count in result[item["id"]]["marks"]:
                     count["minority"] = count["supporting"]==1
     return result
-
-
-def _verification_items(items: Sequence[dict], resolver: EvidenceResolver):
-    for start in range(0, len(items), 32):
-        batch = items[start:start+32]
-        resolver.prefetch(batch)
-        yield from batch
 
 
 def verify_pages(ledger: dict[str, Any], pages: Sequence[np.ndarray], *, encodings: Sequence[dict] | None = None) -> dict[str, Any]:

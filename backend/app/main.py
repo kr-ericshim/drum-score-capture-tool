@@ -1909,7 +1909,6 @@ REFLOW_ISSUE_REASONS = (
     ("PREVIEW_TAIL_UNVERIFIED", "오른쪽 끝에 다음 줄의 시작이 함께 보일 수 있습니다 / The right end may also show the start of the next line"),
     ("SECTION_LABEL_NOT_PLACED", "이 구간 표시가 실린 줄이 모두 빠져 표시가 출력되지 않았습니다 / Every line of this section is excluded, so its label is not printed"),
     ("MINORITY_CONTENT_DROPPED", "잠깐만 보인 표시가 이 줄에서 빠졌습니다. 바로 뒤 '다른 순간'에 있습니다 / Marks shown only for a moment are left out here; see the other moment that follows"),
-    ("CONTENT_STEP_STATE", "같은 줄의 다른 상태입니다. 표시가 조금 다릅니다 / Another state of the line above; a few marks differ"),
     ("MINORITY_ALTERNATE", "같은 줄의 다른 순간입니다. 앞 줄에서 빠진 표시가 보입니다 / Another moment of the line above, with the marks it leaves out"),
     ("SHORT_DISPLAY", "짧게 스친 화면입니다 / Shown only briefly"),
     ("REPLAY_COLLAPSED", "앞에서 이미 나온 줄을 다시 연주한 부분이라 빼 두었습니다(D.S./반복). 필요하면 다시 넣을 수 있습니다 / A replay of lines already shown earlier (D.S./repeat), left out; you can add it back"),
@@ -1951,9 +1950,7 @@ def _reflow_capture_fields(reflow: Dict[str, Any]) -> Dict[str, Any]:
             codes.append("SECTION_LABEL_NOT_PLACED")
         if s["id"] in restored_ids:
             codes.append("PREVIEW_TAIL_RESTORED")
-        reasons = [text for code, text in REFLOW_ISSUE_REASONS if code in codes
-                   # a content-step state is listed like an "other moment" but is described as another state
-                   and not (code == "MINORITY_ALTERNATE" and "CONTENT_STEP_STATE" in codes)]
+        reasons = [text for code, text in REFLOW_ISSUE_REASONS if code in codes]
         if "LINE_BELOW_MIN_SIZE" in codes:
             mm = s.get("effective_staff_gap_mm")
             reasons = [t.replace("{mm}", f"{mm:.3f}" if mm is not None else "?") for t in reasons]

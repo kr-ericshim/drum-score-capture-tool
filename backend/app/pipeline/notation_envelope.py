@@ -1,6 +1,6 @@
 """Full notation envelope and ROI clipping checks from full source frames.
 
-Design reference: docs/reflow/DESIGN_astra.md section 3 "Full notation
+Design reference: docs/archive/reflow/DESIGN_astra.md section 3 "Full notation
 envelope" (steps 1-8) and the ``ENVELOPE_CLIPPED`` state in section 2.
 
 Why: the automatic ROI used a fixed 4.5 staff-gap padding and ROI health only

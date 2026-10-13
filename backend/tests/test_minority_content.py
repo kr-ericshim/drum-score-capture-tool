@@ -182,7 +182,6 @@ class MinorityStrokeTest(unittest.TestCase):
         self.assertEqual(later["issues"], ["POSSIBLE_SAME_DISPLAY"])
         self.assertTrue(all("alternate_of" not in s and "alternate_kind" not in s for s in occ["systems"]))
         self.assertEqual(occ["exclusions"]["short_listed_excluded"], [])
-        self.assertEqual(occ["exclusions"]["content_step_alternates"], [])
         self.assertEqual([r["issues"] for r in recs], [[], []])
         self.assertEqual(dark_pixels(cv2.imread(recs[0]["path"]), [700, 149, 761, 152], recs[0]), 0)
         self.assertGreater(dark_pixels(cv2.imread(recs[1]["path"]), [700, 149, 761, 152], recs[1]), 60)

@@ -1,4 +1,4 @@
-"""Step 2B (audit AUDIT_2B_identity_overlay.md): one written line on screen once is placed once.
+"""Step 2B (audit docs/archive/reflow/AUDIT_2B_identity_overlay.md): verified display joins and retained content-family parts.
 
 A. page_diff: staff-line rendering drift (a line removed in one frame and left as dashes in
    the other) is not content; a real small mark off the staff line still counts.
@@ -6,8 +6,9 @@ B. reflow_occurrences: consecutive displays of one slot split at ``content_chang
    display when the split is short, the playhead goes on and the written display is the same
    (joined before the short-display cut). Only positive evidence of one written occurrence
    joins: a changed measure number or any notation one side does not draw keeps two
-   occurrences (audit F1, no content family); a pure playback-cursor difference at the
-   playhead readings may join; a playhead that goes back keeps them apart.
+   occurrences (audit F1); content-family parts are ordinary systems with a ‡ notice,
+   cleared only when measure numbers certainly differ. A pure playback-cursor difference
+   at the playhead readings may join; a playhead that goes back keeps them apart.
 C. GT-free self-checks: ``adjacent_duplicate``, ``score_time_uncovered``, ``revisit_count``.
 """
 

@@ -61,7 +61,7 @@ Measured from the PDF (A4 595x842 pt, 2 pages):
 - ~~One written system is never placed twice (one part of a content family placed, the others hidden as `sys-NNN-altK`).~~ Replaced on 2026-10-12, see "eval_v2 fixes" below: on the eval_v2 holdout this rule hid different lines with no notice.
 - A content step splits a display only when the new (or old) state lasts like a confirmed display: at least 3 observations over at least 0.5 s. A shorter run at a display's edge, where another display takes over (not the first or terminal display), is the hand-over (page curl, cross-fade): kept on record in the strip record (`minority_content.edge_transitions`), not flagged. Limit: a mark that appears only in the last half second before the next display, or only in the first half second of a display, is not flagged.
 - A speck of minority content (at most a quarter of a staff gap squared, at most 0.75 gap wide and tall) at one screen position (within half a gap) in three or more displays belongs to the screen (video seen through a translucent band, a player UI), not to the score: no split, no flag, no alternate; kept on record (`screen_fixed_minority` in tracking.json, `minority_content.screen_fixed` per strip). Limit: a real speck-sized mark shown for a moment at one screen place in three displays is not flagged.
-- Alternates are numbered per placed system: an alternate of a content-step state is another moment of the placed system.
+- Alternates are numbered per placed system: an alternate of a content-step state is another moment of the placed system. (superseded 2026-10-12: content-step parts are ordinary systems with a ‡ notice)
 
 
 ## Boundary labelling rules (decided by Claude, 2026-10-06; the user may revisit)

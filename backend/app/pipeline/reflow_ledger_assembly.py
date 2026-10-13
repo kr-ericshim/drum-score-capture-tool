@@ -213,19 +213,6 @@ def _crop_child(item: dict, selection: np.ndarray, ident: str, resolver: rl.Evid
     return child
 
 
-def _warp_hypothesis(mask: np.ndarray, origin: Sequence[int], matrix: np.ndarray):
-    h, w = mask.shape
-    x, y = origin
-    corners = np.array([[x,y,1], [x+w,y,1], [x,y+h,1], [x+w,y+h,1]]) @ matrix.T
-    lo, hi = np.floor(corners[:,:2].min(axis=0)).astype(int), np.ceil(corners[:,:2].max(axis=0)).astype(int)
-    size = hi-lo
-    if np.any(size <= 0) or np.any(size > 1024):
-        raise ValueError("unsupported projected footprint size")
-    local = matrix.copy()
-    local[:2,2] += matrix[:2,:2] @ np.array([x,y])-lo
-    return cv2.warpAffine(mask.astype(np.uint8), local[:2], tuple(size), flags=cv2.INTER_NEAREST)>0, lo.tolist()
-
-
 def _check_projection(item: dict, transforms: Sequence[dict]) -> None:
     marks = rl.mark_masks(item)
     if not marks:

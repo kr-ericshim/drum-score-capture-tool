@@ -1,4 +1,4 @@
-"""Jump-view seam registration (reflow_jump, JUMP_PLAN milestone 1).
+"""Jump-view seam registration (reflow_jump, docs/archive/reflow/JUMP_PLAN.md milestone 1).
 
 A synthetic continuous drum score is windowed the way a jump-view video shows
 it: a static display for a few seconds, then the view jumps right and the next

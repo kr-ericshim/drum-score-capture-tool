@@ -3,9 +3,10 @@
 Decision record: docs/reflow/DECISIONS.md. The output order is the order the
 video shows the systems. An established replay (repeat, D.S.) of at least three
 consecutive whole cleaned displays matching one unique earlier consecutive
-block is left unchecked by default only when each line is distinctive, the
+block is marked ``REPLAY_CANDIDATE`` only when each line is distinctive, the
 blocks were displayed at separate times, and no acquired replay label is lost.
-Its strips and minority alternates are kept for review
+Candidates stay included by default; only ``REFLOW_REPLAY_AUTO_EXCLUDE=1``
+excludes them. Their strips and minority moments remain available for review
 (``collapse_replay_blocks``). Single, two-line, ambiguous and out-of-order
 matches stay placed. Other appearance matches are offered as a "looks similar"
 note after the job (``suggest_similar_strips``), never blocking export.
@@ -65,7 +66,7 @@ from app.pipeline import minority_content as mc, page_diff, system_detect, reflo
 from app.pipeline.system_tracking import (WINDOW_ABOVE_GAPS, clean_content, compare_content, comparable_windows, region_window,
                                           window_extent)
 
-OCCURRENCES_VERSION = "reflow_occurrences-5"  # 5: pale boxes masked again (-4 compared ink under them); clear repeats only on certain numbers
+OCCURRENCES_VERSION = "reflow_occurrences-5"  # pale-box masking; certain-number repeat clearing
 MIN_OCCURRENCE_SEC = 1.5
 VIEW_CLUSTER_SEC = 1.5
 RESET_JOIN_SEC = 1.0
@@ -1231,7 +1232,6 @@ def build_occurrences(
             system = sys_by.get(sid)
             frag = fragment_by.get(c["main"]["id"])
             exclusion = None if system and system["included"] else (
-                "content_step_alternates" if system and system.get("alternate_of") else
                 "short_listed_excluded" if system else (frag["reasons"][0] if frag else "excluded"))
             fragment["occurrence_remaps"].append({"root_key": c["root"], "display_id": did,
                 "final_system_id": sid, "final_occurrence_id": sid, "included": bool(system and system["included"]),
@@ -1319,8 +1319,7 @@ def build_occurrences(
             del raw_members
     hidden = [r for r in fragments_out if r["hidden"]]
     exclusions = {
-        "short_listed_excluded": [s_["id"] for s_ in systems if not s_["included"] and not s_.get("alternate_of")],
-        "content_step_alternates": [],
+        "short_listed_excluded": [s_["id"] for s_ in systems if not s_["included"]],
         "hidden": len(hidden),
         "hidden_by_reason": {k: sum(1 for r in hidden if k in r["reasons"]) for k in sorted({x for r in hidden for x in r["reasons"]})},
         "rule": "hidden only when all raw member observations' non-staff foreground (including gray; colored pixels masked) is drawn by a kept display "
@@ -1364,7 +1363,7 @@ def _merge_intervals(iv: List[Tuple[float, float]], tol: float = 0.0) -> List[Li
     return out
 
 
-def _self_checks(with_alts, systems, root_to_id, eps, fragments, excluded, all_eps, step, ep_window, rep_window,
+def _self_checks(ordered, systems, root_to_id, eps, fragments, excluded, all_eps, step, ep_window, rep_window,
                  logger) -> Dict[str, Any]:
     """GT-free checks of the placed systems (recorded, never applied):
 
@@ -1373,13 +1372,13 @@ def _self_checks(with_alts, systems, root_to_id, eps, fragments, excluded, all_e
       the line between them (no playhead reset or jump back, no view transition) whose written
       displays are the same. Should be 0: one written line placed twice.
     * ``score_time_uncovered_sec`` / ``score_time_uncovered``: per screen place, the time a
-      display is on screen that no placed system accounts for (not placed, not another state of
-      a placed system, not independently proved covered by a kept display, not a jump-view strip). Intervals
+      display is on screen that no placed system accounts for (not placed, not independently
+      proved covered by a kept display, not a jump-view strip). Intervals
       made only of short displays listed at a view transition (page curl, fade) are counted
       apart (``score_time_uncovered_at_view_transitions_sec``).
     * ``revisit_count``: placed systems whose written display is the same as an earlier placed
       one at the same screen place with other systems shown in between (a repeat / D.S.)."""
-    placed = [(c, sys_) for (c, _inc), sys_ in zip(with_alts, systems) if sys_["included"] and not sys_.get("alternate_of")]
+    placed = [(c, sys_) for (c, _inc), sys_ in zip(ordered, systems) if sys_["included"]]
     pairs_used = 0
     adjacent: List[Dict[str, Any]] = []
     adjacent_left: List[Dict[str, Any]] = []
@@ -1405,8 +1404,8 @@ def _self_checks(with_alts, systems, root_to_id, eps, fragments, excluded, all_e
 
     # score time no placed system accounts for, per screen place
     covered: set = set(excluded)
-    for (c, _inc), sys_ in zip(with_alts, systems):
-        if sys_["included"] or (sys_.get("alternate_of") and any(x["id"] == sys_["alternate_of"] and x["included"] for x in systems)):
+    for (c, _inc), sys_ in zip(ordered, systems):
+        if sys_["included"]:
             covered.update(e["id"] for e in c["episodes"])
     at_transition: set = set()
     hidden_checks = []
@@ -1772,85 +1771,4 @@ def suggest_similar_strips(
             out.append({"system_id": b["id"], "of_system_id": a["id"], "basis": basis, "reason": "looks_similar"})
             break
     logger(f"similar-system suggestions: {len(out)} ({pairs} comparisons)")
-    return out
-
-
-def suggest_duplicates(
-    systems: List[Dict[str, Any]],
-    manifest: Dict[str, Any],
-    load_image: ImageLoader,
-    *,
-    logger: Callable[[str], None] = lambda _m: None,
-    budget_pairs: int = 4000,
-    should_stop: Callable[[], bool] = lambda: False,
-) -> List[Dict[str, Any]]:
-    """Likely repeats: a later system whose full display window matches an
-    earlier one (appearance only; a suggestion, never applied automatically).
-
-    Each later system points at the earliest matching earlier system. Systems of
-    the same page view are not compared with each other.
-    """
-    obs_by = _obs_index(manifest)
-    wins: Dict[str, Tuple] = {}
-    for s in systems:
-        if should_stop():
-            logger("duplicate suggestions: stopped while loading windows (budget or cancel)")
-            return []
-        if not s.get("observations"):
-            continue
-        mid = s["observations"][len(s["observations"]) // 2]
-        try:
-            wins[s["id"]] = _window_of(obs_by, load_image, mid["obs_id"], mid["region_id"])
-        except Exception as exc:  # pragma: no cover - defensive
-            logger(f"duplicate window for {s['id']} failed: {exc}")
-    # page views: systems shown together (same display-order cluster)
-    view_of: Dict[str, int] = {}
-    views: List[List[str]] = []
-    for s in sorted(systems, key=lambda x: (x["order_t"], x.get("staff_top_y_crop", 0))):
-        if views and abs(s["order_t"] - next(x for x in systems if x["id"] == views[-1][0])["order_t"]) <= VIEW_CLUSTER_SEC:
-            views[-1].append(s["id"])
-        else:
-            views.append([s["id"]])
-        view_of[s["id"]] = len(views) - 1
-    out = []
-    pairs = 0
-    matches: Dict[Tuple[str, str], bool] = {}
-
-    def match(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
-        nonlocal pairs
-        key = (a["id"], b["id"])
-        if key not in matches:
-            ra, rb = wins[a["id"]][3], wins[b["id"]][3]
-            ga = float(ra["staff_gap_px"])
-            if abs(ra["staff_x"][0] - rb["staff_x"][0]) > 2 * ga or abs(ra["staff_x"][1] - rb["staff_x"][1]) > 2 * ga:
-                matches[key] = False
-            else:
-                pairs += 1
-                matches[key] = _same_display_content(wins[a["id"]], wins[b["id"]])
-        return matches[key]
-
-    by_id = {s["id"]: s for s in systems}
-    for j, b in enumerate(systems):
-        if b["id"] not in wins:
-            continue
-        for a in systems[:j]:
-            if a["id"] not in wins or view_of[a["id"]] == view_of[b["id"]]:
-                continue
-            if pairs > budget_pairs or should_stop():
-                logger("similar-system suggestions: stopped early (budget or cancel)")
-                return out
-            if not match(a, b):
-                continue
-            # A multi-row page view repeats only as a whole view: every row of b's view
-            # must match the row at the same position of a's view.
-            va, vb = views[view_of[a["id"]]], views[view_of[b["id"]]]
-            if len(vb) > 1:
-                if len(va) != len(vb) or va.index(a["id"]) != vb.index(b["id"]):
-                    continue
-                if not all(x in wins and y in wins and match(by_id[x], by_id[y]) for x, y in zip(va, vb)):
-                    continue
-            basis = "full_window_appearance" if len(vb) == 1 else "whole_page_view_appearance"
-            out.append({"system_id": b["id"], "of_system_id": a["id"], "basis": basis, "reason": "repeat"})
-            break
-    logger(f"duplicate suggestions: {len(out)} ({pairs} comparisons)")
     return out

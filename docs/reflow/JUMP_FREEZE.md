@@ -1,4 +1,4 @@
-> **참고 문서.** jump view 임계값과 config hash의 동결 기록이다(최신 `reflow_jump-5`). 규칙 자체는 [DECISIONS.md](DECISIONS.md) "Jump-view seam resolution"에 있다.
+> **참고 문서.** jump view 임계값과 config hash의 동결 기록이다(최신 `reflow_jump-6`: 겹침 검사에 실패한 게이트 쌍을 화면에 고정된 왼쪽 패널 없이 다시 검사). 규칙 자체는 [DECISIONS.md](DECISIONS.md) "Jump-view seam resolution"에 있다.
 
 # Jump-view thresholds: freeze note (milestone 1, 2026-10-07)
 

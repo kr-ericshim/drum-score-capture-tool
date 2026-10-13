@@ -1,4 +1,4 @@
-"""Jump-view seam registration (docs/reflow/JUMP_PLAN.md, milestone 1).
+"""Jump-view seam registration (docs/archive/reflow/JUMP_PLAN.md, milestone 1).
 
 A jump-view video shows one continuous score line; every few seconds the view
 jumps right and consecutive views overlap. The tracker already gives one
@@ -2232,7 +2232,8 @@ def run_episode_ids(run: Dict[str, Any], tracking: Dict[str, Any]) -> List[str]:
 def remaining_unsupported(tracking: Dict[str, Any], jump: Dict[str, Any], cfg: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """Tracker intervals that stay unsupported once the jump-view runs are taken out: a leftover
     piece longer than a jump transition, or one that holds a stable display outside every run
-    (smooth scroll, or horizontal motion that is not a verified jump view)."""
+    (smooth scroll, or horizontal motion that is not a verified jump view).
+    Test/dev only."""
     cfg = cfg or jump.get("config") or CONFIG
     runs = jump.get("runs") or []
     in_run = {i for r in runs for i in run_episode_ids(r, tracking)}
@@ -2252,10 +2253,6 @@ def remaining_unsupported(tracking: Dict[str, Any], jump: Dict[str, Any], cfg: O
 
 def _region_of(obs: Dict[str, Any], rid: str) -> Optional[Dict[str, Any]]:
     return next((r for r in obs.get("system_regions") or [] if r["region_id"] == rid), None)
-
-
-def _finish(img: np.ndarray) -> Tuple[np.ndarray, bool, bool]:
-    return rs._finish_strip(img)
 
 
 def _clef_prefix(img: np.ndarray, rec: Dict[str, Any]) -> Dict[str, Any]:

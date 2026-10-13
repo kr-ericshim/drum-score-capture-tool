@@ -252,7 +252,7 @@ def analyse_source(
     if ledger:
         assembly.annotate_from_tracking(inventory, tracking)
     _dump(tracking, workspace / "tracking.json")
-    # Jump view (JUMP_PLAN): seams between consecutive displays are registered (reflow/jump.json).
+    # Jump view (docs/archive/reflow/JUMP_PLAN.md): seams between consecutive displays are registered (reflow/jump.json).
     # Runs of verified/resolved jumps become panorama strips; a failure here falls back to the
     # tracker's own verdict (horizontal motion stays unsupported).
     jump: Optional[Dict[str, Any]] = None
@@ -330,7 +330,7 @@ def analyse_source(
     replay_blocks = []
     if occ.get("exclusions", {}).get("self_checks", {}).get("revisit_count", 0) >= 1:
         replay_blocks = ro.collapse_replay_blocks(
-            [s for s in occ["systems"] if s.get("included", True) and not s.get("alternate_of")],
+            [s for s in occ["systems"] if s.get("included", True)],
             {sid: rec["path"] for sid, rec in by_id.items()}, logger=logger, label_by=label_by,
         )
         # Candidates only by default (Pro checkpoint #5): a genuinely written A B C ... A B C passage passes
@@ -370,12 +370,12 @@ def analyse_source(
             "issues": s["issues"] + rec.get("issues", []) + (["OVERLAY_UNRECOVERED"] if rec["unrecovered_columns"] > 0 else []),
             "strip": {k: v for k, v in rec.items() if k != "path"},
             **({"label": label_by[s["id"]]} if s["id"] in label_by else {}),
-            **({k: s[k] for k in ("alternate_of", "alternate_kind", "content_family", "possible_repeat_of", "possible_repeat_cleared") if k in s}),
+            **({k: s[k] for k in ("content_family", "possible_repeat_of", "possible_repeat_cleared") if k in s}),
         })
         # minority content the composite leaves out: each alternate is listed right after its
         # system, unchecked, so it can replace (or join) it in review
         for alt in (rec.get("minority_content") or {}).get("alternates", []):
-            if (not s.get("included", True) and not s.get("alternate_of")
+            if (not s.get("included", True)
                     and "REPLAY_COLLAPSED" not in s.get("issues", [])):
                 continue  # excluded candidates retain their bundle on their own record
             entry, occ_entry = alternate_system(s, rec, alt, label_by.get(s["id"]))
@@ -589,9 +589,7 @@ def alternate_system(s: Dict[str, Any], rec: Dict[str, Any], alt: Dict[str, Any]
     content of system ``s`` (reflow_strips.build_alternates). It is not included by default.
     The alternate keeps any preview tail on its strip (it is never cut); its section label is
     the label of ``s`` (same section, placed above whichever of the two comes first)."""
-    # numbered per placed system: an alternate of a content-step state (itself an alternate) is
-    # another moment of the placed system (reflow_strips.build_strips)
-    parent = alt.get("parent_id") or s.get("alternate_of") or s["id"]
+    parent = alt.get("parent_id") or s["id"]
     aid = f"{parent}-{alt['suffix']}"
     dy = int(rec["box_crop"][1]) - int(alt["box_crop"][1])
     issues = [MINORITY_ALTERNATE, rs.UNCERTAIN_MARK_KEPT] + list((alt.get("finishing") or {}).get("issues", []))
@@ -1457,6 +1455,7 @@ def check_export_binding(workspace: Path, binding: dict, *, check: str) -> None:
 
 
 def verify_delivered_ledger(record: Dict[str, Any], pdf: Optional[str], staged: Path, *, sink: Optional[dict] = None) -> Dict[str, Any]:
+    """Test/dev only: verify the delivered ledger, recording failures for review."""
     try:
         return _verify_delivered_ledger(record, pdf, staged, sink=sink)
     except Exception as exc:  # noqa: BLE001
