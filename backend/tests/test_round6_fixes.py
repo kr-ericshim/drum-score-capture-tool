@@ -179,9 +179,14 @@ class MixedAlternateNumberingTest(unittest.TestCase):
 
     def test_ids_and_order(self):
         systems = self.record["systems"]
+        # The stroke is drawn by the majority of the samples, so the earlier state only lacks it and
+        # does not split (no removal split since 2026-10-14). The split comes from the run where the
+        # stroke is minority ink; the sample at 4.0 s already shows it and is the first part's moment.
         self.assertEqual([(s["id"], s["included"], s.get("alternate_of")) for s in systems],
-                         [("sys-001", True, None), ("sys-002", True, None), ("sys-002-alt1", False, "sys-002")])
-        earlier, main_s, moment = systems
+                         [("sys-001", True, None), ("sys-001-alt1", False, "sys-001"),
+                          ("sys-002", True, None), ("sys-002-alt1", False, "sys-002")])
+        by_id = {s["id"]: s for s in systems}
+        earlier, main_s, moment = by_id["sys-001"], by_id["sys-002"], by_id["sys-002-alt1"]
         self.assertEqual(main_s["possible_repeat_of"], earlier["id"])
         self.assertEqual(main_s["content_family"]["id"], earlier["content_family"]["id"])
         self.assertIn(rp.MINORITY_ALTERNATE, moment["issues"])
@@ -194,7 +199,7 @@ class MixedAlternateNumberingTest(unittest.TestCase):
         ev = main_s["strip"]["minority_content"]["events"]
         self.assertEqual([e.get("alternate") for e in ev], ["alt1"])
         occ = json.loads((Path(self.record["workspace"]) / "occurrences.json").read_text())
-        self.assertEqual([s["id"] for s in occ["systems"]], ["sys-001", "sys-002", "sys-002-alt1"])
+        self.assertEqual([s["id"] for s in occ["systems"]], ["sys-001", "sys-001-alt1", "sys-002", "sys-002-alt1"])
         # the moment shows the dot, the placed strip leaves it out
         box = [598, 28, 603, 33]
         self.assertGreaterEqual(dark_pixels(cv2.imread(moment["strip_path"]), box, moment["strip"]), 8)

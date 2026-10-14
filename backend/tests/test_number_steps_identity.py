@@ -32,7 +32,7 @@ class NumberStepTrackingTest(unittest.TestCase):
 
     def test_stable_number_change_splits_and_places_both_without_repeat_hint(self):
         tracking, manifest, images = self.track([33] * 12 + [37] * 12)
-        self.assertEqual(tracking["tracking_version"], "system_tracking-8")
+        self.assertEqual(tracking["tracking_version"], "system_tracking-9")
         eps = tracking["episodes"]
         self.assertEqual(len(eps), 2, [(e["t_start"], e["t_end"], e["started_by"]) for e in eps])
         self.assertEqual([e["n_obs"] for e in eps], [12, 12])

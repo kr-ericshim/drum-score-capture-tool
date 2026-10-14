@@ -1,7 +1,7 @@
 """Regression tests for the 2026-10-13 lossless audit, group A (docs/reflow/audit_2026-10-13).
 
 F01 one-observation screen listed, F04 cursor-less 33 -> 37 -> 33, F05 a short screen hidden
-only by ONE neighbour, F07 the ‡ pair worked out after the selection, F09 removal step,
+only by ONE neighbour, F07 the ‡ pair worked out after the selection, F09 removal (no split since 2026-10-14),
 F03 a playhead reset never joins (‡ possible repeat instead), F06 the end tail is sampled.
 """
 
@@ -138,18 +138,19 @@ class MiddleNumberStepTest(unittest.TestCase):
 
 
 class RemovalStepTest(unittest.TestCase):
-    """F09: a mark shown by the majority and gone at the end splits as a content step."""
+    """A mark the majority shows and a later minority lacks does not split: the composite
+    keeps the mark, so one line is printed once (the F09 removal split printed it twice)."""
 
-    def test_mark_removed_for_the_last_twelve_observations_splits(self):
+    def test_mark_removed_for_the_last_twelve_observations_does_not_split(self):
         frames = show(strip(4), 0, 8, seed=1)
         for i, (_t, im) in enumerate(frames):
             if i < 20:
                 cv2.line(im, (700, 150), (760, 150), (0, 0, 0), 2)
         tracking, occ = run(frames)
-        self.assertEqual([e["n_obs"] for e in tracking["episodes"]], [20, 12])
-        self.assertEqual([(c["kind"], c["state_with_ink"]) for c in tracking["content_steps"]], [("removed", "earlier")])
-        self.assertEqual([s["included"] for s in occ["systems"]], [True, True])
-        self.assertIn("POSSIBLE_SAME_DISPLAY", occ["systems"][1]["issues"])
+        self.assertEqual([e["n_obs"] for e in tracking["episodes"]], [32])
+        self.assertEqual(tracking["content_steps"], [])
+        self.assertEqual([s["included"] for s in occ["systems"]], [True])
+        self.assertNotIn("POSSIBLE_SAME_DISPLAY", occ["systems"][0]["issues"])
 
     def test_mark_added_for_the_last_twelve_observations_still_splits(self):
         frames = show(strip(4), 0, 8, seed=1)

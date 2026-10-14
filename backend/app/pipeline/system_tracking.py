@@ -33,8 +33,10 @@ Rules implemented here:
   measure-number areas (``_middle_runs``) and split like a number step; a run of two or
   more members too short to stand alone flags the episode (``NUMBER_STEP_UNRESOLVED``).
 * A stable content step below page_diff's change threshold (notation added or
-  removed: a dot, a short stroke) splits an episode too; ink the majority draws and a
-  minority state lacks counts as well as ink a minority adds (audit F09). Each member keeps its
+  removed: a dot, a short stroke) splits an episode too when a minority adds ink. A
+  minority state that only lacks ink the majority draws loses nothing from the composite
+  and does not split (the audit F09 removal split printed one display twice, holdout
+  2026-10-14). Each member keeps its
   neutral ink mask; ink that the episode majority does not draw, outside that
   member's overlay columns (colored ink, the detected playhead, a cursor track)
   and not on video seen through the band, shown by >= 2 consecutive members, is
@@ -81,7 +83,7 @@ from app.pipeline import minority_content as mc
 from app.pipeline import page_diff
 from app.pipeline import system_detect
 
-TRACKING_VERSION = "system_tracking-8"  # 8: one-observation transient displays, removal steps, middle number steps (audit 2026-10-13)
+TRACKING_VERSION = "system_tracking-9"  # 9: a state that only lacks majority ink no longer splits (8: transient displays, middle number steps)
 
 # layouts the tracker labels but the reflow refuses (reflow_pipeline.layout_gate)
 UNSUPPORTED_LAYOUTS = {"horizontal_scroll": "UNSUPPORTED_HORIZONTAL_SCROLL", "vertical_scroll": "UNSUPPORTED_VERTICAL_SCROLL"}
@@ -423,8 +425,6 @@ def build_episodes(
         y0 = _band_top(ep0.members)
         gaps.append(float(np.median([m.gap for m in ep0.members])))
         for e in pre[k]:
-            if e["kind"] != "added":
-                continue  # screen-fixed specks are judged on added ink (as before removals were seen)
             x0, b0, x1, b1 = e["box"]
             items.append({"display": k, "box": [x0, b0 + y0, x1, b1 + y0], "area_px": e["area_px"],
                           "t": [round(ep0.members[e["runs"][0][0]].t, 4), round(ep0.members[e["runs"][-1][1]].t, 4)]})
@@ -736,16 +736,14 @@ def _faded_members(members: List[_Member]) -> List[bool]:
 
 
 def _content_step_events(members: List[_Member]) -> List[Dict[str, Any]]:
-    """Minority content of an episode's members, both ways (DECISIONS round 4: notation added
-    or removed):
+    """Minority content of an episode's members: neutral ink some members show and the
+    majority of the members does not draw. Columns a member's overlay covers are not judged
+    for that member, nor are components on video seen through the band, nor the ink members
+    of a fade add (``_faded_members``).
 
-    * ``added``: neutral ink some members show and the majority of the members does not draw;
-    * ``removed``: neutral ink the majority draws (as ink-dark ink on paper) and some members
-      do not draw at all (audit F09: a mark shown in the first 20 observations and gone in
-      the last 12 - the state without it is the minority).
-
-    Columns a member's overlay covers are not judged for that member, nor are components on
-    video seen through the band, nor the members of a fade (``_faded_members``)."""
+    Only ink a minority shows counts. A state that lacks some majority ink loses nothing
+    from the composite (a removal split printed one display twice); when the state that has
+    the ink is the minority, that ink is minority content itself."""
     if any(m.ink is None or m.ink_on_paper is None or m.ink_shape is None for m in members):
         return []
     # bands of one episode share their top row; their height can differ by a rounding pixel
@@ -757,31 +755,24 @@ def _content_step_events(members: List[_Member]) -> List[Dict[str, Any]]:
 
     cols = [m.overlay_cols[:shape[1]] if m.overlay_cols is not None else np.zeros(shape[1], bool) for m in members]
     count = np.zeros(shape, np.uint16)
-    count_dark = np.zeros(shape, np.uint16)
     seen = np.zeros(shape[1], np.uint16)
     for m, cv in zip(members, cols):
         count += (unpack(m.ink, m) & ~cv[None, :]).astype(np.uint16)
-        count_dark += (unpack(m.ink_on_paper, m) & ~cv[None, :]).astype(np.uint16)
         seen += (~cv).astype(np.uint16)
     majority = (count.astype(np.int32) * 2 > seen[None, :].astype(np.int32)) & (seen[None, :] > 0)
-    majority_dark = (count_dark.astype(np.int32) * 2 > seen[None, :].astype(np.int32)) & (seen[None, :] > 0)
     maj_d = mc._dilate(majority, mc.tolerance_px(g))
     added: Dict[int, np.ndarray] = {}
-    removed: Dict[int, np.ndarray] = {}
-    # members of a fade still vote for the majority, but neither the background they show nor
-    # the ink they lose in it is judged
+    # members of a fade still vote for the majority (a state that lost ink stays a minority),
+    # but the background they show is not added content
     faded = _faded_members(members)
     for i, (m, cv) in enumerate(zip(members, cols)):
         if faded[i]:
-            added[i] = removed[i] = np.zeros(shape, bool)
+            added[i] = np.zeros(shape, bool)
             continue
         mine = unpack(m.ink_on_paper, m)
         added[i] = mc.unexplained(mine, majority, cv, g, reference_dilated=maj_d)[0]
-        # the member's own ink at any darkness explains the majority's ink (a lighter stroke is not gone)
-        removed[i] = mc.unexplained(majority_dark, unpack(m.ink, m), cv, g)[0]
     added, _track = mc.remove_cursor_track(added, g)
-    return ([dict(e, kind="added") for e in mc.minority_events(added, g)]
-            + [dict(e, kind="removed") for e in mc.minority_events(removed, g)])
+    return [dict(e, kind="added") for e in mc.minority_events(added, g)]
 
 
 def _split_on_content_steps(ep: _Episode, transients: List[Dict[str, Any]], log: List[Dict[str, Any]],
@@ -818,11 +809,10 @@ def _split_on_content_steps(ep: _Episode, transients: List[Dict[str, Any]], log:
         for i0, i1 in e["runs"]:
             if not mc.stable_run(times, i0, i1):
                 continue
-            # an added run is the state that shows the ink; a removed run the state that lacks it
             if i0 <= first and i1 < last:
-                k, shows_left = i1 + 1, e["kind"] == "added"
+                k, shows_left = i1 + 1, True
             elif i1 >= last and i0 > first:
-                k, shows_left = i0, e["kind"] != "added"
+                k, shows_left = i0, False
             else:
                 continue
             if best is None or e["area_px"] > best["area_px"]:
