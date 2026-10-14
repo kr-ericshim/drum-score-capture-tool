@@ -221,6 +221,22 @@
    Main rows and the group scroll together. */
 .app-shell[data-step] .screen-review .review-list-scroll { flex: 1; min-height: 0; overflow-y: auto; }
 .app-shell[data-step] .screen-review .review-list-scroll .review-grid { flex: none; overflow: visible; }
+/* The list keeps at least half the panel: the notes above it give way first (they scroll inside
+   their own box), so long notes and the footer never leave room for only a row or two. */
+.app-shell[data-step] .screen-review .review-grid-shell > :is(.review-grid, .review-list-scroll) { min-height: 50%; }
+/* Short windows (840 px high and the like): tighter list chrome and footer, smaller thumbnails. */
+@media (max-height: 900px) {
+  .screen-review .review-list-tools { gap: 4px; padding: 8px 12px 6px; }
+  .screen-review .review-list-summary { padding: 0 14px 6px; }
+  .screen-review .review-card { gap: 4px; padding: 8px 14px 6px; }
+  .screen-review .review-grid[data-thumb-shape="page"] .review-card { padding: 8px 14px; }
+  .screen-review .review-card-figure img { max-height: 80px; }
+  .screen-review .review-grid[data-thumb-shape="page"] .review-card-figure img { max-height: 96px; }
+  .screen-review .review-layout-option { padding-top: 8px; }
+  .screen-review .review-original-rebuild { margin-top: 8px; }
+  .screen-review .review-save-hint { padding: 6px 14px; }
+  .screen-review .review-output-path { padding-bottom: 8px; }
+}
 .screen-review .review-fragment-group { border-bottom: 1px solid var(--line-soft); background: var(--surface-recessed); }
 .screen-review .review-fragment-toggle {
   display: flex;

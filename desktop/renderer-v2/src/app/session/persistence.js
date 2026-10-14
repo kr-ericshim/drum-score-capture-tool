@@ -16,6 +16,8 @@ export function restoreSession(storage, initial) {
       ? { jobId: String(saved.review.jobId), revision: Number(saved.review.revision ?? -1) }
       : null;
     initial.review.restoredSystemOrder = Array.isArray(saved.review?.systemOrder) ? saved.review.systemOrder.map(String) : null;
+    // whether the saved files were built from exactly this draft (selection, order, crops, layout)
+    initial.review.restoredApplied = saved.review?.applied === true;
     initial.ui.activeStep = initial.exportConfig.jobId ? "export" : "roi";
     return initial;
   } catch (_) {
@@ -65,6 +67,7 @@ function reviewDraft(state) {
       revision: review.restoredDraftKey?.revision ?? null,
       selectedPaths: review.restoredSelectedPaths ?? null,
       systemOrder: review.restoredSystemOrder ?? null,
+      applied: review.restoredApplied === true,
     };
   }
   const systems = review.pages.some(page => page.kind === "system");
@@ -74,5 +77,6 @@ function reviewDraft(state) {
     selectedPaths: review.pages.filter(page => review.selectedPageIds.includes(page.id)).map(page => page.capturePath),
     // stable system ids (video order names) in the arranged order
     systemOrder: systems ? review.pages.map(page => page.systemId || page.capturePath) : null,
+    applied: review.status === "applied",
   };
 }

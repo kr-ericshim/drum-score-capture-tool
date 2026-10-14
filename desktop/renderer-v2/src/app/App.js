@@ -1174,7 +1174,12 @@ export function createApp(root, dependencies = {}) {
     if (!pages.length || !Array.isArray(review.restoredSelectedPaths)) return null;
     const key = review.restoredDraftKey;
     if (key && (key.jobId !== String(job.job_id || "") || key.revision !== jobRevision(job.result || {}))) return null;
-    return { selectedPaths: review.restoredSelectedPaths, systemOrder: Array.isArray(review.restoredSystemOrder) ? review.restoredSystemOrder : null };
+    return {
+      selectedPaths: review.restoredSelectedPaths,
+      systemOrder: Array.isArray(review.restoredSystemOrder) ? review.restoredSystemOrder : null,
+      // "saved" needs the revision key: without it the draft may belong to another build
+      applied: Boolean(key) && review.restoredApplied === true,
+    };
   }
 
   function orderPagesBySystemIds(pages, systemOrder) {
@@ -1224,11 +1229,22 @@ export function createApp(root, dependencies = {}) {
         : job.result?.review_export?.selected_captures?.length
           ? job.result.review_export.selected_captures : job.result?.review_export?.selected_pages;
       const restoredDraft = Boolean(draft);
+      const savedPageIds = savedSelection?.length
+        ? pages.filter(page => savedSelection.includes(page.capturePath)).map(page => page.id) : [];
       next.review.selectedPageIds = savedSelection?.length
-        ? pages.filter(page => savedSelection.includes(page.capturePath)).map(page => page.id)
+        ? savedPageIds
         : pages.some(page => page.autoExcludeCandidate) ? preferredPageIds : pages.map((page) => page.id);
+      let draftMatchesSavedFiles = false;
       if (draft) {
         next.review.selectedPageIds = pages.filter(page => draft.selectedPaths.includes(page.capturePath)).map(page => page.id);
+        // The draft is still what the saved files were built from only when the last session marked
+        // it saved on this same job revision and every restored and saved capture maps to the same rows.
+        draftMatchesSavedFiles = draft.applied
+          && savedPageIds.length > 0
+          && savedPageIds.length === savedSelection.length
+          && draft.selectedPaths.length === next.review.selectedPageIds.length
+          && savedPageIds.length === next.review.selectedPageIds.length
+          && savedPageIds.every(id => next.review.selectedPageIds.includes(id));
         next.review.status = "idle";
       }
       if (pages.length) {
@@ -1236,13 +1252,14 @@ export function createApp(root, dependencies = {}) {
         delete next.review.restoredSelectedPaths;
         delete next.review.restoredDraftKey;
         delete next.review.restoredSystemOrder;
+        delete next.review.restoredApplied;
       }
       next.review.focusedPageId = pages.some(page => page.id === next.review.focusedPageId)
         ? next.review.focusedPageId : next.review.selectedPageIds[0] || pages[0]?.id || "";
       next.review.outputDir = String(job.result?.output_dir || "");
       next.review.pdfPath = String(job.result?.pdf || "");
       next.review.keptCount = Number(job.result?.review_export?.kept_count || pages.length || 0);
-      next.review.status = restoredDraft ? "idle" : job.result?.review_export || next.review.originalScreens.active ? "applied" : "idle";
+      next.review.status = restoredDraft ? (draftMatchesSavedFiles ? "applied" : "idle") : job.result?.review_export || next.review.originalScreens.active ? "applied" : "idle";
       next.review.error = "";
       // Recoverable failures retain the systems for review and rebuilding.
       if (isReviewableRun(next) && pages.length) {

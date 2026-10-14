@@ -3320,6 +3320,61 @@ test("an unsaved system order and selection survive a restart onto the same job 
   third.app.destroy();
 });
 
+test("after a restart the review screen still calls the PDF saved when the restored draft built it", async () => {
+  const savedJob = (selected = [0, 2, 3]) => {
+    const job = reflowJob({ revision: 2 });
+    const strips = job.result.review_candidates;
+    job.result.review_export = { revision: 1, kept_count: selected.length, selection_mode: "captures", selected_captures: selected.map(i => strips[i]), selected_pages: [], system_order: strips };
+    return job;
+  };
+  const stage = root => root.querySelector("#stagePane").innerHTML;
+  const storage = memoryStorage();
+  // the PDF was just rebuilt from systems 1, 3 and 4
+  const first = await openReflowApp({ storage, getJob: async () => savedJob() });
+  assert.equal(first.app.debug.getState().review.status, "applied");
+  assert.match(stage(first.root), /data-action="open-output-pdf"[^>]*>Open saved PDF/);
+  first.app.destroy();
+
+  // restart onto the same revision: the restored draft is the one the PDF was built from
+  const second = await openReflowApp({ storage, getJob: async () => savedJob() });
+  const restored = second.app.debug.getState().review;
+  assert.deepEqual(restored.pages.filter(page => restored.selectedPageIds.includes(page.id)).map(page => page.systemId), ["sys-001", "sys-003", "sys-004"]);
+  assert.equal(restored.status, "applied");
+  assert.match(stage(second.root), /data-action="open-output-pdf"[^>]*>Open saved PDF/);
+  assert.match(stage(second.root), /data-action="save-output-pdf-as" aria-label="Save PDF as…"/);
+  assert.doesNotMatch(stage(second.root), /Open previous PDF|Save previous PDF as/);
+  // changing the selection afterwards makes it the previous PDF, as before
+  second.root.dispatchInput({ dataset: { action: "toggle-review-page", pageId: "2" }, checked: true });
+  await flush();
+  assert.equal(second.app.debug.getState().review.status, "idle");
+  assert.match(stage(second.root), /data-action="open-output-pdf"[^>]*>Open previous PDF/);
+  second.app.destroy();
+
+  // that edit was not rebuilt before closing: the next restart keeps the previous-PDF labels
+  const third = await openReflowApp({ storage, getJob: async () => savedJob() });
+  assert.equal(third.app.debug.getState().review.selectedPageIds.length, 4);
+  assert.equal(third.app.debug.getState().review.status, "idle");
+  assert.match(stage(third.root), /Open previous PDF/);
+  third.app.destroy();
+
+  // marked saved, but the job's saved selection differs from the draft: do not claim a match
+  const mismatch = memoryStorage();
+  (await openReflowApp({ storage: mismatch, getJob: async () => savedJob() })).app.destroy();
+  const fourth = await openReflowApp({ storage: mismatch, getJob: async () => savedJob([0, 1]) });
+  assert.equal(fourth.app.debug.getState().review.status, "idle");
+  fourth.app.destroy();
+
+  // a session saved before this marker existed cannot tell, so it stays pending
+  const legacy = memoryStorage();
+  (await openReflowApp({ storage: legacy, getJob: async () => savedJob() })).app.destroy();
+  const saved = JSON.parse(legacy.getItem("drum-sheet-session-v1"));
+  delete saved.review.applied;
+  legacy.setItem("drum-sheet-session-v1", JSON.stringify(saved));
+  const fifth = await openReflowApp({ storage: legacy, getJob: async () => savedJob() });
+  assert.equal(fifth.app.debug.getState().review.status, "idle");
+  fifth.app.destroy();
+});
+
 test("looks-similar suggestions that arrive after the job is done do not reset the user's edits", async () => {
   let calls = 0;
   const pair = [{ kept: "/job/reflow/strips/strip_sys-001.png", candidate: "/job/reflow/strips/strip_sys-003.png", reason: "looks_similar", metrics: {} }];

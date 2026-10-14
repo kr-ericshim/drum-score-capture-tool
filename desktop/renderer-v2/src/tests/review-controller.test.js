@@ -45,6 +45,35 @@ test("session recovery preserves job and ROI but never persists temporary blob U
   assert.equal(restoreSession({ getItem: () => "broken-json" }, createInitialSessionState()).source.filePath, "");
 });
 
+test("session recovery remembers whether the saved files were built from the review draft", () => {
+  const values = new Map();
+  const storage = { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
+  let state = createInitialSessionState();
+  state.source.filePath = "/video.mp4";
+  state.exportConfig.jobId = "job-1";
+  state.review.jobRevision = 2;
+  state.review.pages = [{ id: "1", capturePath: "/one.png" }, { id: "2", capturePath: "/two.png" }];
+  state.review.selectedPageIds = ["1"];
+  state.review.status = "applied";
+  saveSession(storage, state);
+  let restored = restoreSession(storage, createInitialSessionState());
+  assert.deepEqual(restored.review.restoredSelectedPaths, ["/one.png"]);
+  assert.equal(restored.review.restoredApplied, true);
+  // saved again before the job is read back: the marker is kept with the draft
+  saveSession(storage, restored);
+  assert.equal(restoreSession(storage, createInitialSessionState()).review.restoredApplied, true);
+  // a selection change after the build makes the saved files the previous ones
+  const controller = createReviewController({ getState: () => state, setState: update => { state = update(structuredClone(state)); }, api: {}, root: {}, mountEditor() {} });
+  controller.toggle("2", true);
+  saveSession(storage, state);
+  restored = restoreSession(storage, createInitialSessionState());
+  assert.deepEqual(restored.review.restoredSelectedPaths, ["/one.png", "/two.png"]);
+  assert.equal(restored.review.restoredApplied, false);
+  // drafts saved before the marker existed cannot tell
+  values.set("drum-sheet-session-v1", JSON.stringify({ version: 1, source: { filePath: "/video.mp4" }, exportConfig: { jobId: "job-1" }, review: { jobId: "job-1", revision: 2, selectedPaths: ["/one.png"] } }));
+  assert.equal(restoreSession(storage, createInitialSessionState()).review.restoredApplied, false);
+});
+
 test("review keyboard navigation works after clicking a capture thumbnail", async () => {
   let state = createInitialSessionState();
   state.ui.activeStep = "review";

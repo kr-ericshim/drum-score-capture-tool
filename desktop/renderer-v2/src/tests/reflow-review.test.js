@@ -216,6 +216,8 @@ test("an unsaved system order and selection are saved with their job revision", 
     jobId: "job-1", revision: 3,
     selectedPaths: ["/job/reflow/strips/strip_sys-003.png", "/job/reflow/strips/strip_sys-001.png"],
     systemOrder: ["sys-003", "sys-001", "sys-002", "sys-004"],
+    // an unsaved draft: the saved files were not built from it
+    applied: false,
   });
   const restored = restoreSession(storage, createInitialSessionState());
   assert.deepEqual(restored.review.restoredDraftKey, { jobId: "job-1", revision: 3 });
