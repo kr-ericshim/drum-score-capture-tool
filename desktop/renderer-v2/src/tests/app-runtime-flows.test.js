@@ -2546,6 +2546,98 @@ test("a transient poll failure reconnects to the same job without creating anoth
   app.destroy();
 });
 
+function createSavedSessionStorage(jobId) {
+  const values = new Map([["drum-sheet-session-v1", JSON.stringify({
+    version: 1,
+    source: { filePath: "/video.mp4", sourceType: "file", displayName: "video.mp4" },
+    roi: { appliedRect: ROI_RECT },
+    exportConfig: { formats: ["png"], jobId, runStatus: "done" },
+    review: { jobId, revision: 1, selectedPaths: ["/capture-1.png"], systemOrder: ["system-1"] },
+  })]]);
+  return {
+    getItem: key => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, String(value)),
+    removeItem: key => values.delete(key),
+    saved: () => JSON.parse(values.get("drum-sheet-session-v1") || "null"),
+  };
+}
+
+async function settle() {
+  for (let index = 0; index < 6; index += 1) await flush();
+}
+
+test("a restored job that no longer exists is forgotten and points back to loading a video", async () => {
+  installBrowserStubs();
+  const root = createRoot();
+  const storage = createSavedSessionStorage("gone-job");
+  let reads = 0;
+  const app = createApp(root, { exposeTestApi: true, storage, api: {
+    getJob: async () => { reads++; throw Object.assign(new Error("job not found"), { status: 404 }); },
+  }});
+  await settle();
+  const state = app.debug.getState();
+  assert.equal(reads, 1);
+  assert.equal(state.exportConfig.jobId, "");
+  assert.equal(state.exportConfig.runStatus, "idle");
+  assert.equal(state.exportConfig.error, "");
+  assert.equal(state.ui.activeStep, "source");
+  assert.equal(state.ui.inlineNotice, t("export.restoredJobMissing", { locale: state.ui.locale }));
+  assert.equal(state.source.filePath, "/video.mp4");
+  assert.deepEqual(state.roi.appliedRect, ROI_RECT);
+  const statusBar = root.querySelector("#statusBar").innerHTML;
+  assert.doesNotMatch(statusBar, new RegExp(t("support.failureTitle", { locale: state.ui.locale })));
+  assert.equal(storage.saved().exportConfig.jobId, "");
+  assert.equal(storage.saved().review.selectedPaths, null);
+  assert.equal(storage.saved().review.jobId, "");
+  assert.equal(storage.saved().review.systemOrder, null);
+  assert.equal(storage.saved().source.filePath, "/video.mp4");
+  app.destroy();
+
+  // The next launch starts clean instead of asking the backend for the missing job again.
+  const relaunched = createApp(createRoot(), { exposeTestApi: true, storage, api: {
+    getJob: async () => { reads++; throw Object.assign(new Error("job not found"), { status: 404 }); },
+  }});
+  await settle();
+  assert.equal(reads, 1);
+  assert.equal(relaunched.debug.getState().ui.inlineNotice, "");
+  relaunched.destroy();
+});
+
+for (const [label, failure] of [
+  ["a server error", Object.assign(new Error("internal error"), { status: 503 })],
+  ["a network failure", new Error("connection refused")],
+]) {
+  test(`${label} while restoring keeps the saved job and retries`, async () => {
+    installBrowserStubs();
+    const root = createRoot();
+    const storage = createSavedSessionStorage("live-job");
+    let reads = 0;
+    const app = createApp(root, { exposeTestApi: true, storage, api: {
+      getJob: async () => {
+        reads++;
+        if (reads === 1) throw failure;
+        return { job_id: "live-job", status: "done", progress: 1, result: { review_candidates: ["/capture-1.png"] } };
+      },
+    }});
+    await settle();
+    let state = app.debug.getState();
+    assert.equal(state.exportConfig.jobId, "live-job");
+    assert.equal(state.exportConfig.connectionState, "reconnecting");
+    assert.equal(state.ui.activeStep, "export");
+    assert.equal(state.ui.inlineNotice, "");
+    assert.equal(storage.saved().exportConfig.jobId, "live-job");
+    assert.deepEqual(storage.saved().review.selectedPaths, ["/capture-1.png"]);
+    assert.equal(storage.saved().review.jobId, "live-job");
+    await root.dispatchAction("reconnect-job");
+    await settle();
+    state = app.debug.getState();
+    assert.equal(state.exportConfig.runStatus, "done");
+    assert.equal(state.exportConfig.jobId, "live-job");
+    assert.equal(reads, 2);
+    app.destroy();
+  });
+}
+
 test("PDF open and Save As dispatch separate actions without changing the original output", async t => {
   const opened = [];
   const saves = [];

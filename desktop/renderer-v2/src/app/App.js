@@ -586,6 +586,8 @@ export function createApp(root, dependencies = {}) {
   const runtimeGuards = createRuntimeGuards();
   let pollFailures = 0;
   let restorePending = Boolean(store.getState().exportConfig.jobId);
+  // The job reference restored from the last session, until the backend confirms it still exists.
+  let restoredJobId = restorePending ? String(store.getState().exportConfig.jobId) : "";
   const stopPersistence = store.subscribe(state => saveSession(storage, state));
   const reviewController = createReviewController({ getState: store.getState, setState, api: runtimeApi, mountEditor: mountRoiEditorImpl, root });
 
@@ -1543,6 +1545,7 @@ export function createApp(root, dependencies = {}) {
         return;
       }
       pollFailures = 0;
+      if (jobId === restoredJobId) restoredJobId = "";
       applyJobSnapshot(job);
       if (["done", "error", "cancelled"].includes(job.status)) {
         stopPolling();
@@ -1571,6 +1574,10 @@ export function createApp(root, dependencies = {}) {
       if (!runtimeGuards.isCurrentJob(jobHandle, jobId)) {
         return;
       }
+      if (error?.status === 404 && jobId === restoredJobId) {
+        forgetMissingRestoredJob();
+        return;
+      }
       pollFailures += 1;
       const terminal = [401, 403, 404].includes(error?.status);
       setState((next) => {
@@ -1583,6 +1590,25 @@ export function createApp(root, dependencies = {}) {
         activePoll = setTimeout(() => pollJob(jobId, jobHandle), Math.min(1000 * 2 ** (pollFailures - 1), 8000));
       }
     }
+  }
+
+  // The restored job is gone from the backend (folder deleted or moved), so retrying cannot help.
+  // Drop only that job reference and its review draft; the source video and ROI stay.
+  function forgetMissingRestoredJob() {
+    restoredJobId = "";
+    stopPolling();
+    setState((next) => {
+      next.exportConfig.jobId = "";
+      next.exportConfig.runStatus = "idle";
+      next.exportConfig.error = "";
+      delete next.exportConfig.connectionState;
+      delete next.review.restoredSelectedPaths;
+      delete next.review.restoredDraftKey;
+      delete next.review.restoredSystemOrder;
+      next.ui.activeStep = "source";
+      next.ui.inlineNotice = t("export.restoredJobMissing", { locale: next.ui.locale });
+      return next;
+    });
   }
 
   function reconnectJob() {
