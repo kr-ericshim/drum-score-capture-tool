@@ -3054,6 +3054,100 @@ test("a failed region check after Apply offers a retry on the export step", asyn
   assert.doesNotMatch(root.querySelector("#stagePane").innerHTML, /export-clip-note/);
 });
 
+test("after a restart the region check waits for the processor instead of showing a failed check", async () => {
+  let backendHandler = null;
+  installBrowserStubs({
+    getBackendState: async () => ({ ready: false, starting: true, running: false, error: "" }),
+    onBackendState: (handler) => { backendHandler = handler; return () => {}; },
+  });
+  const root = createDynamicStageRoot();
+  const healthCalls = [];
+  const storage = memoryStorage();
+  storage.setItem("drum-sheet-session-v1", JSON.stringify({
+      version: 1,
+      source: { filePath: "/tmp/source-a.mp4", displayName: "source-a.mp4", metadata: { durationSec: 120, width: 1920, height: 1080 } },
+      roi: { appliedRect: ROI_RECT, frameTime: 10, imageWidth: 1920, imageHeight: 1080 },
+      exportConfig: { formats: ["png"], jobId: "" },
+      review: {},
+  }));
+  const app = createApp(root, {
+    exposeTestApi: true,
+    storage,
+    mountRoiEditor: () => ({ applyDraft() { return ROI_RECT; }, setDraft() {}, destroy() {} }),
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+      requestPreviewRoiHealth: async (payload) => {
+        healthCalls.push(payload);
+        // the processor is still starting: the request never reaches it
+        if (!app.debug.getState().ui.backend?.ready) throw new Error("REQUEST_FAILED: connect ECONNREFUSED");
+        return { envelope: { status: "found", clipped: false } };
+      },
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+      reviewExport: async () => ({}),
+    },
+  });
+  await flush();
+  await flush();
+
+  let state = app.debug.getState();
+  assert.equal(state.ui.activeStep, "roi", "a restored session without a job opens on the region step");
+  assert.deepEqual(state.roi.appliedRect, ROI_RECT);
+  assert.equal(healthCalls.length, 0, "no check is sent while the processor is starting");
+  assert.notEqual(state.roi.clipCheck.status, "error");
+
+  app.debug.setState((next) => { next.ui.activeStep = "export"; return next; });
+  assert.doesNotMatch(root.querySelector("#stagePane").innerHTML, /export-clip-note is-error|data-action="recheck-roi"/,
+    "the export step shows no failed check before any check ran");
+  app.debug.setState((next) => { next.ui.activeStep = "roi"; return next; });
+  await flush();
+  assert.equal(healthCalls.length, 0);
+
+  backendHandler({ ready: true, starting: false, running: true, error: "" });
+  await flush();
+  await flush();
+  state = app.debug.getState();
+  assert.equal(healthCalls.length, 1, "the check runs once the processor is ready");
+  assert.deepEqual(healthCalls[0].roi, ROI_RECT);
+  assert.equal(state.roi.clipCheck.status, "clear");
+  assert.deepEqual(state.roi.appliedRect, ROI_RECT, "the check never changes the applied region");
+  app.destroy?.();
+});
+
+test("a region check cut off because the processor stopped is not reported as a failed check", async () => {
+  installBrowserStubs();
+  const root = createDynamicStageRoot();
+  const pending = deferred();
+  let calls = 0;
+  const app = createApp(root, {
+    exposeTestApi: true,
+    mountRoiEditor: () => ({ applyDraft() { return ROI_RECT; }, setDraft() {}, destroy() {} }),
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+      requestPreviewRoiHealth: async () => { calls += 1; if (calls === 1) return pending.promise; return { envelope: { status: "found", clipped: false } }; },
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+      reviewExport: async () => ({}),
+    },
+  });
+  await flush();
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/source-a.mp4";
+    next.ui.activeStep = "roi";
+    next.roi.draftRect = ROI_RECT;
+    return next;
+  });
+  await root.dispatchAction("apply-roi");
+  assert.equal(app.debug.getState().roi.clipCheck.status, "loading");
+  app.debug.setState((next) => { next.ui.backend = { ready: false, starting: true, running: false, error: "" }; return next; });
+  pending.reject(new Error("REQUEST_FAILED: connect ECONNREFUSED"));
+  await flush();
+  await flush();
+  assert.equal(app.debug.getState().roi.clipCheck.status, "idle");
+  assert.doesNotMatch(root.querySelector("#stagePane").innerHTML, /export-clip-note is-error|data-action="recheck-roi"/);
+  app.destroy?.();
+});
+
 test("rebuilding a clean reflow chart sends the arranged system order with the selection", async () => {
   installBrowserStubs();
   const root = createRoot();

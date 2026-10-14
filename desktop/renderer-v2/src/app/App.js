@@ -1940,6 +1940,13 @@ export function createApp(root, dependencies = {}) {
     setState((next) => {
       // Ignore a result for a region or source that is no longer applied.
       if (next.source.filePath !== sourcePath || next.roi.clipCheck?.rectKey !== rectKey) return next;
+      // A request made while the processor was not running (it is still starting
+      // after a restart, or restarting) never reached it: that is not a failed
+      // check. Go back to "not checked" so the check runs once it is ready.
+      if (status === "error" && !next.ui.backend?.ready) {
+        next.roi.clipCheck = { status: "idle", rectKey: "", suggestedRect: null };
+        return next;
+      }
       next.roi.clipCheck = { status, rectKey, suggestedRect };
       return next;
     });
@@ -1947,8 +1954,11 @@ export function createApp(root, dependencies = {}) {
 
   function maybeCheckAppliedRoi(state) {
     // Apply starts the check itself (and moves to the export step, which shows the
-    // result); here only a region applied earlier and viewed on the ROI step is checked.
+    // result); here only a region applied earlier and viewed on the ROI step is
+    // checked, and only once the processor is ready: after a restart a restored
+    // session renders before it is up, and a request sent then never reaches it.
     if (state.ui.activeStep !== "roi" || !isRectValid(state.roi.appliedRect)) return;
+    if (!state.ui.backend?.ready) return;
     const rectKey = JSON.stringify(state.roi.appliedRect);
     if (state.roi.clipCheck?.rectKey === rectKey) return;
     const rect = state.roi.appliedRect;
@@ -1956,6 +1966,7 @@ export function createApp(root, dependencies = {}) {
     Promise.resolve().then(() => {
       const latest = store.getState();
       if (latest.roi.clipCheck?.rectKey === rectKey || JSON.stringify(latest.roi.appliedRect) !== rectKey) return;
+      if (!latest.ui.backend?.ready) return;
       void checkAppliedRoi(rect);
     });
   }
