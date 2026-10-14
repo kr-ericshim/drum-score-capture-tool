@@ -1622,7 +1622,9 @@ export function createApp(root, dependencies = {}) {
       delete next.review.restoredSelectedPaths;
       delete next.review.restoredDraftKey;
       delete next.review.restoredSystemOrder;
-      next.ui.activeStep = "source";
+      delete next.review.restoredApplied;
+      // The video and applied region are kept, so the user can make the files again.
+      next.ui.activeStep = next.source.filePath && isRectValid(next.roi.appliedRect) ? "export" : "source";
       next.ui.inlineNotice = t("export.restoredJobMissing", { locale: next.ui.locale });
       return next;
     });
@@ -1961,7 +1963,7 @@ export function createApp(root, dependencies = {}) {
       // after a restart, or restarting) never reached it: that is not a failed
       // check. Go back to "not checked" so the check runs once it is ready.
       if (status === "error" && !next.ui.backend?.ready) {
-        next.roi.clipCheck = { status: "idle", rectKey: "", suggestedRect: null };
+        next.roi.clipCheck = { status: "idle", rectKey: "", suggestedRect: null, retry: true };
         return next;
       }
       next.roi.clipCheck = { status, rectKey, suggestedRect };
@@ -1974,7 +1976,10 @@ export function createApp(root, dependencies = {}) {
     // result); here only a region applied earlier and viewed on the ROI step is
     // checked, and only once the processor is ready: after a restart a restored
     // session renders before it is up, and a request sent then never reaches it.
-    if (state.ui.activeStep !== "roi" || !isRectValid(state.roi.appliedRect)) return;
+    // A check cut off before the processor was up (Apply right after a restart) also
+    // reruns on the export step, where its result is shown.
+    const step = state.ui.activeStep;
+    if (!(step === "roi" || (step === "export" && state.roi.clipCheck?.retry)) || !isRectValid(state.roi.appliedRect)) return;
     if (!state.ui.backend?.ready) return;
     const rectKey = JSON.stringify(state.roi.appliedRect);
     if (state.roi.clipCheck?.rectKey === rectKey) return;

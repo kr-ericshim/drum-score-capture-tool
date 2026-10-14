@@ -72,7 +72,9 @@
   display: flex;
   flex-direction: column;
   padding: 0;
-  overflow: hidden;
+  /* scrolls only if the half-height list floor, notes and footer cannot all fit */
+  overflow-x: hidden;
+  overflow-y: auto;
   border-right: 1px solid var(--line-soft);
 }
 .screen-review .review-list-tools {

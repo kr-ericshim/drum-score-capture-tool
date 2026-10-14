@@ -2566,7 +2566,7 @@ async function settle() {
   for (let index = 0; index < 6; index += 1) await flush();
 }
 
-test("a restored job that no longer exists is forgotten and points back to loading a video", async () => {
+test("a restored job that no longer exists is forgotten and points back to making the files again", async () => {
   installBrowserStubs();
   const root = createRoot();
   const storage = createSavedSessionStorage("gone-job");
@@ -2580,7 +2580,7 @@ test("a restored job that no longer exists is forgotten and points back to loadi
   assert.equal(state.exportConfig.jobId, "");
   assert.equal(state.exportConfig.runStatus, "idle");
   assert.equal(state.exportConfig.error, "");
-  assert.equal(state.ui.activeStep, "source");
+  assert.equal(state.ui.activeStep, "export");
   assert.equal(state.ui.inlineNotice, t("export.restoredJobMissing", { locale: state.ui.locale }));
   assert.equal(state.source.filePath, "/video.mp4");
   assert.deepEqual(state.roi.appliedRect, ROI_RECT);
@@ -2590,6 +2590,7 @@ test("a restored job that no longer exists is forgotten and points back to loadi
   assert.equal(storage.saved().review.selectedPaths, null);
   assert.equal(storage.saved().review.jobId, "");
   assert.equal(storage.saved().review.systemOrder, null);
+  assert.equal(storage.saved().review.applied, false);
   assert.equal(storage.saved().source.filePath, "/video.mp4");
   app.destroy();
 
@@ -3144,7 +3145,15 @@ test("a region check cut off because the processor stopped is not reported as a 
   await flush();
   await flush();
   assert.equal(app.debug.getState().roi.clipCheck.status, "idle");
+  assert.equal(app.debug.getState().ui.activeStep, "export");
   assert.doesNotMatch(root.querySelector("#stagePane").innerHTML, /export-clip-note is-error|data-action="recheck-roi"/);
+
+  // Once the processor is back, the cut-off check reruns on the export step.
+  app.debug.setState((next) => { next.ui.backend = { ready: true, starting: false, running: true, error: "" }; return next; });
+  await flush();
+  await flush();
+  assert.equal(calls, 2);
+  assert.equal(app.debug.getState().roi.clipCheck.status, "clear");
   app.destroy?.();
 });
 
