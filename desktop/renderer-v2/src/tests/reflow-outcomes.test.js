@@ -85,11 +85,12 @@ test("review reasons deduplicate by code and retain the public structured explan
   ]);
   for (const locale of ["ko", "en"]) {
     state.ui.locale = locale;
-    for (const html of [renderReviewScreen(state), renderExportScreen(state)]) {
-      const localized = t("reflow.issue.LEDGER_UNASSESSED", { locale });
-      assert.equal(html.split(localized).length - 1, 1);
-      assert.doesNotMatch(html, /LEDGER_UNASSESSED|internal text/);
-    }
+    const localized = t("reflow.issue.LEDGER_UNASSESSED", { locale });
+    const html = renderReviewScreen(state);
+    assert.equal(html.split(localized).length - 1, 1);
+    assert.doesNotMatch(html, /LEDGER_UNASSESSED|internal text/);
+    // the reasons are told once, on the review screen
+    assert.ok(!renderExportScreen(state).includes(localized));
   }
 });
 
@@ -111,14 +112,15 @@ function reviewState({ locale = "en", result = {} } = {}) {
   return state;
 }
 
-test("a score wider than the page shows its automatic size like the dense-score note", () => {
+test("a score wider than the page derives its automatic size without a note", () => {
   for (const [status, reason] of [["off", "WHOLE_SYSTEMS_DO_NOT_FIT"], ["fallback_whole_systems", "WHOLE_SYSTEMS_DO_NOT_FIT"], ["measure_lines", "UNITS_DO_NOT_FIT"]]) {
     const measure_reflow = { status, staff_size: { staff_gap_mm: 1.25, staff_gap_mm_requested: 1.5, auto_reduced: true, reason } };
     const info = deriveReflowInfo({ output_model: "clean_reflow_v1", reflow: {}, measure_reflow });
     assert.equal(info.autoStaff.kind, "wide", `${status} ${reason}`);
     for (const locale of ["ko", "en"]) {
       const html = renderReviewScreen(reviewState({ locale, result: { measure_reflow } }));
-      assert.ok(html.includes(t("review.staffSizeAutoReducedWide", { locale, replacements: { size: "1.25" } })), `${locale} ${status}`);
+      // derived, but the app's own size choice is not reported
+      assert.ok(!html.includes(t("review.staffSizeAutoReducedWide", { locale, replacements: { size: "1.25" } })), `${locale} ${status}`);
       assert.ok(!html.includes(t("review.staffSizeAutoReduced", { locale, replacements: { size: "1.25" } })));
     }
   }
@@ -181,14 +183,14 @@ test("review-required result stays distinct from incomplete and saved in both lo
     assert.equal(state.review.reflow.incomplete, false);
     const review = renderReviewScreen(state);
     const exported = renderExportScreen(state);
+    // one note says it: the save state stays about the files, the export screen does not repeat it
     assert.match(review, /data-review-required/);
-    assert.match(review, /review-save-state is-incomplete/);
-    assert.ok(review.includes(t("review.reviewRequiredState", { locale })));
-    assert.ok(!review.includes(`>${t("review.savedState", { locale })}</span>`));
-    assert.ok(exported.includes(t("export.reviewRequiredTitle", { locale })));
+    assert.doesNotMatch(review, /review-save-state is-incomplete/);
+    assert.ok(review.includes(`>${t("review.savedState", { locale })}</span>`));
+    assert.ok(!exported.includes(t("export.reviewRequiredTitle", { locale })));
     for (const code of codes) {
       assert.ok(review.includes(t(`reflow.issue.${code}`, { locale })));
-      assert.ok(exported.includes(t(`reflow.issue.${code}`, { locale })));
+      assert.ok(!exported.includes(t(`reflow.issue.${code}`, { locale })));
     }
     assert.equal(getProcessRailItems(state).find(item => item.id === "review").summary, t("selector.summary.reviewRequired", { locale }));
     assert.equal(getProcessRailItems(state).find(item => item.id === "export").summary, t("selector.summary.reviewRequired", { locale }));
@@ -204,12 +206,17 @@ test("review flags survive nested records, old system-only records and unknown l
   const reasons = Array.from({ length: 30 }, (_, i) => `긴 안내 ${i} ` + "긴 내용 ".repeat(30) + " / Long reason " + i + " " + "Very long content ".repeat(30));
   for (const locale of ["ko", "en"]) {
     const state = reviewState({ locale, result: { review_required: true, review_reasons: reasons } });
-    for (const html of [renderReviewScreen(state), renderExportScreen(state)]) {
-      assert.match(html, /<ul class="reflow-review-reasons" aria-label="[^"]+" tabindex="0">/);
-      assert.equal((html.match(/<li>/g) || []).length, 30);
-      assert.ok(html.includes(locale === "ko" ? "긴 안내 29" : "Long reason 29"));
-      assert.ok(!html.includes(locale === "ko" ? "Long reason 29" : "긴 안내 29"));
-    }
+    // folded until opened, then scrollable by keyboard
+    let html = renderReviewScreen(state);
+    assert.match(html, /<ul id="reviewReasonsList" class="reflow-review-reasons" aria-label="[^"]+" tabindex="0" hidden>/);
+    assert.match(html, /data-action="toggle-more" data-value="reviewReasons" aria-expanded="false"/);
+    state.ui.more = { reviewReasons: true };
+    html = renderReviewScreen(state);
+    assert.match(html, /<ul id="reviewReasonsList" class="reflow-review-reasons" aria-label="[^"]+" tabindex="0" >/);
+    assert.equal((html.match(/<li>/g) || []).length, 30);
+    assert.ok(html.includes(locale === "ko" ? "긴 안내 29" : "Long reason 29"));
+    assert.ok(!html.includes(locale === "ko" ? "Long reason 29" : "긴 안내 29"));
+    state.ui.more = {};
     state.exportConfig.runStatus = "running";
     assert.doesNotMatch(renderExportScreen(state), /export-review-required-note/);
     state.exportConfig.runStatus = "error";

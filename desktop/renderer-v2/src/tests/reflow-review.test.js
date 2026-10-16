@@ -7,6 +7,7 @@ import { createReviewController } from "../features/review/reviewController.js";
 import { renderReviewScreen } from "../features/review/ReviewScreen.js";
 import { buildExportScreenModel, renderExportScreen } from "../features/export/ExportScreen.js";
 import { renderRoiScreen } from "../features/roi/RoiScreen.js";
+import { pagePreviewOn } from "../features/review/lineCheck.js";
 
 const ROI = [[0, 700], [1920, 700], [1920, 1080], [0, 1080]];
 
@@ -69,7 +70,12 @@ test("reflow systems become review items named by their video order with time an
 
 test("review screen offers order controls, a prominent compare, one-click leave-out and the page view", () => {
   for (const locale of ["ko", "en"]) {
-    const html = renderReviewScreen(reviewState(locale));
+    // the pages are the default view; order controls show while one system is viewed
+    assert.match(renderReviewScreen(reviewState(locale)), /review-viewer-surface is-pages/);
+    assert.doesNotMatch(renderReviewScreen(reviewState(locale)), /data-action="review-move-up"/);
+    const single = reviewState(locale);
+    single.review.pagePreview = false;
+    const html = renderReviewScreen(single);
     assert.match(html, locale === "ko" ? /줄 검토/ : /Review systems/);
     assert.match(html, /data-action="review-move-up"/);
     assert.match(html, /data-action="review-move-down"/);
@@ -83,8 +89,8 @@ test("review screen offers order controls, a prominent compare, one-click leave-
     // compare is the prominent action for a system that looks similar
     assert.match(html, /class="button button-primary" data-action="review-compare"/);
     assert.match(html, /data-action="review-page-preview"/);
-    // systems are not cropped in this slice
-    assert.match(html, /data-action="review-crop"[^>]*disabled/);
+    // systems are not cropped in this slice: no crop tools
+    assert.doesNotMatch(html, /data-action="review-crop"/);
   }
   const state = reviewState("en");
   state.review.pagePreview = true;
@@ -110,10 +116,11 @@ test("move up/down rearranges systems, undo restores the order, and a repeat is 
   assert.deepEqual(state.review.selectedPageIds, ["1", "2"]);
   await controller.handleAction("review-undo");
   assert.deepEqual(state.review.selectedPageIds.sort(), ["1", "2", "3"]);
-  await controller.handleAction("review-page-preview");
-  assert.equal(state.review.pagePreview, true);
+  // the pages are the default view: the first toggle shows one system, the next the pages again
   await controller.handleAction("review-page-preview");
   assert.equal(state.review.pagePreview, false);
+  await controller.handleAction("review-page-preview");
+  assert.equal(state.review.pagePreview, true);
 });
 
 test("export step shows the region check started by Apply: loading, clipped with action, error with retry", () => {
@@ -356,7 +363,7 @@ function alternateResult(count = 1) {
     reflow: { systems, revision: 1 } };
 }
 
-test("an other-moment alternate is listed unchecked after its system, named by it, and the chart notes the left-out marks", () => {
+test("an other-moment alternate is listed unchecked after its system, named by it, without a separate chart note", () => {
   for (const locale of ["ko", "en"]) {
     const result = alternateResult(1);
     const pages = deriveCapturePages(result, locale);
@@ -372,7 +379,8 @@ test("an other-moment alternate is listed unchecked after its system, named by i
     state.review.reflow = info;
     state.review.selectedPageIds = ["1", "3", "4"];
     const html = renderReviewScreen(state);
-    assert.match(html, locale === "ko" ? /1개 줄에서 잠깐만 보인 표시가 빠졌습니다/ : /Marks shown only for a moment are left out of some system images \(1\)/);
+    // the alternate row itself says it: no separate chart note
+    assert.doesNotMatch(html, locale === "ko" ? /1개 줄에서 잠깐만 보인 표시가 빠졌습니다/ : /Marks shown only for a moment are left out of some system images \(1\)/);
     assert.doesNotMatch(html, /review-toggle-alternates/); // one alternate stays an ordinary row
     assert.equal((html.match(/data-action="toggle-review-page"/g) || []).length, 4);
   }
@@ -420,4 +428,27 @@ test("review titles follow a language switch without changing ids or order", () 
   assert.deepEqual(en.map(page => [page.id, page.capturePath]), ko.map(page => [page.id, page.capturePath]));
   assert.deepEqual(en.map(page => localizePageTitle(page, "ko")), ko.map(page => page.title));
   assert.equal(localizePageTitle({ kind: "capture", index: 3 }, "en"), "Page 3");
+});
+
+test("until a view is chosen the pages show, unless a jump video's line check opens by itself", async () => {
+  const state = reviewState("en");
+  assert.equal(state.review.pagePreview, null);
+  assert.equal(pagePreviewOn(state), true);
+  // seams the app verified need no look: still the pages
+  const line = seams => ({ id: "l1", page: 1, rect: [0, 0, 10, 10], pageSize: [100, 100], sources: [], seams });
+  state.review.reflow = { lines: [line([{ id: "s0", status: "verified", xFrac: 0.5 }])] };
+  assert.equal(pagePreviewOn(state), true);
+  // a seam to check opens the line check instead
+  state.review.reflow = { lines: [line([{ id: "s1", status: "resolved", xFrac: 0.5 }])] };
+  assert.equal(pagePreviewOn(state), false);
+  state.review.pagePreview = true;
+  assert.equal(pagePreviewOn(state), true);
+  // comparing two systems leaves the pages
+  let live = reviewState("en");
+  live.review.focusedPageId = "3";
+  const controller = createReviewController({ getState: () => live, setState: update => { live = update(structuredClone(live)); }, api: {}, root: {}, mountEditor() {} });
+  await controller.handleAction("review-compare");
+  assert.equal(live.review.compare, true);
+  assert.equal(live.review.pagePreview, false);
+  assert.match(renderReviewScreen(live), /review-viewer-surface is-comparing/);
 });

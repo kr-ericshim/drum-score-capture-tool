@@ -9,6 +9,16 @@ export function lineCheckOpen(state) {
   return typeof open === "boolean" ? open : lines.some(line => line.seams.length > 0);
 }
 
+// Whether the viewer shows the composed A4 pages. Until the user picks a view, the pages
+// are the default, except when a jump video has seams left to check (or the line check
+// was opened): then the line check comes first.
+export function pagePreviewOn(state) {
+  const choice = state.review.pagePreview;
+  if (typeof choice === "boolean") return choice;
+  const open = state.review.lineCheck?.open;
+  return !(typeof open === "boolean" ? open : seamChecks(state.review.reflow?.lines || []).length > 0);
+}
+
 // The middle of each source display: the moment whose frame is shown next to the line.
 export function lineSourceTimes(line) {
   const seen = new Set();

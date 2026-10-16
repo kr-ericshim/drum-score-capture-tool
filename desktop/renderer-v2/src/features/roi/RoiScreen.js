@@ -119,6 +119,8 @@ export function buildRoiScreenModel(state) {
     canvasHelp: getCanvasHelp(locale),
     canvasLabel: labelMode ? t("roi.label.canvas", { locale }) : getCanvasLabel(locale),
     placeholderText: t(state.roi.status === "loading" ? "roi.placeholderLoading" : "roi.placeholder", { locale }),
+    // the white-edge fit sits folded under "more options"
+    moreOpen: Boolean(state.ui.more?.roiOptions),
   };
 }
 
@@ -203,8 +205,11 @@ export function renderRoiScreen(state) {
             </div>
           ` : ""}
           <div class="roi-capture-options" ${model.labelMode ? "hidden" : ""}>
-            <label class="roi-auto-fit-option"><input type="checkbox" data-action="toggle-roi-auto-fit" ${state.roi.autoFit ? "checked" : ""} /> ${escapeHtml(t("roi.autoFit", { locale: model.locale }))}</label>
-            <p class="roi-stage-helper roi-stage-helper-${escapeHtml(model.statusTone)}" aria-live="polite">${state.roi.autoFit ? escapeHtml(t("roi.autoFitHelp", { locale: model.locale })) : escapeHtml(model.statusText)}</p>
+            <p class="roi-stage-helper roi-stage-helper-${escapeHtml(model.statusTone)}" aria-live="polite">${state.roi.autoFit ? escapeHtml(t("roi.autoFitHelp", { locale: model.locale })) : model.statusTone === "ready" ? "" : escapeHtml(model.statusText)}</p>
+            <button type="button" class="roi-more-toggle" data-action="toggle-more" data-value="roiOptions" aria-expanded="${model.moreOpen}" aria-controls="roiMoreOptions">${escapeHtml(t(model.moreOpen ? "common.less" : "common.more", { locale: model.locale }))}</button>
+            <div id="roiMoreOptions" ${model.moreOpen ? "" : "hidden"}>
+              <label class="roi-auto-fit-option"><input type="checkbox" data-action="toggle-roi-auto-fit" ${state.roi.autoFit ? "checked" : ""} /> ${escapeHtml(t("roi.autoFit", { locale: model.locale }))}</label>
+            </div>
           </div>
           <div class="roi-stage-actions" ${model.labelMode ? "hidden" : ""}>
             ${model.showApplyAction && ["draft", "ready"].includes(model.statusTone) ? `<span class="roi-apply-state is-${model.statusTone}">${escapeHtml(t(`roi.applyState.${model.statusTone}`, { locale: model.locale }))}</span>` : ""}

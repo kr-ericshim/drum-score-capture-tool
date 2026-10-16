@@ -137,7 +137,8 @@ test("attention filter includes near-identical pages", () => {
 
   const markup = renderReviewScreen(state);
 
-  assert.match(markup, /data-value="suspicious" aria-pressed="true">확인 필요 <span>1<\/span>/);
+  // the list still honors the filter; the screen no longer offers the filter buttons
+  assert.doesNotMatch(markup, /data-action="review-filter"/);
   assert.equal((markup.match(/<article class="review-card/g) || []).length, 1);
   assert.match(markup, /frame_0009\.png/);
 });

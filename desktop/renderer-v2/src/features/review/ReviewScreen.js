@@ -1,8 +1,8 @@
-import { formatSecondsLabel, hasPendingRoiDraft, isReviewableRun, needsAttention, reviewListPages, summarizeSelection } from "../../app/session/selectors.js";
+import { formatSecondsLabel, hasPendingRoiDraft, isReviewableRun, reviewListPages, summarizeSelection } from "../../app/session/selectors.js";
 import { pickLocalizedText, reflowReviewReasonText, t } from "../../lib/i18n.js";
 import { fileUrl, normalizeAssetPath } from "../../lib/paths.js";
 import { thumbShapeFor } from "./thumbShape.js";
-import { lineCheckOpen, lineNumberOnPage, lineSourceTimes, seamChecks } from "./lineCheck.js";
+import { lineCheckOpen, lineNumberOnPage, lineSourceTimes, pagePreviewOn, seamChecks } from "./lineCheck.js";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -13,23 +13,24 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
-function renderPagePills(page, locale) {
+// "Needs a look" marks a row only while it singles some rows out; on every row it says nothing.
+function renderPagePills(page, locale, markCheck = true) {
   const pill = (kind, key) => `<span class="review-inline-pill review-inline-pill-${kind}">${escapeHtml(t(`review.${key}`, { locale }))}</span>`;
   const looksSimilar = page.similarTo?.reason === "looks_similar";
   return [
     page.autoExcludeCandidate ? pill("exclude", "excludeCandidate") : "",
-    page.suspicious && !page.autoExcludeCandidate ? pill("risk", "check") : "",
+    markCheck && page.suspicious && !page.autoExcludeCandidate ? pill("risk", "check") : "",
     page.similarTo ? pill("similar", looksSimilar ? "looksSimilar" : "similar") : "",
   ].join("");
 }
 
 // One row per capture: the checkbox owns inclusion, the row background owns "currently viewed".
-function renderPageCard(page, selected, focused, locked, locale) {
+function renderPageCard(page, selected, focused, locked, locale, markCheck = true) {
   const pageId = escapeHtml(page.id);
   const pageTitle = escapeHtml(page.title);
   const previewPath = escapeHtml(normalizeAssetPath(page.previewPath));
   const includeAriaLabel = escapeHtml(t("review.includeAria", { locale, replacements: { title: page.title } }));
-  const pills = renderPagePills(page, locale);
+  const pills = renderPagePills(page, locale, markCheck);
   return `
     <article class="review-card ${selected ? "is-selected" : "is-excluded"} ${focused ? "is-focused" : ""}" role="listitem">
       <button class="review-card-figure" type="button" data-action="focus-review-page" data-page-id="${pageId}" ${focused ? 'aria-current="page"' : ""}>
@@ -105,19 +106,22 @@ function formatMm(value) {
   return Number(value).toFixed(2).replace(/0$/, "");
 }
 
-// Clean reflow facts: layout conflict (with the explicit smaller-size choice), the
-// document staff size, pending "looks similar" suggestions, short displays left
-// out or listed unchecked, and section labels outside the score region.
-function renderReflowNotes(info, locale, busy) {
+// Clean reflow facts: layout conflict (with the explicit smaller-size choice), a size
+// the user chose, pending "looks similar" suggestions, short displays left out or
+// listed unchecked, and section labels outside the score region. An automatic size
+// and the marks left to "other moments" are the app's own choices and are not reported.
+function renderReflowNotes(info, locale, busy, reasonsOpen = false) {
   if (!info) return "";
   const tt = (key, replacements = {}) => escapeHtml(t(`review.${key}`, { locale, replacements }));
   const notes = [];
   if (info.incomplete) notes.push(renderIncompleteNote(info, locale));
   if (info.reviewRequired) {
     const reasons = info.reviewReasons || [];
+    // the reasons are folded: the note says what to do, the reasons say why
     notes.push(`<div class="review-reflow-note is-warning" role="alert" data-review-required>
       <p><strong>${tt("reviewRequiredTitle")}</strong> ${tt("reviewRequiredDetail")}</p>
-      ${reasons.length ? `<ul class="reflow-review-reasons" aria-label="${tt("reviewReasonsLabel")}" tabindex="0">
+      ${reasons.length ? `<button type="button" class="review-link-button review-reasons-toggle" data-action="toggle-more" data-value="reviewReasons" aria-expanded="${reasonsOpen}" aria-controls="reviewReasonsList">${tt(reasonsOpen ? "reviewReasonsHide" : "reviewReasonsShow", { count: reasons.length })}</button>
+      <ul id="reviewReasonsList" class="reflow-review-reasons" aria-label="${tt("reviewReasonsLabel")}" tabindex="0" ${reasonsOpen ? "" : "hidden"}>
         ${reasons.map(reason => `<li>${escapeHtml(reflowReviewReasonText(reason, locale))}</li>`).join("")}</ul>` : ""}
     </div>`);
   }
@@ -142,15 +146,8 @@ function renderReflowNotes(info, locale, busy) {
       <button type="button" class="button button-secondary" data-action="review-use-staff-size" data-size="${escapeHtml(info.defaultStaffGapMm)}" ${busy ? "disabled" : ""}>${tt("resetStaffSize", { size: formatMm(info.defaultStaffGapMm) })}</button>
     </div>`);
   }
-  if (info.autoStaff && !info.conflict) {
-    const key = info.autoStaff.kind === "wide" ? "staffSizeAutoReducedWide" : "staffSizeAutoReduced";
-    notes.push(`<p class="review-reflow-note is-info" role="status">${tt(key, { size: formatMm(info.autoStaff.usedMm) })}</p>`);
-  }
   if (info.measureReflow?.fellBack) {
     notes.push(`<p class="review-reflow-note is-warning" role="status">${tt("measureFallback")}${info.measureReflow.reason ? ` <small class="review-reflow-code">${tt("measureFallbackReason", { reason: info.measureReflow.reason })}</small>` : ""}</p>`);
-  }
-  if (info.minorityLines) {
-    notes.push(`<p class="review-reflow-note is-warning" role="status">${tt("minorityLines", { count: info.minorityLines })}</p>`);
   }
   if (info.labelsOutsideRoi) {
     notes.push(`<p class="review-reflow-note is-warning" role="status">${tt("labelsOutsideRoi")}</p>`);
@@ -183,25 +180,25 @@ function renderIncompleteNote(info, locale) {
 
 // Several short transition displays (page curls, fades, brief flashes) are one collapsed
 // group instead of a row each; every one keeps its own checkbox to restore it.
-function renderFragmentGroup(list, selectedSet, focused, busy, locale) {
+function renderFragmentGroup(list, selectedSet, focused, busy, locale, markCheck) {
   if (!list.grouped) return "";
   return renderCollapsedGroup({
     pages: list.fragments, expanded: list.expanded, action: "review-toggle-fragments", idBase: "reviewFragment",
     keys: { group: "fragmentsGroup", included: "fragmentsIncluded", hint: "fragmentsHint" },
-  }, selectedSet, focused, busy, locale);
+  }, selectedSet, focused, busy, locale, markCheck);
 }
 
 // Several "other moments" (a system's display while it showed marks the system's strip
 // leaves out) are one collapsed group; each keeps its own checkbox.
-function renderAlternateGroup(list, selectedSet, focused, busy, locale) {
+function renderAlternateGroup(list, selectedSet, focused, busy, locale, markCheck) {
   if (!list.alternatesGrouped) return "";
   return renderCollapsedGroup({
     pages: list.alternates, expanded: list.alternatesExpanded, action: "review-toggle-alternates", idBase: "reviewAlternate",
     keys: { group: "alternatesGroup", included: "fragmentsIncluded", hint: "alternatesHint" },
-  }, selectedSet, focused, busy, locale);
+  }, selectedSet, focused, busy, locale, markCheck);
 }
 
-function renderCollapsedGroup({ pages, expanded, action, idBase, keys }, selectedSet, focused, busy, locale) {
+function renderCollapsedGroup({ pages, expanded, action, idBase, keys }, selectedSet, focused, busy, locale, markCheck) {
   const tt = (key, replacements = {}) => escapeHtml(t(`review.${key}`, { locale, replacements }));
   const included = pages.filter(page => selectedSet.has(page.id)).length;
   return `
@@ -213,7 +210,7 @@ function renderCollapsedGroup({ pages, expanded, action, idBase, keys }, selecte
       <div id="${idBase}List" class="review-fragment-body" ${expanded ? "" : "hidden"}>
         <p class="review-fragment-hint">${tt(keys.hint)}</p>
         ${expanded ? `<div class="review-grid review-fragment-list" role="list" aria-label="${tt(keys.group, { count: pages.length })}" data-thumb-shape="${thumbShapeFor(pages.map(page => normalizeAssetPath(page.previewPath)))}">
-          ${pages.map((page) => renderPageCard(page, selectedSet.has(page.id), page.id === focused?.id, busy, locale)).join("")}
+          ${pages.map((page) => renderPageCard(page, selectedSet.has(page.id), page.id === focused?.id, busy, locale, markCheck)).join("")}
         </div>` : ""}
       </div>
     </section>`;
@@ -472,7 +469,9 @@ export function renderReviewScreen(state) {
   const iconControl = (action, text, disabled = false, hint = "", extra = "") => `<button type="button" class="button button-secondary button-icon" data-action="${action}" aria-label="${text}" title="${hint ? `${text} (${hint})` : text}" ${extra} ${disabled ? "disabled" : ""}></button>`;
   const hasPages = pages.length > 0;
   const selectedCount = summary.keptCount;
-  const attentionCount = pages.filter(needsAttention).length;
+  // "needs a look" on a row only while it singles out some of the rows that can be kept
+  const keepable = pages.filter(page => !page.autoExcludeCandidate);
+  const markCheck = keepable.some(page => !page.suspicious);
   const comparing = Boolean(state.review.compare && focused?.similarTo && !state.review.cropping && !state.review.hypotheses?.open);
   const compareReference = focused?.similarTo ? pages.find(page => page.id === focused.similarTo.referenceId) : null;
   const isSystems = pages.some(page => page.kind === "system");
@@ -481,7 +480,7 @@ export function renderReviewScreen(state) {
   const outputPages = Array.isArray(state.review.outputPages) ? state.review.outputPages : [];
   const hypotheses = state.review.hypotheses || { open: false, items: [], status: "idle" };
   const hypothesesOpen = Boolean(hypotheses.open && !state.review.cropping);
-  const pagePreview = Boolean(state.review.pagePreview && outputPages.length && !state.review.cropping && !hypothesesOpen);
+  const pagePreview = Boolean(pagePreviewOn(state) && outputPages.length && !state.review.cropping && !hypothesesOpen);
   const reviewLines = state.review.reflow?.lines || [];
   const linesOpen = Boolean(reviewLines.length && outputPages.length && lineCheckOpen(state) && !state.review.cropping && !hypothesesOpen && !pagePreview);
   const roiCrop = lineRoiCrop(state.roi);
@@ -493,7 +492,6 @@ export function renderReviewScreen(state) {
   const legacyJob = hasPages && !isSystems && !reflowInfo && !original.active;
   // the current files are an incomplete chart: never shown as an ordinary saved result
   const incomplete = Boolean(reflowInfo?.incomplete) && state.exportConfig.runStatus === "done";
-  const reviewRequired = Boolean(reflowInfo?.reviewRequired) && state.exportConfig.runStatus === "done";
   const reviewLabel = escapeHtml(state.source.displayName || t("review.fallbackLabel", { locale }));
   const reviewCountLabel = escapeHtml(reviewDone
     ? t("review.keptCount", { locale, replacements: { count: selectedCount } })
@@ -525,7 +523,7 @@ export function renderReviewScreen(state) {
         <div class="review-toolbar review-output-actions" role="group" aria-label="${label("savedFiles")}">
           ${rebuilding
             ? renderRebuildProgress(state.review, locale)
-            : `<span class="review-save-state ${(incomplete || reviewRequired) && !busy ? "is-incomplete" : reviewDone ? "is-saved" : "is-pending"}" role="status">${label(busy ? "applyBusyShort" : incomplete ? "incompleteState" : reviewRequired ? "reviewRequiredState" : reviewDone ? "savedState" : "pendingState")}</span>
+            : `<span class="review-save-state ${incomplete && !busy ? "is-incomplete" : reviewDone ? "is-saved" : "is-pending"}" role="status">${label(busy ? "applyBusyShort" : incomplete ? "incompleteState" : reviewDone ? "savedState" : "pendingState")}</span>
           <button type="button" class="button ${reviewDone ? "button-secondary" : "button-primary"}" data-action="apply-review" aria-label="${applyLabel}" title="${applyLabel}" ${applyDisabled ? "disabled" : ""}>${label(pdfSelected ? "rebuildShort" : "rebuildImagesShort")}</button>`}
           <button type="button" class="button ${reviewDone && state.review.pdfPath ? "button-primary" : "button-secondary"}" data-action="open-output-pdf" aria-describedby="reviewSaveHint" ${!state.review.pdfPath || outputBusy ? "disabled" : ""}>${label(reviewDone ? "openSavedPdf" : "openPreviousPdf")}</button>
           <span class="review-toolbar-divider" aria-hidden="true"></span>
@@ -535,28 +533,21 @@ export function renderReviewScreen(state) {
       </header>
       <div class="review-workspace">
       <section class="review-grid-shell" data-stitch-region="review-grid">
-        <div class="review-list-tools">
-          <div class="review-filter" role="group" aria-label="${label("all")}">
-            <button class="button button-secondary" data-action="review-filter" data-value="all" aria-pressed="${state.review.filter !== "suspicious"}">${label("all")} <span>${pages.length}</span></button>
-            <button class="button button-secondary" data-action="review-filter" data-value="suspicious" aria-pressed="${state.review.filter === "suspicious"}">${label("suspiciousOnly")} <span>${attentionCount}</span></button>
-          </div>
-          ${control("review-select-all", "selectAll", busy)}${control("review-select-none", "selectNone", busy)}
-        </div>
         <div class="review-list-summary">
-          <span class="review-summary-pill">${summaryLabel}</span><span class="review-format-label">${escapeHtml(formats.join(" · ").toUpperCase())}</span>
+          <span class="review-summary-pill">${summaryLabel}</span>
         </div>
         ${legacyJob ? `<p class="review-reflow-note is-warning" role="status">${escapeHtml(t("review.legacyJob", { locale }))}</p>`
-          : original.active ? renderOriginalNote(original, locale, outputBusy) : renderReflowNotes(reflowInfo, locale, busy)}
+          : original.active ? renderOriginalNote(original, locale, outputBusy) : renderReflowNotes(reflowInfo, locale, busy, Boolean(state.ui.more?.reviewReasons))}
         ${list.main.length || list.fragments.length || list.alternates.length
           ? list.grouped || list.alternatesGrouped ? `<div class="review-list-scroll">
               ${list.main.length ? `<div class="review-grid" role="list" aria-label="${reviewTitle}" data-thumb-shape="${thumbShapeFor(list.main.map(page => normalizeAssetPath(page.previewPath)))}">
-                ${list.main.map((page) => renderPageCard(page, selectedSet.has(page.id), page.id === focused?.id, busy, locale)).join("")}
+                ${list.main.map((page) => renderPageCard(page, selectedSet.has(page.id), page.id === focused?.id, busy, locale, markCheck)).join("")}
               </div>` : ""}
-              ${renderAlternateGroup(list, selectedSet, focused, busy, locale)}
-              ${renderFragmentGroup(list, selectedSet, focused, busy, locale)}
+              ${renderAlternateGroup(list, selectedSet, focused, busy, locale, markCheck)}
+              ${renderFragmentGroup(list, selectedSet, focused, busy, locale, markCheck)}
             </div>`
             : `<div class="review-grid" role="list" aria-label="${reviewTitle}" data-thumb-shape="${thumbShapeFor(list.main.map(page => normalizeAssetPath(page.previewPath)))}">
-              ${list.main.map((page) => renderPageCard(page, selectedSet.has(page.id), page.id === focused?.id, busy, locale)).join("")}
+              ${list.main.map((page) => renderPageCard(page, selectedSet.has(page.id), page.id === focused?.id, busy, locale, markCheck)).join("")}
             </div>`
           : `<div class="review-empty" role="status">
               <strong>${escapeHtml(t(hasPages ? "review.filterEmptyTitle" : "review.emptyTitle", { locale }))}</strong>
@@ -568,8 +559,7 @@ export function renderReviewScreen(state) {
             <span>${escapeHtml(t("export.layout.measure", { locale }))}<small id="reviewMeasureReflowHint">${label("measureHint")}</small></span>
           </label>` : ""}
           ${original.available && !original.active ? `<button type="button" class="button button-secondary review-original-rebuild" data-action="rebuild-original-screens" ${outputBusy || !hasFormats || !isReviewableRun(state) ? "disabled" : ""}>${escapeHtml(t("review.original.rebuild", { locale }))}</button>` : ""}
-          <p id="reviewSaveHint" class="review-save-hint">${saveHint}</p>
-          ${state.review.outputDir ? `<div class="review-output-path"><span title="${escapeHtml(state.review.outputDir)}">${escapeHtml(state.review.outputDir)}</span><button type="button" class="button button-secondary" data-action="copy-output-dir">${escapeHtml(t("rail.copyPath", { locale }))}</button></div>` : ""}
+          <p id="reviewSaveHint" class="visually-hidden">${saveHint}</p>
         </div>
       </section>
       <section class="review-viewer" aria-label="${reviewTitle}">
@@ -583,10 +573,10 @@ export function renderReviewScreen(state) {
             <input type="checkbox" data-action="review-toggle-focused" ${focusedIncluded ? "checked" : ""} ${busy ? "disabled" : ""} />
             ${label("included")}
           </label>
-          ${renderPagePills(focused, locale)}
-          ${focused.similarTo ? `<button type="button" class="button ${focusedSimilar && !comparing ? "button-primary" : "button-secondary"}" data-action="review-compare" aria-pressed="${comparing}" ${state.review.cropping || pagePreview || hypothesesOpen ? "disabled" : ""}>${label(comparing ? "closeCompare" : "compare")}</button>` : ""}
+          ${renderPagePills(focused, locale, markCheck)}
+          ${focused.similarTo ? `<button type="button" class="button ${focusedSimilar && !comparing ? "button-primary" : "button-secondary"}" data-action="review-compare" aria-pressed="${comparing}" ${state.review.cropping || hypothesesOpen ? "disabled" : ""}>${label(comparing ? "closeCompare" : "compare")}</button>` : ""}
           ${focusedSimilar ? `<button type="button" class="button button-secondary review-remove-duplicate" data-action="review-remove-duplicate" ${busy || !focusedIncluded ? "disabled" : ""}>${label("leaveOut")}</button>` : ""}
-          ${focused.kind === "system" ? `<div class="review-tool-group review-order" role="group" aria-label="${label("order")}">
+          ${focused.kind === "system" && !pagePreview && !linesOpen ? `<div class="review-tool-group review-order" role="group" aria-label="${label("order")}">
             ${iconControl("review-move-up", label("moveUp"), busy || allIndex <= 0, "", 'data-icon="up"')}${iconControl("review-move-down", label("moveDown"), busy || allIndex < 0 || allIndex >= pages.length - 1, "", 'data-icon="down"')}
           </div>` : ""}
           ${focused.warningReason && (focused.suspicious || focused.autoExcludeCandidate) ? `<p class="review-risk-note">${escapeHtml(pickLocalizedText(focused.warningReason, locale))}</p>` : ""}
@@ -614,10 +604,10 @@ export function renderReviewScreen(state) {
           ${focused ? `<img class="review-full-image ${zoom === "fit" ? "is-fit" : "is-zoomed"}" ${zoom === "fit" ? "" : `style="zoom:${Number(zoom)}"`} src="${escapeHtml(normalizeAssetPath(focused.previewPath))}" alt="${escapeHtml(focused.title)}" />` : ""}
         </div>`}
         <div class="review-viewer-toolbar">
-          <div class="review-tool-group" role="group" aria-label="${label("zoom")}">
+          ${pagePreview || linesOpen || hypothesesOpen || comparing || state.review.cropping ? "" : `<div class="review-tool-group" role="group" aria-label="${label("zoom")}">
             ${iconControl("review-zoom-out", label("zoomOut"), !focused)}${iconControl("review-zoom-in", label("zoomIn"), !focused)}
             ${control("review-fit", "fit", !focused, `aria-pressed="${zoom === "fit"}"`)}${control("review-actual", "actualSize", !focused, `aria-pressed="${Number(zoom) === 1}"`)}
-          </div>
+          </div>`}
           <div class="review-tool-group" role="group" aria-label="${label("editing")}">
             ${iconControl("review-undo", label("undo"), busy || !state.review.canUndo, "Ctrl/⌘ Z")}${iconControl("review-redo", label("redo"), busy || !state.review.canRedo, "Ctrl/⌘ ⇧ Z")}
           </div>
@@ -629,9 +619,9 @@ export function renderReviewScreen(state) {
               : t("review.lines.toolbar", { locale, replacements: { count: reviewLines.length } }))}</button>` : ""}
             ${control("review-page-preview", pagePreview ? "systemView" : "pagePreview", busy, `aria-pressed="${pagePreview}"`)}
           </div>` : ""}
-          ${original.active ? "" : `<div class="review-tool-group" role="group" aria-label="${label("crop")}">
+          ${original.active || isSystems ? "" : `<div class="review-tool-group" role="group" aria-label="${label("crop")}">
             ${control("review-crop", "crop", !focused || busy || focused.selectionMode === "pages" || focused.kind === "system")}
-            ${control("review-reset-crop", "resetCrop", !focused?.cropRect || busy)}
+            ${focused?.cropRect ? control("review-reset-crop", "resetCrop", busy) : ""}
           </div>`}
         </div>
         <p id="reviewShortcutHelp" class="review-keyboard-help">${label("shortcutHelp")}</p>

@@ -55,30 +55,14 @@ test("measure reflow is on by default in a new session", () => {
   assert.equal(createInitialSessionState().exportConfig.measureReflow, true);
 });
 
-test("the export screen shows the layout toggle, checked by default and described by its hint", () => {
+test("the layout toggle lives on the review screen only; the export screen keeps the default", () => {
   for (const locale of ["ko", "en"]) {
     const state = exportState(locale);
-    assert.equal(buildExportScreenModel(state).measureReflow, true);
     const html = renderExportScreen(state);
-    assert.match(html, new RegExp(`<h2 id="exportLayoutHeading">${t("export.layout.title", { locale })}</h2>`));
-    const input = html.match(/<input data-action="toggle-measure-reflow"[^>]*>/)[0];
-    assert.match(input, /type="checkbox"/);
-    assert.match(input, / checked /);
-    assert.match(input, /aria-describedby="exportMeasureReflowHint"/);
-    assert.doesNotMatch(input, /disabled/);
-    assert.ok(html.includes(t("export.layout.measure", { locale })));
-    assert.ok(html.includes(`id="exportMeasureReflowHint" class="export-option-hint">${t("export.layout.measureHint", { locale })}`));
+    assert.doesNotMatch(html, /data-action="toggle-measure-reflow"/);
+    assert.doesNotMatch(html, /exportLayoutHeading/);
+    assert.equal(state.exportConfig.measureReflow, true);
   }
-});
-
-test("the export layout toggle reflects off and is locked while a job runs", () => {
-  const state = exportState("en");
-  state.exportConfig.measureReflow = false;
-  let input = renderExportScreen(state).match(/<input data-action="toggle-measure-reflow"[^>]*>/)[0];
-  assert.doesNotMatch(input, / checked /);
-  state.exportConfig.runStatus = "running";
-  input = renderExportScreen(state).match(/<input data-action="toggle-measure-reflow"[^>]*>/)[0];
-  assert.match(input, /disabled/);
 });
 
 test("the review screen offers the same toggle next to the rebuild hint", () => {
@@ -112,18 +96,16 @@ test("a whole-system fallback is reported on the review screen with its reason c
   assert.equal(deriveReflowInfo({ output_model: "clean_reflow_v1", reflow: {} }).measureReflow, null);
 });
 
-test("a dense chart's smaller staff size is shown as a short note in Korean and English", () => {
+test("a dense chart's smaller staff size is derived but not reported on the review screen", () => {
   const reduced = { status: "measure_lines", requested: true, applied: true, reason: null,
     staff_size: { staff_gap_mm: 1.3, staff_gap_mm_requested: 1.5, auto_reduced: true, reason: "DENSE_LINES_NOT_FULL" } };
   assert.deepEqual(deriveReflowInfo({ output_model: "clean_reflow_v1", reflow: {}, measure_reflow: reduced }).autoStaff, { usedMm: 1.3, requestedMm: 1.5, reason: "DENSE_LINES_NOT_FULL", kind: "dense" });
   assert.equal(t("review.staffSizeAutoReduced", { locale: "ko", replacements: { size: "1.3" } }), "빽빽한 악보라 크기를 1.3mm로 줄였어요.");
   assert.equal(t("review.staffSizeAutoReduced", { locale: "en", replacements: { size: "1.3" } }), "Dense score: staff size reduced to 1.3 mm.");
+  // the automatic size is the app's own choice: the review screen does not report it
   for (const locale of ["ko", "en"]) {
     const html = renderReviewScreen(reviewState({ locale, measureResult: reduced }));
-    const note = html.match(/<p class="review-reflow-note is-info" role="status">([^<]*)<\/p>/);
-    assert.ok(note, locale);
-    assert.equal(note[1], t("review.staffSizeAutoReduced", { locale, replacements: { size: "1.3" } }));
-    // the user's own smaller size keeps its reset button; the automatic one is a note only
+    assert.ok(!html.includes(t("review.staffSizeAutoReduced", { locale, replacements: { size: "1.3" } })), locale);
     assert.doesNotMatch(html, /data-action="review-use-staff-size"/);
   }
   // full at the chosen size, whole systems, or an older record: no note

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { createInitialSessionState } from "../app/session/selectors.js";
 import { buildExportScreenModel, renderExportScreen } from "../features/export/ExportScreen.js";
 
-test("export screen exposes an app-managed destination summary before run", () => {
+test("export screen keeps the app-managed output folder and processing profile off screen", () => {
   const state = createInitialSessionState();
   state.ui.locale = "ko";
   state.source.displayName = "practice.mp4";
@@ -15,10 +15,12 @@ test("export screen exposes an app-managed destination summary before run", () =
     [0, 180],
   ];
 
-  const model = buildExportScreenModel(state);
+  state.exportConfig.outputDir = "/Users/me/jobs/1aadbac1/export";
 
-  assert.equal(model.destinationLabel, "앱 관리 폴더");
-  assert.match(model.destinationValue, /작업 실행 후 생성|자동 생성/);
+  const markup = renderExportScreen(state);
+
+  assert.doesNotMatch(markup, /앱 관리 폴더|1aadbac1|path-field/);
+  assert.doesNotMatch(markup, /현재 기준|캡처 FPS/);
 });
 
 test("export screen does not advertise a fallback format when no formats are selected", () => {
@@ -183,7 +185,7 @@ test("export screen removes decorative controls that are not part of the real fl
   assert.doesNotMatch(markup, /class="path-more"/);
   assert.doesNotMatch(markup, /export-preview-tools/);
   assert.doesNotMatch(markup, /Sheet Density|Binarization Threshold/);
-  assert.match(markup, /Current Profile|현재 기준/);
+  assert.doesNotMatch(markup, /Current Profile|현재 기준/);
 });
 
 test("export screen stays preview-first and avoids generic dashboard copy", () => {
@@ -261,24 +263,6 @@ test("export screen previews the applied ROI crop instead of the whole frame whe
   assert.match(markup, /export-preview-crop/);
   assert.match(markup, /--crop-x:120;/);
   assert.match(markup, /--crop-w:1440;/);
-});
-
-test("export screen uses a wrapping output directory field for long managed paths", () => {
-  const state = createInitialSessionState();
-  state.ui.locale = "ko";
-  state.source.filePath = "/tmp/practice.mp4";
-  state.source.displayName = "practice.mp4";
-  state.roi.appliedRect = [
-    [0, 0],
-    [320, 0],
-    [320, 180],
-    [0, 180],
-  ];
-  state.exportConfig.outputDir = "/Users/ericshim/Documents/myproject/score_capture_program/backend/jobs/1aadbac1-e23b-471f-ad06-a554f290c9f5/export";
-
-  const markup = renderExportScreen(state);
-
-  assert.match(markup, /class="path-field path-field-wrap"/);
 });
 
 test("export screen treats missing format arrays as no selection instead of crashing", () => {
@@ -409,12 +393,13 @@ test("export screen escapes dynamic filename, path, and status text before rende
 
   assert.doesNotMatch(markup, /<script>alert\("dir"\)<\/script>/);
   assert.doesNotMatch(markup, /<img src=x onerror=alert\(1\)>/);
-  assert.match(markup, /&lt;script&gt;alert\(&quot;dir&quot;\)&lt;\/script&gt;/);
+  // the output folder is not shown on this screen at all
+  assert.doesNotMatch(markup, /alert\(&quot;dir&quot;\)/);
   assert.match(markup, /&lt;img src=x onerror=alert\(1\)&gt;/);
   assert.match(markup, /alt="&quot;&gt;&lt;svg\/onload=alert\(1\)&gt; representative frame"/);
 });
 
-test("export screen escapes dynamic processing profile values before rendering", () => {
+test("export screen never renders processing profile values", () => {
   const state = createInitialSessionState();
   state.ui.locale = "en";
   state.source.filePath = "/tmp/practice.mp4";
@@ -432,6 +417,5 @@ test("export screen escapes dynamic processing profile values before rendering",
 
   assert.doesNotMatch(markup, /<img src=x onerror=alert\("fill"\)>/);
   assert.doesNotMatch(markup, /<script>alert\("layout"\)<\/script>/);
-  assert.match(markup, /&lt;img src=x onerror=alert\(&quot;fill&quot;\)&gt;/);
-  assert.match(markup, /&lt;script&gt;alert\(&quot;layout&quot;\)&lt;\/script&gt;/);
+  assert.doesNotMatch(markup, /alert\(&quot;fill&quot;\)|alert\(&quot;layout&quot;\)/);
 });

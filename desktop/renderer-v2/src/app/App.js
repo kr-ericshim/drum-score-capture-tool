@@ -1223,7 +1223,8 @@ export function createApp(root, dependencies = {}) {
         next.review.hypotheses = createReviewHypothesesState();
       }
       next.review.outputPages = deriveOutputPages(job.result || {});
-      if (!next.review.outputPages.length) next.review.pagePreview = false;
+      // no pages to show: back to the default view, so the next build opens on its pages
+      if (!next.review.outputPages.length) next.review.pagePreview = null;
       const preferredPageIds = pages.filter((page) => !page.autoExcludeCandidate).map((page) => page.id);
       const savedSelection = next.review.originalScreens.active ? job.result?.original_screens?.selected
         : job.result?.review_export?.selected_captures?.length
@@ -2835,6 +2836,12 @@ export function createApp(root, dependencies = {}) {
       if (Number.isFinite(size) && size >= 1 && size <= 2.5) await applyReviewSelection({ staffGapMm: size });
       return;
     }
+    // a folded part of a screen (reasons, more options): open or closed until toggled again
+    if (action === "toggle-more") {
+      const key = String(target.dataset.value || "");
+      if (key) setState((next) => { next.ui.more = { ...(next.ui.more || {}), [key]: !next.ui.more?.[key] }; return next; });
+      return;
+    }
     if (action?.startsWith("review-")) { await reviewController.handleAction(action, target.dataset.value); return; }
     if (action === "cancel-job") { await cancelCurrentJob(); return; }
     if (action === "reconnect-job") { reconnectJob(); return; }
@@ -3003,8 +3010,9 @@ export function createApp(root, dependencies = {}) {
       setState((next) => {
         next.review.focusedPageId = pageId;
         next.review.cropping = false;
-        // picking a system shows that system, not the printed lines
+        // picking a system shows that system, not the printed lines or pages
         if (next.review.lineCheck) next.review.lineCheck.open = false;
+        next.review.pagePreview = false;
         return next;
       });
       return;

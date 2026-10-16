@@ -3351,19 +3351,19 @@ test("after a restart the review screen still calls the PDF saved when the resto
   assert.equal(restored.status, "applied");
   assert.match(stage(second.root), /data-action="open-output-pdf"[^>]*>Open saved PDF/);
   assert.match(stage(second.root), /data-action="save-output-pdf-as" aria-label="Save PDF as…"/);
-  assert.doesNotMatch(stage(second.root), /Open previous PDF|Save previous PDF as/);
+  assert.doesNotMatch(stage(second.root), /data-action="open-output-pdf"[^>]*>Open PDF</);
   // changing the selection afterwards makes it the previous PDF, as before
   second.root.dispatchInput({ dataset: { action: "toggle-review-page", pageId: "2" }, checked: true });
   await flush();
   assert.equal(second.app.debug.getState().review.status, "idle");
-  assert.match(stage(second.root), /data-action="open-output-pdf"[^>]*>Open previous PDF/);
+  assert.match(stage(second.root), /data-action="open-output-pdf"[^>]*>Open PDF</);
   second.app.destroy();
 
   // that edit was not rebuilt before closing: the next restart keeps the previous-PDF labels
   const third = await openReflowApp({ storage, getJob: async () => savedJob() });
   assert.equal(third.app.debug.getState().review.selectedPageIds.length, 4);
   assert.equal(third.app.debug.getState().review.status, "idle");
-  assert.match(stage(third.root), /Open previous PDF/);
+  assert.match(stage(third.root), /data-action="open-output-pdf"[^>]*>Open PDF</);
   third.app.destroy();
 
   // marked saved, but the job's saved selection differs from the draft: do not claim a match
@@ -4141,4 +4141,30 @@ test("an incomplete chart opens review labelled incomplete with its unresolved t
     assert.doesNotMatch(stage, /review-save-state is-saved/);
     app.destroy();
   }
+});
+
+test("the review opens on the A4 pages; picking a system shows it, and folded reasons open and close", async () => {
+  const job = reflowJob({ revision: 1 });
+  job.result.review_required = true;
+  job.result.review_reasons = ["SOURCE_CLIPPED", "UNCERTAIN_MARK_KEPT"];
+  const { app, root } = await openReflowApp({ storage: memoryStorage(), getJob: async () => job });
+  const stage = () => root.querySelector("#stagePane").innerHTML;
+  const state = () => app.debug.getState();
+  assert.equal(state().review.outputPages.length, 1);
+  assert.match(stage(), /review-viewer-surface is-pages/);
+  assert.match(stage(), /data-value="reviewReasons" aria-expanded="false"/);
+  await root.dispatchAction("toggle-more", { value: "reviewReasons" });
+  await flush();
+  assert.equal(state().ui.more.reviewReasons, true);
+  assert.match(stage(), /data-value="reviewReasons" aria-expanded="true"/);
+  await root.dispatchAction("toggle-more", { value: "reviewReasons" });
+  await flush();
+  assert.equal(state().ui.more.reviewReasons, false);
+  const second = state().review.pages[1].id;
+  await root.dispatchAction("focus-review-page", { pageId: second });
+  await flush();
+  assert.equal(state().review.focusedPageId, second);
+  assert.equal(state().review.pagePreview, false);
+  assert.doesNotMatch(stage(), /review-viewer-surface is-pages/);
+  app.destroy();
 });

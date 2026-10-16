@@ -234,11 +234,17 @@ test("review screen highlights suspicious page diagnostics prominently", () => {
   state.review.pages[0].suspicious = true;
   state.review.pages[0].warningReason = "페이지 하단에 내용이 너무 붙어 있습니다.";
 
-  const markup = renderReviewScreen(state);
-
-  assert.match(markup, /review-inline-pill-risk/);
+  // the only page is flagged: the reason shows, a mark on every row would say nothing
+  let markup = renderReviewScreen(state);
+  assert.doesNotMatch(markup, /review-inline-pill-risk/);
   assert.match(markup, /review-risk-note/);
   assert.match(markup, /페이지 하단에 내용이 너무 붙어 있습니다/);
+
+  // one flagged page among others is marked
+  state.review.pages.push({ ...state.review.pages[0], id: "2", title: "페이지 2", suspicious: false, warningReason: "" });
+  markup = renderReviewScreen(state);
+  assert.match(markup, /review-inline-pill-risk/);
+  assert.match(markup, /review-risk-note/);
 });
 
 test("review screen labels auto-exclude candidates separately from review warnings", () => {
@@ -251,7 +257,7 @@ test("review screen labels auto-exclude candidates separately from review warnin
   const markup = renderReviewScreen(state);
 
   assert.match(markup, /제외 후보/);
-  assert.match(markup, /확인 필요/);
+  assert.doesNotMatch(markup, /review-inline-pill-risk/);
   assert.match(markup, /악보가 아닌 영상 화면이 함께 들어간 것으로 보입니다/);
 });
 
@@ -329,7 +335,7 @@ test("review keeps excluded notation visible and names the saved PDF before chan
   assert.match(markup, /review-card is-excluded is-focused/);
   assert.match(markup, /review-inspector is-excluded/);
   assert.match(markup, /<input type="checkbox" data-action="review-toggle-focused"(?![^>]*checked)[^>]*>\s*Included in output/);
-  assert.match(markup, /data-action="open-output-pdf"[^>]*>Open previous PDF/);
+  assert.match(markup, /data-action="open-output-pdf"[^>]*>Open PDF/);
   assert.match(markup, /data-action="apply-review"[^>]*disabled/);
   assert.doesNotMatch(markup, /excluded-overlay|animate-pulse/);
   state.review.status = "applied";

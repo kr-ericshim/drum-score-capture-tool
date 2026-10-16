@@ -259,7 +259,6 @@ export function renderSourceScreen(state) {
             <button class="button ${model.currentSource ? "button-secondary" : "button-primary"}" data-action="select-source-file">${escapeHtml(model.currentSource ? t("source.openAnother", { locale: model.locale }) : model.primaryAction.displayLabel)}</button>
           </div>
           <p class="source-drop-hint" aria-live="polite">
-            <span class="source-drop-idle">${escapeHtml(t("source.dropHint", { locale: model.locale }))}</span>
             <span class="source-drop-active">${escapeHtml(t("source.dropActive", { locale: model.locale }))}</span>
           </p>
           <div class="source-youtube">

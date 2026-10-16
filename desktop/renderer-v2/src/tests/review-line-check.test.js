@@ -121,11 +121,15 @@ test("answers show progress, and a bad join points to a problem report", async (
   assert.equal(pendingSeamRejections(box.state), null, "only a wrong join is rebuilt");
 });
 
-test("with every join verified it opens on the full list; with no seams it waits to be asked", async () => {
+test("with every join verified it opens on the pages and lists all lines when asked; with no seams it waits to be asked", async () => {
   const plain = LINES.map(line => ({ ...line, seams: line.seams.map(seam => ({ ...seam, status: "verified" })), attention: null }));
   const { box, controller } = harness(reviewState("en", plain));
-  assert.equal(lineCheckOpen(box.state), true); // verified seams: opened, but nothing to check
+  assert.equal(lineCheckOpen(box.state), true); // verified seams: nothing to check
+  // nothing to check: the review opens on the pages; asking shows the full list
   let html = renderReviewScreen(box.state);
+  assert.match(html, /is-pages/);
+  await controller.handleAction("review-lines");
+  html = renderReviewScreen(box.state);
   assert.match(html, /every join was verified automatically/);
   assert.equal((html.match(/<article class="review-line /g) || []).length, 3);
   assert.match(html, /Check lines 3</);
@@ -240,4 +244,28 @@ test("a rebuilt join shows both printed lines and says both views were kept, in 
     assert.doesNotMatch(html, /data-action="review-seam-answer"/, "no question on a join already rebuilt");
     assert.equal(pendingSeamRejections(state), null);
   }
+});
+
+test("from the default pages, system view and compare show the system, not the line list; zoom only for one system", async () => {
+  const plain = LINES.map(line => ({ ...line, seams: line.seams.map(seam => ({ ...seam, status: "verified" })), attention: null }));
+  const { box, controller } = harness(reviewState("en", plain));
+  let html = renderReviewScreen(box.state);
+  assert.match(html, /is-pages/);
+  assert.doesNotMatch(html, /data-action="review-zoom-in"/);
+  await controller.handleAction("review-page-preview");
+  html = renderReviewScreen(box.state);
+  assert.doesNotMatch(html, /is-pages|class="review-lines"/);
+  assert.match(html, /review-full-image/);
+  assert.match(html, /data-action="review-zoom-in"/);
+  // compare from the pages
+  const similar = harness(reviewState("en", plain));
+  similar.box.state.review.pages = [
+    { id: "a", kind: "system", systemId: "jmp-01-001", title: "System 1", capturePath: "/s1.png", previewPath: "/s1.png" },
+    { id: "b", kind: "system", systemId: "jmp-01-002", title: "System 2", capturePath: "/s2.png", previewPath: "/s2.png", similarTo: { referenceId: "a", reason: "looks_similar" } },
+  ];
+  similar.box.state.review.focusedPageId = "b";
+  await similar.controller.handleAction("review-compare");
+  html = renderReviewScreen(similar.box.state);
+  assert.match(html, /is-comparing/);
+  assert.doesNotMatch(html, /class="review-lines"/);
 });

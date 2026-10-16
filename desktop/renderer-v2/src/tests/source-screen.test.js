@@ -189,7 +189,8 @@ test("source screen marks the ingest card as a drag-and-drop target with helper 
   const markup = renderSourceScreen(state);
 
   assert.match(markup, /data-drop-zone="source-ingest"/);
-  assert.match(markup, /Drag a video here/);
+  // the drop area itself invites the drop; only the while-dragging text remains here
+  assert.doesNotMatch(markup, /Drag a video here/);
   assert.match(markup, /Drop to open\./);
 });
 

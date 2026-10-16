@@ -149,6 +149,7 @@ test("a failed load shows a retry, and an answer for another job is dropped", as
 test("page view and items to check do not show at the same time", async () => {
   const holder = { state: reviewState("en") };
   holder.state.review.outputPages = [{ index: 1, path: "/p1.png" }];
+  holder.state.review.pagePreview = false; // one system in view, not the default pages
   const controller = controllerFor(holder, { getReviewHypotheses: async () => normalizeReviewHypotheses(RESPONSE) });
   await controller.handleAction("review-page-preview");
   assert.equal(holder.state.review.pagePreview, true);

@@ -1,7 +1,7 @@
 import { captureRange } from "./captureRange.js";
 import { isPdfSelected, isRectValid } from "../../app/session/selectors.js";
 import { escapeAttr, escapeHtml } from "../../lib/html.js";
-import { reflowReviewReasonText, t } from "../../lib/i18n.js";
+import { t } from "../../lib/i18n.js";
 import { normalizeAssetPath } from "../../lib/paths.js";
 
 function checked(formats, value) {
@@ -45,47 +45,6 @@ function formatExportProgressStatus({ currentStep, message, locale, runStatus })
   const fallback = t("export.progress.step.default", { locale });
   const label = step ? t(stepKey, { locale }) : fallback;
   return label === stepKey ? fallback : label;
-}
-
-const SETTING_LABELS = {
-  ko: {
-    auto: "자동",
-    balanced: "균형",
-    bottom_bar: "하단 악보",
-    full_scroll: "전체 화면",
-    performance: "성능 우선",
-    quality: "품질 우선",
-  },
-  en: {
-    auto: "Auto",
-    balanced: "Balanced",
-    bottom_bar: "Bottom score",
-    full_scroll: "Full frame",
-    performance: "Performance",
-    quality: "Quality",
-  },
-};
-
-function formatSettingValue(value, fallback, locale = "en") {
-  const rawValue = String(value || fallback || "").trim();
-  const normalized = rawValue.toLowerCase();
-  const labels = SETTING_LABELS[locale] || SETTING_LABELS.en;
-  return labels[normalized] || rawValue;
-}
-
-function buildProfileRows(state) {
-  const locale = state.ui.locale || "en";
-  return [
-    { label: t("export.captureFps", { locale }), value: "1 FPS" },
-    {
-      label: t("export.pageFill", { locale }),
-      value: formatSettingValue(state.exportConfig.pageFillMode, "performance", locale),
-    },
-    {
-      label: t("export.layoutHint", { locale }),
-      value: formatSettingValue(state.exportConfig.layoutHint, "auto", locale),
-    },
-  ];
 }
 
 function rectToBounds(points) {
@@ -167,19 +126,11 @@ export function buildExportScreenModel(state) {
     rangesLabel: t("review.incompleteRangesLabel", { locale, replacements: { count: (reflowInfo.unresolvedRanges || []).length } }),
   } : null;
 
-  const reviewRequiredNote = !running && state.exportConfig.runStatus === "done" && reflowInfo?.reviewRequired ? {
-    title: t("export.reviewRequiredTitle", { locale }),
-    detail: t("review.reviewRequiredDetail", { locale }),
-    reasons: (reflowInfo.reviewReasons || []).map(reason => reflowReviewReasonText(reason, locale)),
-    reasonsLabel: t("review.reviewReasonsLabel", { locale }),
-  } : null;
-
   return {
     running,
     locale,
     clipNote,
     incompleteNote,
-    reviewRequiredNote,
     labelNote,
     hasFormats,
     formats,
@@ -188,8 +139,6 @@ export function buildExportScreenModel(state) {
     fileName,
     roiSummary,
     formatsLabel,
-    destinationLabel: t("export.destinationLabel", { locale }),
-    destinationValue: state.exportConfig.outputDir || t("export.destinationValue", { locale }),
     primaryActionLabel: running
       ? t("export.runBusy", { locale })
       : pdfSelected
@@ -222,11 +171,8 @@ export function buildExportScreenModel(state) {
     previewCaption: state.roi.previewImage
       ? t("export.previewCaptionReady", { locale })
       : t("export.previewCaptionEmpty", { locale }),
-    profileRows: buildProfileRows(state),
-    // score layout: rearrange by measure (on by default) or keep the video's lines
-    measureReflow: state.exportConfig.measureReflow !== false,
-    measureReflowLabel: t("export.layout.measure", { locale }),
-    measureReflowHint: t("export.layout.measureHint", { locale }),
+    // output formats sit folded under "more options"; PDF is the default
+    moreOpen: Boolean(state.ui.more?.exportOptions),
     metadata: {
       isOpen: Boolean(metadataModal.isOpen),
       showDiscardConfirm: Boolean(metadataModal.showDiscardConfirm),
@@ -273,8 +219,6 @@ export function renderExportScreen(state) {
   const model = buildExportScreenModel(state);
   const formatInputsDisabled = model.running || model.metadata.isOpen;
   const safeFileNameAttr = escapeAttr(model.fileName);
-  const safeDestinationLabel = escapeHtml(model.destinationLabel);
-  const safeDestinationValue = escapeHtml(model.destinationValue);
   const safeStatusMessage = escapeHtml(model.statusMessage);
   const safeProgressStatus = escapeHtml(model.progressStatus);
   const safeProgressLabel = escapeHtml(model.progressLabel);
@@ -309,13 +253,6 @@ export function renderExportScreen(state) {
       </header>
       <div class="export-workbench">
         <div class="export-config-stack" data-stitch-region="export-config">
-          ${model.reviewRequiredNote ? `
-          <section class="panel export-module export-clip-note export-review-required-note is-clipped" aria-labelledby="exportReviewRequiredHeading">
-            <h2 id="exportReviewRequiredHeading" class="visually-hidden">${escapeHtml(model.reviewRequiredNote.title)}</h2>
-            <p class="export-clip-text" role="alert"><strong>${escapeHtml(model.reviewRequiredNote.title)}</strong> ${escapeHtml(model.reviewRequiredNote.detail)}</p>
-            ${model.reviewRequiredNote.reasons.length ? `<ul class="reflow-review-reasons" aria-label="${escapeAttr(model.reviewRequiredNote.reasonsLabel)}" tabindex="0">
-              ${model.reviewRequiredNote.reasons.map(reason => `<li>${escapeHtml(reason)}</li>`).join("")}</ul>` : ""}
-          </section>` : ""}
           ${model.incompleteNote ? `
           <section class="panel export-module export-clip-note export-incomplete-note is-clipped" aria-labelledby="exportIncompleteHeading">
             <h2 id="exportIncompleteHeading" class="visually-hidden">${escapeHtml(model.incompleteNote.title)}</h2>
@@ -337,32 +274,6 @@ export function renderExportScreen(state) {
             <button class="button button-secondary export-clip-action" data-action="${escapeAttr(model.labelNote.action.id)}" ${model.running ? "disabled" : ""}>${escapeHtml(model.labelNote.action.label)}</button>
           </section>` : ""}
           <section class="panel export-module">
-            <div class="panel-heading"><h2>${t("export.outputFormat", { locale: model.locale })}</h2></div>
-            <div class="segmented-row">
-              <label class="segment ${checked(model.formats, "pdf") ? "is-active" : ""}">
-                <input data-action="toggle-format" data-format="pdf" type="checkbox" ${checked(model.formats, "pdf")} ${formatInputsDisabled ? "disabled" : ""} aria-labelledby="exportFormatPdfLabel" ${checked(model.formats, "pdf") ? 'aria-describedby="exportPdfHint"' : ""} />
-                <span><span id="exportFormatPdfLabel">${t("export.pdfDocument", { locale: model.locale })}</span>${checked(model.formats, "pdf") ? `<small id="exportPdfHint" class="export-format-hint">${t("export.pdfMetadataHint", { locale: model.locale })}</small>` : ""}</span>
-              </label>
-              <label class="segment ${checked(model.formats, "png") ? "is-active" : ""}">
-                <input data-action="toggle-format" data-format="png" type="checkbox" ${checked(model.formats, "png")} ${formatInputsDisabled ? "disabled" : ""} />
-                <span>${t("export.pngMatrix", { locale: model.locale })}</span>
-              </label>
-              <label class="segment ${checked(model.formats, "jpg") ? "is-active" : ""}">
-                <input data-action="toggle-format" data-format="jpg" type="checkbox" ${checked(model.formats, "jpg")} ${formatInputsDisabled ? "disabled" : ""} />
-                <span>${t("export.jpgImages", { locale: model.locale })}</span>
-              </label>
-            </div>
-          </section>
-          <section class="panel export-module export-layout-module">
-            <div class="panel-heading"><h2 id="exportLayoutHeading">${t("export.layout.title", { locale: model.locale })}</h2></div>
-            <div class="segmented-row" role="group" aria-labelledby="exportLayoutHeading">
-              <label class="segment ${model.measureReflow ? "is-active" : ""}">
-                <input data-action="toggle-measure-reflow" type="checkbox" ${model.measureReflow ? "checked" : ""} ${formatInputsDisabled ? "disabled" : ""} aria-describedby="exportMeasureReflowHint" />
-                <span><span>${escapeHtml(model.measureReflowLabel)}</span><small id="exportMeasureReflowHint" class="export-option-hint">${escapeHtml(model.measureReflowHint)}</small></span>
-              </label>
-            </div>
-          </section>
-          <section class="panel export-module">
             <div class="panel-heading"><h2>${t("export.range.title", { locale: model.locale })}</h2></div>
             <div class="capture-range-fields">
               ${["rangeStart", "rangeEnd"].map(field => `<label class="capture-range-field">
@@ -373,27 +284,24 @@ export function renderExportScreen(state) {
             <p id="captureRangeHelp" class="panel-note">${t("export.range.help", { locale: model.locale })}</p>
             ${captureRange(state).error ? `<p id="captureRangeError" class="inline-error" role="alert">${t(`export.range.error.${captureRange(state).error}`, { locale: model.locale })}</p>` : ""}
           </section>
-          <section class="panel export-module export-module-quiet">
-            <div class="panel-heading panel-heading-inline">
-              <h2>${t("export.processingProfile", { locale: model.locale })}</h2>
-              <p>${t("export.processingProfileHelp", { locale: model.locale })}</p>
-            </div>
-            <div class="export-profile-list">
-              ${model.profileRows.map((item) => `
-                <div class="export-profile-row">
-                  <span>${escapeHtml(item.label)}</span>
-                  <strong>${escapeHtml(item.value)}</strong>
-                </div>
-              `).join("")}
-            </div>
-          </section>
-          <section class="panel export-module export-module-quiet">
-            <div class="panel-heading panel-heading-inline">
-              <h2>${t("export.outputDirectory", { locale: model.locale })}</h2>
-              <p>${safeDestinationLabel}</p>
-            </div>
-            <div class="path-row path-row-static">
-              <div class="path-field path-field-wrap">${safeDestinationValue}</div>
+          <section class="panel export-module export-more-module">
+            <button type="button" class="export-more-toggle" data-action="toggle-more" data-value="exportOptions" aria-expanded="${model.moreOpen}" aria-controls="exportMoreOptions">${t(model.moreOpen ? "common.less" : "common.more", { locale: model.locale })}</button>
+            <div id="exportMoreOptions" class="export-more-body" ${model.moreOpen ? "" : "hidden"}>
+              <div class="panel-heading"><h2>${t("export.outputFormat", { locale: model.locale })}</h2></div>
+              <div class="segmented-row">
+                <label class="segment ${checked(model.formats, "pdf") ? "is-active" : ""}">
+                  <input data-action="toggle-format" data-format="pdf" type="checkbox" ${checked(model.formats, "pdf")} ${formatInputsDisabled ? "disabled" : ""} aria-labelledby="exportFormatPdfLabel" ${checked(model.formats, "pdf") ? 'aria-describedby="exportPdfHint"' : ""} />
+                  <span><span id="exportFormatPdfLabel">${t("export.pdfDocument", { locale: model.locale })}</span>${checked(model.formats, "pdf") ? `<small id="exportPdfHint" class="export-format-hint">${t("export.pdfMetadataHint", { locale: model.locale })}</small>` : ""}</span>
+                </label>
+                <label class="segment ${checked(model.formats, "png") ? "is-active" : ""}">
+                  <input data-action="toggle-format" data-format="png" type="checkbox" ${checked(model.formats, "png")} ${formatInputsDisabled ? "disabled" : ""} />
+                  <span>${t("export.pngMatrix", { locale: model.locale })}</span>
+                </label>
+                <label class="segment ${checked(model.formats, "jpg") ? "is-active" : ""}">
+                  <input data-action="toggle-format" data-format="jpg" type="checkbox" ${checked(model.formats, "jpg")} ${formatInputsDisabled ? "disabled" : ""} />
+                  <span>${t("export.jpgImages", { locale: model.locale })}</span>
+                </label>
+              </div>
             </div>
             ${model.hasFormats ? "" : `<p class="panel-note">${t("export.oneFormatRequired", { locale: model.locale })}</p>`}
             ${safeError ? `<p class="inline-error" role="alert">${safeError}</p>` : ""}

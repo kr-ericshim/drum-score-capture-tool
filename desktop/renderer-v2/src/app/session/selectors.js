@@ -346,9 +346,9 @@ export function createInitialSessionState() {
       pdfPath: "",
       compare: false,
       // Clean reflow jobs: composed A4 previews of the last build, and whether the
-      // viewer shows them instead of the focused system.
+      // viewer shows them instead of the focused system (null: not chosen, see pagePreviewOn).
       outputPages: [],
-      pagePreview: false,
+      pagePreview: null,
       // Clean reflow job facts the review screen reports (deriveReflowInfo).
       reflow: null,
       // Original screens fallback: { active, screensDir, available } (deriveOriginalScreens).
@@ -371,6 +371,8 @@ export function createInitialSessionState() {
       busyAction: "",
       blockingReason: "",
       inlineNotice: "",
+      // folded parts of a screen the user opened ("toggle-more")
+      more: {},
       backend: {
         ready: false,
         starting: true,

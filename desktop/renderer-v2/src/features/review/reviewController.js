@@ -1,7 +1,7 @@
 import { APP_REVIEW_CODES, reviewListPages } from "../../app/session/selectors.js";
 import { normalizeAssetPath } from "../../lib/paths.js";
 import { describeError } from "../../lib/i18n.js";
-import { lineCheckOpen, lineSourceTimes, releaseFrameUrl, seamChecks } from "./lineCheck.js";
+import { lineCheckOpen, lineSourceTimes, pagePreviewOn, releaseFrameUrl, seamChecks } from "./lineCheck.js";
 
 const HYPOTHESIS_PAGE = 100;
 
@@ -155,6 +155,11 @@ export function createReviewController({ getState, setState, api, mountEditor, r
     video.onpause = () => label(false);
     void video.play?.()?.catch?.(() => label(false));
   }
+  // the viewer shows the focused system: neither the A4 pages nor the printed lines
+  function showSystem(next) {
+    next.review.pagePreview = false;
+    next.review.lineCheck = { ...(next.review.lineCheck || {}), open: false };
+  }
   async function handleAction(action, value) {
     syncJob();
     const state = getState();
@@ -182,7 +187,7 @@ export function createReviewController({ getState, setState, api, mountEditor, r
           if (answer === "bad" && !(next.review.reflow?.rejectedSeamIds || []).includes(seamId) && next.review.status === "applied") next.review.status = "idle";
         }
         // shown only when no other view (pages, items to check, crop) covers it
-        if (action === "review-lines") check.open = !(lineCheckOpen(next) && !next.review.pagePreview && !next.review.hypotheses?.open && !next.review.cropping);
+        if (action === "review-lines") check.open = !(lineCheckOpen(next) && !pagePreviewOn(next) && !next.review.hypotheses?.open && !next.review.cropping);
         if (check.open) { next.review.pagePreview = false; next.review.compare = false; next.review.cropping = false; next.review.hypotheses.open = false; }
         return next;
       });
@@ -267,11 +272,17 @@ export function createReviewController({ getState, setState, api, mountEditor, r
         if (reviewListPages(next.review).alternates.some(page => page.id === value)) next.review.alternatesExpanded = true;
         if (reviewListPages(next.review).fragments.some(page => page.id === value)) next.review.fragmentsExpanded = true;
         next.review.focusedPageId = value;
+        showSystem(next);
       }
-      if (action === "review-compare") next.review.compare = !next.review.compare;
+      if (action === "review-compare") {
+        next.review.compare = !next.review.compare;
+        // comparing shows two systems, not the pages or the printed lines
+        if (next.review.compare) showSystem(next);
+      }
       if (action === "review-page-preview") {
-        next.review.pagePreview = !next.review.pagePreview && next.review.outputPages.length > 0;
-        if (next.review.pagePreview) { next.review.compare = false; next.review.cropping = false; next.review.hypotheses.open = false; }
+        const pagesNext = !pagePreviewOn(next) && next.review.outputPages.length > 0;
+        if (pagesNext) { next.review.pagePreview = true; next.review.compare = false; next.review.cropping = false; next.review.hypotheses.open = false; }
+        else showSystem(next); // "system view" shows the focused system, not the line check
       }
       if (action === "review-crop") { next.review.cropping = true; next.review.compare = false; next.review.hypotheses.open = false; }
       if (action === "review-close-crop") next.review.cropping = false;

@@ -100,7 +100,7 @@ assert(exportScreen.includes('data-screen="export"'), "export screen marker is m
 assert(exportScreen.includes('data-stitch-region="export-config"'), "export config workbench region is missing.");
 assert(exportScreen.includes('data-stitch-region="export-preview"'), "export preview workbench region is missing.");
 assert(exportScreen.includes('data-action="run-export"'), "export run action is missing.");
-assert(exportScreen.includes("Processing Profile") || exportScreen.includes('t("export.processingProfile"'), "export processing profile summary is missing.");
+assert(!exportScreen.includes('t("export.processingProfile"'), "export screen still shows the fixed processing profile.");
 assert(exportScreen.includes("ROI Preview") || exportScreen.includes('t("export.previewTitle"'), "export roi preview heading is missing.");
 assert(!exportScreen.includes("DISCARD ANALYSIS"), "export screen still exposes a non-functional discard control.");
 assert(reviewScreen.includes('data-screen="review"'), "review screen marker is missing.");
