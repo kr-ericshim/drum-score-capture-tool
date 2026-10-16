@@ -37,6 +37,9 @@ export const bridge = {
   copyText(text) {
     return window?.drumSheetAPI?.copyText?.(text) || Promise.resolve(false);
   },
+  notifyJobFinished(input) {
+    return window?.drumSheetAPI?.notifyJobFinished?.(input) || Promise.resolve(false);
+  },
   restartBackend() {
     return window?.drumSheetAPI?.restartBackend?.() || Promise.resolve("");
   },

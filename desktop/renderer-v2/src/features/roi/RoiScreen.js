@@ -1,4 +1,4 @@
-import { formatSecondsLabel, hasPendingRoiDraft, isRectValid } from "../../app/session/selectors.js";
+import { formatSecondsLabel, hasPendingRoiDraft, isPdfSelected, isRectValid } from "../../app/session/selectors.js";
 import { t } from "../../lib/i18n.js";
 import { normalizeAssetPath } from "../../lib/paths.js";
 
@@ -121,6 +121,7 @@ export function buildRoiScreenModel(state) {
     placeholderText: t(state.roi.status === "loading" ? "roi.placeholderLoading" : "roi.placeholder", { locale }),
     // the white-edge fit sits folded under "more options"
     moreOpen: Boolean(state.ui.more?.roiOptions),
+    pdfSelected: isPdfSelected(state.exportConfig.formats),
   };
 }
 
@@ -213,7 +214,11 @@ export function renderRoiScreen(state) {
           </div>
           <div class="roi-stage-actions" ${model.labelMode ? "hidden" : ""}>
             ${model.showApplyAction && ["draft", "ready"].includes(model.statusTone) ? `<span class="roi-apply-state is-${model.statusTone}">${escapeHtml(t(`roi.applyState.${model.statusTone}`, { locale: model.locale }))}</span>` : ""}
-            ${model.showApplyAction ? `<button class="button button-primary" data-action="apply-roi" ${model.applyDisabled ? "disabled" : ""}>${escapeHtml(t("roi.apply", { locale: model.locale }))}</button>` : ""}
+            ${!model.showApplyAction ? "" : model.applyDisabled
+              ? `<button class="button button-primary" data-action="apply-roi" disabled>${escapeHtml(t("roi.apply", { locale: model.locale }))}</button>`
+              // a region to apply: apply it and go on to the options, or apply it and start right away
+              : `<button class="button button-secondary" data-action="apply-roi">${escapeHtml(t("roi.applyOnly", { locale: model.locale }))}</button>
+              <button class="button button-primary" data-action="apply-roi-and-run">${escapeHtml(t(model.pdfSelected ? "roi.applyAndRun" : "roi.applyAndRunFiles", { locale: model.locale }))}</button>`}
           </div>
         </div>
       </aside>

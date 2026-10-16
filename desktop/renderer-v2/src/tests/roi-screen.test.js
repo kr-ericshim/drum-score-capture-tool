@@ -136,7 +136,9 @@ test("roi screen keeps frame controls simple before and after preview load", () 
   state.roi.previewImage = "/tmp/frame.png";
   state.roi.draftRect = [[10, 10], [110, 10], [110, 90], [10, 90]];
   markup = renderRoiScreen(state);
-  assert.match(markup, /Apply region/);
+  // a region to apply: "apply only" or apply and start right away
+  assert.match(markup, /data-action="apply-roi">Apply only</);
+  assert.match(markup, /class="button button-primary" data-action="apply-roi-and-run">Apply and make PDF</);
   assert.match(markup, /Adjust the score region, then apply it/);
 });
 
@@ -195,9 +197,18 @@ test("roi apply action names whether the region is applied beside the button", (
   state.source.filePath = "/tmp/video.mp4";
   state.roi.previewImage = "/tmp/frame.png";
   state.roi.draftRect = [[10, 10], [110, 10], [110, 90], [10, 90]];
-  assert.match(renderRoiScreen(state), /<span class="roi-apply-state is-draft">Not applied<\/span>\s*<button class="button button-primary" data-action="apply-roi"/);
+  assert.match(renderRoiScreen(state), /<span class="roi-apply-state is-draft">Not applied<\/span>\s*<button class="button button-secondary" data-action="apply-roi"/);
+  state.ui.locale = "ko";
+  assert.match(renderRoiScreen(state), />영역만 적용<[\s\S]*>적용하고 PDF 만들기</);
+  state.exportConfig.formats = ["png"];
+  assert.match(renderRoiScreen(state), />적용하고 파일 만들기</);
+  state.ui.locale = "en";
   state.roi.appliedRect = state.roi.draftRect;
-  assert.match(renderRoiScreen(state), /<span class="roi-apply-state is-ready">Applied<\/span>/);
+  const applied = renderRoiScreen(state);
+  assert.match(applied, /<span class="roi-apply-state is-ready">Applied<\/span>/);
+  // nothing left to apply: one disabled button, no start
+  assert.match(applied, /data-action="apply-roi" disabled/);
+  assert.doesNotMatch(applied, /apply-roi-and-run/);
 });
 
 test("roi screen warns when the applied region clips notation and offers the larger draft", () => {

@@ -564,6 +564,10 @@ export function createApp(root, dependencies = {}) {
   // a job id whose rebuild was cancelled before its start request answered
   let pendingExportCancel = "";
   let activeJobHandle = null;
+  // the capture started in this window: its end is announced once (not a restored or reconnected job)
+  let notifyJobId = "";
+  // "apply and make PDF" waiting for the region check: any later apply, start, cancel or step change ends it
+  let autoStartIntent = 0;
   let activeSourcePreparePoll = null;
   let activeSourcePrepareHandle = null;
   let activeSourceSelection = 0;
@@ -1584,6 +1588,10 @@ export function createApp(root, dependencies = {}) {
       applyJobSnapshot(job);
       if (["done", "error", "cancelled"].includes(job.status)) {
         stopPolling();
+        if (jobId === notifyJobId) {
+          notifyJobId = "";
+          if (job.status !== "cancelled") void bridge.notifyJobFinished(jobFinishedNotice(job));
+        }
         if (job.status === "error" && (isLayoutConflictPending(store.getState()) || isLedgerFailurePending(store.getState()))) {
           // no chart yet; suggestions and a rebuild started before a reload still arrive
           if (job.result?.reflow?.suggestions_state === "pending") {
@@ -1625,6 +1633,18 @@ export function createApp(root, dependencies = {}) {
         activePoll = setTimeout(() => pollJob(jobId, jobHandle), Math.min(1000 * 2 ** (pollFailures - 1), 8000));
       }
     }
+  }
+
+  // What the finish notice says: ready, ready but with places to check, or not made.
+  function jobFinishedNotice(job) {
+    const state = store.getState();
+    const locale = state.ui.locale || "en";
+    const info = state.review.reflow;
+    const key = job.status !== "done" ? (isReviewableRun(state) ? "notify.needsAction" : "notify.failed")
+      : info?.incomplete ? "notify.incomplete"
+        : info?.reviewRequired ? "notify.reviewRequired"
+          : isPdfSelected(state.exportConfig.formats) ? "notify.donePdf" : "notify.doneFiles";
+    return { title: sourceDocumentDisplayName(state.source) || t("topbar.brandTitle", { locale }), body: t(key, { locale }) };
   }
 
   // The restored job is gone from the backend (folder deleted or moved), so retrying cannot help.
@@ -2111,6 +2131,7 @@ export function createApp(root, dependencies = {}) {
     if (!isRectValid(points)) {
       return;
     }
+    autoStartIntent += 1;
     stopPolling();
     activeJobHandle = null;
     runtimeGuards.invalidateExport();
@@ -2127,8 +2148,28 @@ export function createApp(root, dependencies = {}) {
       next.ui.activeStep = "export";
       return next;
     });
-    void checkAppliedRoi(points);
     void checkLabelRegion(points);
+    return { points, regionCheck: checkAppliedRoi(points) };
+  }
+
+  // One click from the region step: apply the region, wait for the whole-video region check,
+  // then start with the current options (the PDF info dialog is skipped; the title comes from
+  // the video). A clipped region stops on the export step, where the warning offers its fix.
+  async function applyRoiAndRun() {
+    const applied = applyRoi();
+    if (!applied) return;
+    const intent = autoStartIntent;
+    const sourcePath = store.getState().source.filePath;
+    await applied.regionCheck;
+    const state = store.getState();
+    // the user applied again, started or cancelled a run, left the step or opened another video while it was checked
+    if (intent !== autoStartIntent || state.source.filePath !== sourcePath || state.ui.activeStep !== "export"
+      || state.exportConfig.metadataModal?.isOpen) return;
+    // start only on a finished, clear check: a clipped region shows its fix, a failed or
+    // postponed check (processor not ready) leaves the start to the user
+    const clip = state.roi.clipCheck || {};
+    if (clip.status !== "clear" || clip.rectKey !== JSON.stringify(applied.points)) return;
+    await startExportRun(state);
   }
 
   function buildJobPayload(state) {
@@ -2312,6 +2353,7 @@ export function createApp(root, dependencies = {}) {
   }
 
   async function startExportRun(state = store.getState()) {
+    autoStartIntent += 1;
     const formats = Array.isArray(state.exportConfig.formats) ? state.exportConfig.formats : [];
     if (state.exportConfig.runStatus === "running") {
       return false;
@@ -2336,6 +2378,7 @@ export function createApp(root, dependencies = {}) {
         return false;
       }
       activeJobHandle = jobHandle;
+      notifyJobId = jobId;
       setState((next) => {
         next.exportConfig.jobId = jobId;
         return next;
@@ -2860,7 +2903,7 @@ export function createApp(root, dependencies = {}) {
       return;
     }
     if (action?.startsWith("review-")) { await reviewController.handleAction(action, target.dataset.value); return; }
-    if (action === "cancel-job") { await cancelCurrentJob(); return; }
+    if (action === "cancel-job") { autoStartIntent += 1; await cancelCurrentJob(); return; }
     if (action === "reconnect-job") { reconnectJob(); return; }
     if (action === "select-source-file") {
       await selectSourceFile();
@@ -2959,6 +3002,7 @@ export function createApp(root, dependencies = {}) {
       if (store.getState().exportConfig.metadataModal?.isOpen) {
         return;
       }
+      autoStartIntent += 1;
       const { step } = target.dataset;
       if (canOpenStep(store.getState(), step)) {
         setState((next) => {
@@ -2978,6 +3022,10 @@ export function createApp(root, dependencies = {}) {
     }
     if (action === "apply-roi") {
       applyRoi();
+      return;
+    }
+    if (action === "apply-roi-and-run") {
+      await applyRoiAndRun();
       return;
     }
     if (action === "use-suggested-roi") {

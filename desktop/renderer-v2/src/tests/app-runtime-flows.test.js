@@ -4209,3 +4209,122 @@ test("the capture's own files read as saved until the selection or order changes
   assert.equal(blocked.app.debug.getState().review.status, "idle");
   blocked.app.destroy();
 });
+
+async function openRegionStep({ health, getJob, notices }) {
+  installBrowserStubs({ notifyJobFinished: async (input) => { notices.push(input); return true; } });
+  const root = createDynamicStageRoot();
+  const created = [];
+  const app = createApp(root, {
+    exposeTestApi: true,
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "/tmp/preview.png", sourcePath: "/tmp/preview.png", diagnostics: [] }),
+      requestPreviewRoiHealth: health,
+      createJob: async (payload) => { created.push(payload); return "job-x"; },
+      getJob,
+      reviewExport: async () => ({}),
+    },
+  });
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/source-a.mp4";
+    next.source.displayName = "Song A";
+    next.source.metadata = { durationSec: 120, width: 1920, height: 1080 };
+    next.ui.activeStep = "roi";
+    next.roi.frameTime = 10;
+    return next;
+  });
+  await root.dispatchAction("load-preview-frame");
+  await flush();
+  app.debug.setState((next) => { next.roi.draftRect = ROI_RECT; return next; });
+  return { app, root, created };
+}
+
+test("apply and make PDF checks the region, then starts without the PDF info dialog and announces the end", async () => {
+  const notices = [];
+  const job = reflowJob();
+  job.job_id = "job-x";
+  job.result.review_required = true;
+  const { app, root, created } = await openRegionStep({
+    notices,
+    health: async () => ({ riskLevel: "ok", diagnostics: [], envelope: { status: "found", clipped: false } }),
+    getJob: async () => job,
+  });
+  await root.dispatchAction("apply-roi-and-run");
+  for (let i = 0; i < 5; i += 1) await flush();
+  const state = app.debug.getState();
+  assert.deepEqual(state.roi.appliedRect, ROI_RECT);
+  assert.equal(created.length, 1);
+  assert.equal(state.exportConfig.metadataModal?.isOpen ?? false, false);
+  // the title comes from the video, as the dialog would have prefilled it
+  assert.equal(created[0].options.export.document_header.title, "Song A");
+  assert.deepEqual(created[0].options.detect.roi, ROI_RECT);
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0].title, "Song A");
+  assert.equal(notices[0].body, "Your PDF is ready, with a few places to check on the review screen.");
+  app.destroy();
+});
+
+test("apply and make PDF stops on the export step when the region cuts the score", async () => {
+  const notices = [];
+  const suggested = [[0, 820], [1920, 820], [1920, 1080], [0, 1080]];
+  const { app, root, created } = await openRegionStep({
+    notices,
+    health: async () => ({ riskLevel: "warn", diagnostics: [], envelope: { status: "found", clipped: true, suggestedRoi: suggested } }),
+    getJob: async () => reflowJob(),
+  });
+  await root.dispatchAction("apply-roi-and-run");
+  for (let i = 0; i < 5; i += 1) await flush();
+  const state = app.debug.getState();
+  assert.equal(created.length, 0);
+  assert.equal(state.ui.activeStep, "export");
+  assert.equal(state.roi.clipCheck.status, "clipped");
+  assert.match(root.querySelector("#stagePane").innerHTML, /data-action="use-suggested-roi"/);
+  assert.equal(notices.length, 0);
+  app.destroy();
+});
+
+test("a restored finished job is not announced again", async () => {
+  const notices = [];
+  installBrowserStubs({ notifyJobFinished: async (input) => { notices.push(input); return true; } });
+  const { app } = await (async () => {
+    const root = createRoot();
+    const app = createApp(root, { exposeTestApi: true, storage: memoryStorage(), api: { requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }), getJob: async () => reflowJob(), reviewExport: async () => ({}) } });
+    app.debug.setState((next) => { next.source.filePath = "/tmp/source.mp4"; next.exportConfig.jobId = "job-r"; next.exportConfig.formats = ["pdf"]; return next; });
+    await root.dispatchAction("reconnect-job");
+    await flush();
+    return { app };
+  })();
+  assert.equal(app.debug.getState().exportConfig.runStatus, "done");
+  assert.equal(notices.length, 0);
+  app.destroy();
+});
+
+test("apply and make PDF waits for a clear check: a postponed check or a cancel in between starts nothing", async () => {
+  // the processor is not ready: the check is postponed, so the start is left to the user
+  let notices = [];
+  let opened = await openRegionStep({ notices, health: async () => { throw new Error("offline"); }, getJob: async () => reflowJob() });
+  opened.app.debug.setState((next) => { next.ui.backend = { ...next.ui.backend, ready: false }; return next; });
+  await opened.root.dispatchAction("apply-roi-and-run");
+  for (let i = 0; i < 5; i += 1) await flush();
+  assert.equal(opened.created.length, 0);
+  opened.app.destroy();
+
+  // a manual start and cancel while the check runs: the pending automatic start is dropped
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  notices = [];
+  opened = await openRegionStep({ notices, health: () => held, getJob: async () => ({ job_id: "job-x", status: "cancelled", progress: 0, result: {} }) });
+  // the check is held: do not wait for the click to finish
+  const pending = opened.root.dispatchAction("apply-roi-and-run");
+  await flush();
+  opened.app.debug.setState((next) => { next.exportConfig.formats = ["png"]; return next; });
+  await opened.root.dispatchAction("run-export"); // a manual start (images: no dialog)
+  await flush();
+  const manual = opened.created.length;
+  await opened.root.dispatchAction("cancel-job");
+  release({ riskLevel: "ok", diagnostics: [], envelope: { status: "found", clipped: false } });
+  await pending;
+  for (let i = 0; i < 6; i += 1) await flush();
+  assert.equal(manual, 1);
+  assert.equal(opened.created.length, manual);
+  opened.app.destroy();
+});

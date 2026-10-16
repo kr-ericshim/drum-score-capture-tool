@@ -2,7 +2,7 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 const crypto = require("crypto");
-const { app, BrowserWindow, clipboard, dialog, ipcMain, net, shell } = require("electron");
+const { app, BrowserWindow, clipboard, dialog, ipcMain, net, Notification, shell } = require("electron");
 const { spawn, spawnSync } = require("child_process");
 const { decidePackagedBackendLaunchMode } = require("./backend-launch-policy");
 const { resolveBackendJobsDir } = require("./backend-job-paths");
@@ -150,6 +150,8 @@ async function runReleaseInstall({ unsavedWork = false } = {}) {
 }
 
 let mainWindow = null;
+// "files are ready" notices still on screen: kept referenced so a click still brings the window back
+const jobNotifications = new Set();
 let backendProcess = null;
 let setupProcess = null;
 let isBackendStopping = false;
@@ -904,6 +906,28 @@ ipcMain.handle("select-video-file", async () => {
     downloadsPath: app.getPath("downloads"),
   }));
 
+  // A capture the user started finished while they were in another app: say so, and bring the
+  // window back on click. Nothing is shown while the window has focus.
+  ipcMain.handle("notify-job-finished", (_, input) => {
+    const title = String(input?.title || "").trim().slice(0, 120);
+    const body = String(input?.body || "").trim().slice(0, 240);
+    if (!title || !mainWindow || mainWindow.isDestroyed() || mainWindow.isFocused() || !Notification.isSupported()) return false;
+    const notice = new Notification({ title, body });
+    const release = () => jobNotifications.delete(notice);
+    notice.on("click", () => {
+      release();
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+      if (process.platform === "darwin") app.focus({ steal: true });
+    });
+    notice.on("close", release);
+    notice.on("failed", release);
+    jobNotifications.add(notice);
+    notice.show();
+    return true;
+  });
   ipcMain.handle("copy-text", async (_, text) => {
     const value = String(text || "");
     if (!value.trim()) {
