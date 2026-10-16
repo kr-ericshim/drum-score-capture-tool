@@ -367,3 +367,10 @@ test("isRectValid only accepts four-point rects", () => {
   assert.equal(isRectValid([[0, 0], [1, 1]]), false);
   assert.equal(isRectValid([[0, 0], [10, 0], [10, 10], [0, 10]]), true);
 });
+
+test("the default PDF title drops a local video's extension", () => {
+  const today = new Date("2026-10-16T09:00:00Z");
+  assert.equal(createDocumentHeaderState("/v/0ZazKGcY0uo.mp4", today, "0ZazKGcY0uo.mp4").title, "0ZazKGcY0uo");
+  assert.equal(createDocumentHeaderState("/v/a.webm", today, "[atthedrum] 밤편지.WEBM").title, "밤편지");
+  assert.equal(createDocumentHeaderState("/v/a.mp4", today, "Song v1.5").title, "Song v1.5");
+});

@@ -55,6 +55,8 @@ function cleanDocumentTitle(value) {
     return "";
   }
   title = title
+    // a local file's name keeps its extension as the display name; the PDF title does not
+    .replace(/\.(?:mp4|mkv|mov|avi|webm)$/iu, "")
     .replace(/^\s*\[[^\]]+\]\s*/u, "")
     .replace(/\s*[|｜]\s*[^|｜]+$/u, "")
     .replace(/\s*[（(][^()（）]*(?:★|☆)[^()（）]*[)）]\s*/gu, " ")

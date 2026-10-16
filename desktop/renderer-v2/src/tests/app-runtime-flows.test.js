@@ -1155,7 +1155,7 @@ test("a PDF export starts at once with the video's title; the details dialog is 
   state = app.debug.getState();
   assert.equal(createJobCalls, 1);
   assert.equal(state.exportConfig.metadataModal.isOpen, false);
-  assert.match(createdPayload?.options?.export?.document_header?.title || "", /^source-a/);
+  assert.equal(createdPayload?.options?.export?.document_header?.title, "source-a");
 });
 
 test("applied review selection becomes editable when a checkbox changes", () => {
