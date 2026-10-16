@@ -66,6 +66,7 @@ baseConfig.files = [
   "backend-launch-policy.js",
   "backend-job-paths.js",
   "save-pdf-as.js",
+  "recent-folders.js",
   "release-updates.js",
   "release-install.js",
   "support-diagnostics.js",

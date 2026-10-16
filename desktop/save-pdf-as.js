@@ -9,7 +9,7 @@ function pdfFileName(value) {
   return `${stem}.pdf`;
 }
 
-async function savePdfAs({ sourcePath, suggestedName, locale }, { dialog, parentWindow, downloadsPath }) {
+async function savePdfAs({ sourcePath, suggestedName, locale }, { dialog, parentWindow, downloadsPath, defaultDir }) {
   const ko = locale === "ko";
   if (typeof sourcePath !== "string" || !path.isAbsolute(sourcePath) || path.extname(sourcePath).toLowerCase() !== ".pdf") {
     throw new Error(ko ? "저장할 PDF 경로가 올바르지 않습니다." : "The PDF path is invalid.");
@@ -19,7 +19,7 @@ async function savePdfAs({ sourcePath, suggestedName, locale }, { dialog, parent
   if (!sourceStat.isFile()) throw new Error(ko ? "PDF 파일을 찾을 수 없습니다." : "The PDF file is unavailable.");
   const options = {
     title: ko ? "PDF를 다른 이름으로 저장" : "Save PDF As",
-    defaultPath: path.join(downloadsPath, pdfFileName(suggestedName || path.basename(sourcePath))),
+    defaultPath: path.join(defaultDir || downloadsPath, pdfFileName(suggestedName || path.basename(sourcePath))),
     filters: [{ name: "PDF", extensions: ["pdf"] }],
     properties: ["createDirectory", "showOverwriteConfirmation"],
   };

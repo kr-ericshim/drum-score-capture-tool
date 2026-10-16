@@ -7,6 +7,7 @@ const { spawn, spawnSync } = require("child_process");
 const { decidePackagedBackendLaunchMode } = require("./backend-launch-policy");
 const { resolveBackendJobsDir } = require("./backend-job-paths");
 const { savePdfAs } = require("./save-pdf-as");
+const { createRecentFolders } = require("./recent-folders");
 const { createReleaseUpdates, newerVersion, verifyInstallerFile, RELEASES_URL } = require("./release-updates");
 const {
   resolveMacAppBundle, macUpdateWorkDir, macInstallBlocker, prepareMacUpdate, launchMacSwap, launchWindowsInstaller,
@@ -26,7 +27,11 @@ let releaseUpdates = null;
 // What the open report dialog showed the user; sending uses exactly this.
 let preparedBugReport = null;
 let pendingReleaseInstall = null;
-let lastVideoDir;
+let recentFolders = null;
+function getRecentFolders() {
+  if (!recentFolders) recentFolders = createRecentFolders(path.join(app.getPath("userData"), "recent-folders.json"));
+  return recentFolders;
+}
 function releaseDownloadDir() {
   return path.join(app.getPath("userData"), "updates");
 }
@@ -877,7 +882,7 @@ ipcMain.handle("select-video-file", async () => {
     // Electron 43+ opens dialogs in Downloads unless told otherwise, so keep the last folder ourselves.
     const result = await dialog.showOpenDialog({
       title: "악보 영상 선택",
-      defaultPath: lastVideoDir,
+      defaultPath: getRecentFolders().get("video"),
       properties: ["openFile"],
       filters: [
         {
@@ -889,7 +894,7 @@ ipcMain.handle("select-video-file", async () => {
     if (result.canceled || result.filePaths.length === 0) {
       return "";
     }
-    lastVideoDir = path.dirname(result.filePaths[0]);
+    getRecentFolders().remember("video", path.dirname(result.filePaths[0]));
     return result.filePaths[0];
   });
 
@@ -900,11 +905,16 @@ ipcMain.handle("select-video-file", async () => {
     return shell.openPath(targetPath);
   });
 
-  ipcMain.handle("save-pdf-as", async (_, options) => savePdfAs(options, {
-    dialog,
-    parentWindow: mainWindow && !mainWindow.isDestroyed() ? mainWindow : null,
-    downloadsPath: app.getPath("downloads"),
-  }));
+  ipcMain.handle("save-pdf-as", async (_, options) => {
+    const result = await savePdfAs(options, {
+      dialog,
+      parentWindow: mainWindow && !mainWindow.isDestroyed() ? mainWindow : null,
+      downloadsPath: app.getPath("downloads"),
+      defaultDir: getRecentFolders().get("pdf"),
+    });
+    if (!result.canceled && result.filePath) getRecentFolders().remember("pdf", path.dirname(result.filePath));
+    return result;
+  });
 
   // A capture the user started finished while they were in another app: say so, and bring the
   // window back on click. Nothing is shown while the window has focus.
