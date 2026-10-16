@@ -1210,6 +1210,8 @@ export function createApp(root, dependencies = {}) {
       next.exportConfig.outputDir = String(job.result?.output_dir || "");
       next.exportConfig.pdfPath = String(job.result?.pdf || "");
       const draft = restoredDraftFor(next.review, job, pages);
+      // the order the capture built its files in (video order), before a restored draft rearranges it
+      const capturedOrder = pages.map(page => page.id);
       if (draft) pages = orderPagesBySystemIds(pages, draft.systemOrder);
       next.review.pages = pages;
       next.review.jobRevision = jobRevision(job.result || {});
@@ -1235,6 +1237,13 @@ export function createApp(root, dependencies = {}) {
       next.review.selectedPageIds = savedSelection?.length
         ? savedPageIds
         : pages.some(page => page.autoExcludeCandidate) ? preferredPageIds : pages.map((page) => page.id);
+      // Files from the capture itself (no review rebuild yet): a clean chart built every system it
+      // kept, in video order, which is the default selection. A layout conflict built no file.
+      const firstCaptureFiles = !savedSelection?.length && !next.review.originalScreens.active
+        && job.status === "done" && pages.some(page => page.kind === "system")
+        && Boolean(job.result?.pdf || job.result?.images?.length)
+        && String(job.result?.reflow_state || "") !== "layout_conflict";
+      const firstCaptureIds = firstCaptureFiles ? [...next.review.selectedPageIds] : [];
       let draftMatchesSavedFiles = false;
       if (draft) {
         next.review.selectedPageIds = pages.filter(page => draft.selectedPaths.includes(page.capturePath)).map(page => page.id);
@@ -1246,6 +1255,13 @@ export function createApp(root, dependencies = {}) {
           && draft.selectedPaths.length === next.review.selectedPageIds.length
           && savedPageIds.length === next.review.selectedPageIds.length
           && savedPageIds.every(id => next.review.selectedPageIds.includes(id));
+        // or, before any rebuild, it is still the capture's own selection and order
+        if (draft.applied && firstCaptureFiles) {
+          draftMatchesSavedFiles = draft.selectedPaths.length === firstCaptureIds.length
+            && next.review.selectedPageIds.length === firstCaptureIds.length
+            && firstCaptureIds.every(id => next.review.selectedPageIds.includes(id))
+            && pages.every((page, index) => page.id === capturedOrder[index]);
+        }
         next.review.status = "idle";
       }
       if (pages.length) {
@@ -1260,7 +1276,8 @@ export function createApp(root, dependencies = {}) {
       next.review.outputDir = String(job.result?.output_dir || "");
       next.review.pdfPath = String(job.result?.pdf || "");
       next.review.keptCount = Number(job.result?.review_export?.kept_count || pages.length || 0);
-      next.review.status = restoredDraft ? (draftMatchesSavedFiles ? "applied" : "idle") : job.result?.review_export || next.review.originalScreens.active ? "applied" : "idle";
+      next.review.status = restoredDraft ? (draftMatchesSavedFiles ? "applied" : "idle")
+        : job.result?.review_export || next.review.originalScreens.active || firstCaptureFiles ? "applied" : "idle";
       next.review.error = "";
       // Recoverable failures retain the systems for review and rebuilding.
       if (isReviewableRun(next) && pages.length) {

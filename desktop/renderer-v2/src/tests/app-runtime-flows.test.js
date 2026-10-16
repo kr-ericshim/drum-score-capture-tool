@@ -4168,3 +4168,44 @@ test("the review opens on the A4 pages; picking a system shows it, and folded re
   assert.doesNotMatch(stage(), /review-viewer-surface is-pages/);
   app.destroy();
 });
+
+test("the capture's own files read as saved until the selection or order changes, across a restart", async () => {
+  const stage = root => root.querySelector("#stagePane").innerHTML;
+  const storage = memoryStorage();
+  // straight from the capture: no review rebuild yet, every kept system in video order
+  const first = await openReflowApp({ storage, getJob: async () => reflowJob() });
+  assert.equal(first.app.debug.getState().review.status, "applied");
+  assert.match(stage(first.root), /data-action="open-output-pdf"[^>]*>Open saved PDF/);
+  assert.match(stage(first.root), /review-save-state is-saved/);
+  first.app.destroy();
+
+  // a restart with nothing changed keeps it saved
+  const second = await openReflowApp({ storage, getJob: async () => reflowJob() });
+  assert.equal(second.app.debug.getState().review.status, "applied");
+  // a new order is not what the files were built from
+  await second.root.dispatchAction("focus-review-page", { pageId: second.app.debug.getState().review.pages[1].id });
+  await second.root.dispatchAction("review-move-up");
+  await flush();
+  assert.equal(second.app.debug.getState().review.status, "idle");
+  assert.match(stage(second.root), /data-action="open-output-pdf"[^>]*>Open PDF</);
+  second.app.destroy();
+
+  // that order was not rebuilt: after a restart it is still not the saved files
+  const third = await openReflowApp({ storage, getJob: async () => reflowJob() });
+  assert.equal(third.app.debug.getState().review.status, "idle");
+  third.app.destroy();
+
+  // leaving a system out is a change too
+  const fresh = await openReflowApp({ storage: memoryStorage(), getJob: async () => reflowJob() });
+  fresh.root.dispatchInput({ dataset: { action: "toggle-review-page", pageId: fresh.app.debug.getState().review.pages[0].id }, checked: false });
+  await flush();
+  assert.equal(fresh.app.debug.getState().review.status, "idle");
+  fresh.app.destroy();
+
+  // a layout conflict built no file: nothing is saved
+  const conflict = reflowJob();
+  conflict.result.reflow_state = "layout_conflict";
+  const blocked = await openReflowApp({ storage: memoryStorage(), getJob: async () => conflict });
+  assert.equal(blocked.app.debug.getState().review.status, "idle");
+  blocked.app.destroy();
+});
