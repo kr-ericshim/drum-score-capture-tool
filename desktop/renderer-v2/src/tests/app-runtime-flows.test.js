@@ -168,6 +168,10 @@ function createRoot() {
       const target = createEventTarget({ action, dataset });
       await listeners.dispatch("click", { target });
     },
+    async dispatchKeyEvent(event) {
+      await listeners.dispatch("keydown", event);
+      return event;
+    },
     async dispatchKeydown(key) {
       const event = {
         key,
@@ -680,11 +684,11 @@ test("an applied fractional auto suggestion lets export start", async () => {
   assert.equal(state.ui.activeStep, "export");
   assert.equal(buildRoiScreenModel(state).statusTone, "ready");
 
-  await root.dispatchAction("run-export");
+  await root.dispatchAction("edit-export-metadata");
   await flush();
   state = app.debug.getState();
   assert.equal(state.exportConfig.error, "", state.exportConfig.error);
-  assert.equal(state.exportConfig.metadataModal?.isOpen, true, "PDF export continues to the document details");
+  assert.equal(state.exportConfig.metadataModal?.isOpen, true, "PDF details can be edited before the start");
 
   // a fractional draft equal to the applied box to the pixel is not a pending change either
   app.debug.setState((next) => {
@@ -1108,16 +1112,18 @@ test("runExport prevents duplicate jobs when re-entered before job creation reso
   assert.equal(app.debug.getState().exportConfig.jobId, "job-1");
 });
 
-test("runExport opens the metadata modal before polling when pdf is selected", async () => {
+test("a PDF export starts at once with the video's title; the details dialog is a separate action", async () => {
   installBrowserStubs();
   let createJobCalls = 0;
+  let createdPayload = null;
   const root = createRoot();
   const app = createApp(root, {
     exposeTestApi: true,
     api: {
       requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
-      createJob: async () => {
+      createJob: async (payload) => {
         createJobCalls += 1;
+        createdPayload = payload;
         return "job-1";
       },
       getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, current_step: "done", message: "", result: {} }),
@@ -1136,13 +1142,20 @@ test("runExport opens the metadata modal before polling when pdf is selected", a
     return next;
   });
 
-  await root.dispatchAction("run-export");
+  await root.dispatchAction("edit-export-metadata");
   await flush();
-
-  const state = app.debug.getState();
+  let state = app.debug.getState();
   assert.equal(createJobCalls, 0);
   assert.equal(state.exportConfig.metadataModal.isOpen, true);
   assert.equal(state.exportConfig.runStatus, "idle");
+
+  app.debug.setState((next) => { next.exportConfig.metadataModal.isOpen = false; return next; });
+  await root.dispatchAction("run-export");
+  await flush();
+  state = app.debug.getState();
+  assert.equal(createJobCalls, 1);
+  assert.equal(state.exportConfig.metadataModal.isOpen, false);
+  assert.match(createdPayload?.options?.export?.document_header?.title || "", /^source-a/);
 });
 
 test("applied review selection becomes editable when a checkbox changes", () => {
@@ -4327,4 +4340,133 @@ test("apply and make PDF waits for a clear check: a postponed check or a cancel 
   assert.equal(manual, 1);
   assert.equal(opened.created.length, manual);
   opened.app.destroy();
+});
+
+function seedSavedReview(calls, { installs = true } = {}) {
+  installBrowserStubs();
+  const root = createRoot();
+  const strips = ["/j/strip_sys-001.png", "/j/strip_sys-002.png"];
+  let revision = 1;
+  const result = () => ({
+    output_model: "clean_reflow_v1", review_candidates: strips, preview_images: ["/j/p1.jpg"], pdf: "/j/out.pdf", images: ["/j/p1.png"],
+    capture_diagnostics: Object.fromEntries(strips.map((p, i) => [p, { system_id: `sys-00${i + 1}`, recommended_action: "keep" }])),
+    reflow: { revision },
+  });
+  const app = createApp(root, {
+    exposeTestApi: true,
+    api: {
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: result() }),
+      reviewExport: async (jobId, body) => {
+        calls.push(body);
+        if (!installs) throw Object.assign(new Error("EXPORT_FAILED: disk full"), { code: "EXPORT_FAILED" });
+        revision += 1;
+        return {};
+      },
+    },
+  });
+  app.debug.setState((next) => {
+    next.source.filePath = "/tmp/source-a.mp4";
+    next.roi.appliedRect = ROI_RECT;
+    next.roi.draftRect = ROI_RECT;
+    next.exportConfig.jobId = "job-1";
+    next.exportConfig.runStatus = "done";
+    next.exportConfig.formats = ["pdf"];
+    next.ui.activeStep = "review";
+    return next;
+  });
+  return { root, app };
+}
+
+test("a failed title rebuild keeps the old title and offers the new one again", async () => {
+  const calls = [];
+  const { root, app } = seedSavedReview(calls, { installs: false });
+  await root.dispatchAction("reconnect-job");
+  await flush();
+  const before = app.debug.getState().exportConfig.documentHeader?.title;
+  await root.dispatchAction("edit-review-title");
+  app.debug.setState((next) => { next.ui.reviewTitleDraft = "새 제목"; return next; });
+  await root.dispatchAction("apply-review-title");
+  await flush();
+  assert.equal(calls.length, 1);
+  const state = app.debug.getState();
+  assert.equal(state.exportConfig.documentHeader?.title, before);
+  assert.equal(state.ui.reviewTitleDraft, "새 제목");
+  assert.ok(state.review.error);
+});
+
+test("the PDF title is fixed in review and the PDF rebuilt from the kept systems", async () => {
+  const calls = [];
+  const { root, app } = seedSavedReview(calls);
+  await root.dispatchAction("reconnect-job");
+  await flush();
+  const markup = root.querySelector("#stagePane").innerHTML;
+  assert.match(markup, /data-action="edit-review-title"/);
+  assert.match(markup, /data-action="select-source-file"/, "a saved chart offers the next video");
+
+  await root.dispatchAction("edit-review-title");
+  assert.equal(typeof app.debug.getState().ui.reviewTitleDraft, "string");
+  app.debug.setState((next) => { next.ui.reviewTitleDraft = "   "; return next; });
+  await root.dispatchAction("apply-review-title");
+  assert.equal(calls.length, 0, "an empty title is refused");
+  assert.ok(app.debug.getState().review.error);
+
+  app.debug.setState((next) => { next.ui.reviewTitleDraft = "  새   제목 "; return next; });
+  await root.dispatchAction("apply-review-title");
+  await flush();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].documentHeader.title, "새 제목");
+  assert.deepEqual(calls[0].keepCaptures.length, 2);
+  const state = app.debug.getState();
+  assert.equal(state.exportConfig.documentHeader.title, "새 제목");
+  assert.equal(state.ui.reviewTitleDraft, null);
+});
+
+test("Escape leaves the title unchanged; a plain rebuild sends no header", async () => {
+  const calls = [];
+  const { root, app } = seedSavedReview(calls);
+  await root.dispatchAction("reconnect-job");
+  await flush();
+  const before = app.debug.getState().exportConfig.documentHeader?.title;
+  await root.dispatchAction("edit-review-title");
+  await root.dispatchKeyEvent({ key: "Escape", target: { dataset: { action: "review-title-input" } }, preventDefault() {}, stopPropagation() {} });
+  assert.equal(app.debug.getState().ui.reviewTitleDraft, null);
+  assert.equal(app.debug.getState().exportConfig.documentHeader?.title, before);
+  app.debug.setState((next) => { next.review.selectedPageIds = next.review.selectedPageIds.slice(0, 1); return next; });
+  await root.dispatchAction("apply-review");
+  await flush();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].documentHeader, undefined);
+});
+
+test("Enter in the YouTube field starts the import; an invalid link or IME composition does not", async () => {
+  installBrowserStubs();
+  const root = createRoot();
+  let prepares = 0;
+  const app = createApp(root, {
+    exposeTestApi: true,
+    api: {
+      createPreviewSourceJob: async () => { prepares += 1; return "source-1"; },
+      getPreviewSourceJob: async () => ({
+        jobId: "source-1", status: "done", stage: "done", progress: 1, progressMode: "determinate",
+        message: "youtube source ready", logLines: [],
+        result: { videoPath: "/tmp/cache/youtube.mp4", fromCache: false, videoUrl: "/jobs-files/_preview/youtube.mp4" },
+      }),
+      requestPreviewFrame: async () => ({ imagePath: "", sourcePath: "", diagnostics: [] }),
+      createJob: async () => "job-1",
+      getJob: async () => ({ job_id: "job-1", status: "done", progress: 1, result: {} }),
+      reviewExport: async () => ({}),
+    },
+    readVideoMetadata: async () => ({ durationSec: 60, durationLabel: "01:00", resolutionLabel: "1920x1080" }),
+  });
+  const enter = (extra = {}) => ({ key: "Enter", target: { dataset: { action: "youtube-url-input" } }, preventDefault() {}, ...extra });
+  app.debug.setState((next) => { next.source.youtubeUrl = "not a link"; return next; });
+  await root.dispatchKeyEvent(enter());
+  app.debug.setState((next) => { next.source.youtubeUrl = "https://youtu.be/demo"; return next; });
+  await root.dispatchKeyEvent(enter({ isComposing: true }));
+  assert.equal(prepares, 0);
+  await root.dispatchKeyEvent(enter());
+  await flush();
+  assert.equal(prepares, 1);
 });

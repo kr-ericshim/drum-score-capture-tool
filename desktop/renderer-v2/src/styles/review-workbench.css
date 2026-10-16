@@ -9,6 +9,37 @@
 }
 .screen-review .review-heading-copy h1 { font-size: 15px; }
 .screen-review .review-heading-copy p { margin: 3px 0 0; font-size: 12px; color: var(--text-2); }
+.screen-review .review-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; margin-top: 3px; }
+.screen-review .review-title-row p { margin: 0; min-width: 0; }
+.screen-review .review-title-edit {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.screen-review .review-title-edit:disabled { color: var(--text-3); text-decoration: none; cursor: default; }
+.screen-review .review-title-row.is-editing { flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.screen-review .review-title-input {
+  flex: 1 1 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface-control);
+  color: var(--text-1);
+  font: inherit;
+  font-size: 13px;
+}
+.screen-review .review-title-input:hover { border-color: var(--line-strong); }
+.screen-review .review-title-input:focus-visible { outline: 0; border-color: var(--accent); box-shadow: var(--focus); }
+.screen-review .review-title-button { flex: none; height: 28px; padding: 0 10px; font-size: 12px; }
 
 /* Status dots: drawn, not typed. Amber = look at this, red = proposed removal. */
 .screen-review :is(.review-inline-pill, .review-save-state.is-pending)::before {

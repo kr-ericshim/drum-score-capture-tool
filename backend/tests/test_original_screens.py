@@ -163,10 +163,15 @@ class OriginalScreensFlowTest(unittest.TestCase):
     def test_build_then_rebuild_from_a_selection(self):
         artifact = self._job("job-done")
         clean_before = sorted(p.name for p in (artifact / "export").rglob("*"))
-        task, done = self._run("job-done", JobReviewExportRequest(output_model="original_screens_v1"))
+        header = {"title": "Corrected original title", "performer": "", "bpm": None, "date": "", "memo": ""}
+        with patch.object(original_screens, "build", wraps=original_screens.build) as build:
+            task, done = self._run("job-done", JobReviewExportRequest(output_model="original_screens_v1", document_header=header))
+        self.assertEqual(build.call_args.kwargs["header"]["title"], header["title"])
         self.assertEqual(task.revision, 4)
         self.assertEqual(done.state, "done", done.error)
         job = self.store.get("job-done")
+        self.assertEqual(job.options["export"]["document_header"], header)
+        self.assertEqual(JobStore(self.root).get("job-done").options["export"]["document_header"], header)
         self.assertEqual((job.status, job.error_code), (JobStatus.DONE, None))
         self.assertEqual(job.result["output_model"], "original_screens_v1")
         self.assertEqual(job.result["reflow"]["revision"], 4)
@@ -182,11 +187,15 @@ class OriginalScreensFlowTest(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in (artifact / "export").rglob("*")), clean_before)
         self.assertFalse(list(artifact.glob("original_screens_work_*")) + list(artifact.glob("original_screens_staged_*")))
 
-        with patch.object(original_screens, "capture_frames", side_effect=AssertionError("captured again")):
+        header["title"] = "Selected screens title"
+        with patch.object(original_screens, "capture_frames", side_effect=AssertionError("captured again")), \
+                patch.object(original_screens, "rebuild", wraps=original_screens.rebuild) as rebuild:
             _task, again = self._run("job-done", JobReviewExportRequest(output_model="original_screens_v1",
-                                                                          keep_captures=[str(screens[1])]))
+                                                                          keep_captures=[str(screens[1])], document_header=header))
         self.assertEqual(again.state, "done", again.error)
+        self.assertEqual(rebuild.call_args.kwargs["header"]["title"], header["title"])
         job = self.store.get("job-done")
+        self.assertEqual(job.options["export"]["document_header"], header)
         self.assertEqual(job.result["reflow"]["revision"], 5)
         self.assertEqual(job.result["original_screens"]["selected"], [str(screens[1])])
         self.assertEqual(len(job.result["original_screens"]["screens"]), 2)
@@ -200,6 +209,7 @@ class OriginalScreensFlowTest(unittest.TestCase):
     def test_cancel_or_missing_source_keeps_the_previous_result(self):
         artifact = self._job("job-c")
         before = copy.deepcopy(self.store.get("job-c").result)
+        options_before = copy.deepcopy(self.store.get("job-c").options)
         started, release = threading.Event(), threading.Event()
         real = original_screens.select_screens
 
@@ -211,7 +221,8 @@ class OriginalScreensFlowTest(unittest.TestCase):
             return real(*args, **kwargs)
 
         with patch.object(original_screens, "select_screens", side_effect=blocking):
-            task = main.start_review_export("job-c", JobReviewExportRequest(output_model="original_screens_v1"))
+            task = main.start_review_export("job-c", JobReviewExportRequest(output_model="original_screens_v1",
+                                                                           document_header={"title": "Cancelled title"}))
             self.assertTrue(started.wait(60))
             main.cancel_review_export("job-c", task.task_id)
             release.set()
@@ -220,6 +231,8 @@ class OriginalScreensFlowTest(unittest.TestCase):
                 time.sleep(0.05)
         self.assertEqual(main.get_review_export("job-c", task.task_id).state, "cancelled")
         self.assertEqual(self.store.get("job-c").result, before)
+        self.assertEqual(self.store.get("job-c").options, options_before)
+        self.assertEqual(JobStore(self.root).get("job-c").options, options_before)
         self.assertFalse(list(artifact.glob("original_screens*")))
 
         self.video.unlink()
@@ -249,6 +262,7 @@ class OriginalScreensFlowTest(unittest.TestCase):
     def test_a_failed_result_record_keeps_a_pending_layout_conflict_pending(self):
         artifact = self._job("job-p")
         job = self.store.get("job-p")
+        options_before = copy.deepcopy(job.options)
         result = copy.deepcopy(job.result)
         result.update(reflow_state="layout_conflict", images=[], pdf=None)
         self.store.set_state("job-p", JobStatus.ERROR, 1.0, "layout_conflict", "conflict", result=result,
@@ -262,12 +276,15 @@ class OriginalScreensFlowTest(unittest.TestCase):
                 raise OSError("disk full")
 
         with patch.object(self.store, "set_state", side_effect=fail_done):
-            _task, done = self._run("job-p", JobReviewExportRequest(output_model="original_screens_v1"))
+            _task, done = self._run("job-p", JobReviewExportRequest(output_model="original_screens_v1",
+                                                                   document_header={"title": "Uncommitted title"}))
         self.assertEqual(done.state, "failed")
         job = self.store.get("job-p")
         self.assertEqual((job.status, job.error_code), (JobStatus.ERROR, "LAYOUT_CONFLICT"))
         self.assertTrue(main._layout_conflict_pending(job))
         self.assertEqual(job.result, result)
+        self.assertEqual(job.options, options_before)
+        self.assertEqual(JobStore(self.root).get("job-p").options, options_before)
         self.assertFalse((artifact / "original_screens").exists())
 
     def test_refused_job_and_square_roi_are_refused(self):

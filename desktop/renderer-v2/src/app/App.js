@@ -36,7 +36,7 @@ import { createWorkspaceMotion } from "../ui/shell/workspaceMotion.js";
 import { renderTopBar } from "../ui/shell/TopBar.js";
 import { renderProcessRail } from "../ui/shell/ProcessRail.js";
 import { renderContextLane } from "../ui/shell/ContextLane.js";
-import { renderSourceScreen } from "../features/source/SourceScreen.js";
+import { isLikelyYoutubeUrl, renderSourceScreen } from "../features/source/SourceScreen.js";
 import { createSourceController } from "../features/source/sourceController.js";
 import { renderRoiScreen } from "../features/roi/RoiScreen.js";
 import { patchRoiStage } from "../features/roi/patchRoiStage.js";
@@ -639,6 +639,7 @@ export function createApp(root, dependencies = {}) {
       error: "",
     };
     next.exportConfig = createInitialExportConfig(next.source.filePath, new Date(), sourceDisplayName);
+    next.ui.reviewTitleDraft = null;
     next.review = {
       pages: [],
       selectedPageIds: [],
@@ -885,8 +886,12 @@ export function createApp(root, dependencies = {}) {
         ? captureLiveExportMetadataDraft(shell.stagePane, state.exportConfig?.metadataModal?.draft)
         : null;
       const liveMetadataTextInputSnapshot = captureLiveMetadataTextInputSnapshot();
+      // the review title being typed is not in the state until it is applied
+      const liveReviewTitle = shell.stagePane.querySelector?.("#reviewTitleInput")?.value;
       if (!patchRoiStage(shell.stagePane, stageMarkupValue)) shell.stagePane.innerHTML = stageMarkupValue;
       lastStageMarkup = stageMarkupValue;
+      const reviewTitleInput = typeof liveReviewTitle === "string" ? shell.stagePane.querySelector?.("#reviewTitleInput") : null;
+      if (reviewTitleInput) reviewTitleInput.value = liveReviewTitle;
       restoreLiveExportMetadataDraft(shell.stagePane, liveMetadataDraftSnapshot);
       restoreLiveMetadataTextInputSnapshot(shell.stagePane, liveMetadataTextInputSnapshot);
       restoreStageScrollSnapshot(shell.stagePane, scrollSnapshot);
@@ -2464,15 +2469,16 @@ export function createApp(root, dependencies = {}) {
     if (state.exportConfig.metadataModal?.isOpen) {
       return;
     }
-    if (!canRunExport(state)) {
-      await startExportRun(state);
-      return;
-    }
-    if (isPdfSelected(Array.isArray(state.exportConfig.formats) ? state.exportConfig.formats : [])) {
-      openExportMetadataModal();
-      return;
-    }
+    // the PDF starts with the current document info (by default the video's title);
+    // "Edit PDF details" opens the dialog first
     await startExportRun(state);
+  }
+
+  function editExportMetadata() {
+    const state = store.getState();
+    if (state.exportConfig.metadataModal?.isOpen || !canRunExport(state)
+      || !isPdfSelected(Array.isArray(state.exportConfig.formats) ? state.exportConfig.formats : [])) return;
+    openExportMetadataModal();
   }
 
   function reviewErrorMessage(error, locale) {
@@ -2670,7 +2676,7 @@ export function createApp(root, dependencies = {}) {
     }
   }
 
-  async function applyReviewSelection({ staffGapMm = null } = {}) {
+  async function applyReviewSelection({ staffGapMm = null, documentHeader = null } = {}) {
     const state = store.getState();
     if (hasDirtyRoiDraft(state)) return;
     const formats = Array.isArray(state.exportConfig.formats) ? state.exportConfig.formats : [];
@@ -2698,7 +2704,7 @@ export function createApp(root, dependencies = {}) {
     const selected = selectedPages.map((page) => page.capturePath);
     if (state.review.originalScreens?.active) {
       // original screens: rebuild from the saved screens the user kept (no new capture)
-      await runOriginalScreensExport({ keepCaptures: selected, formats });
+      await runOriginalScreensExport({ keepCaptures: selected, formats, documentHeader });
       return;
     }
     // Clean reflow: the list order is the output order.
@@ -2727,6 +2733,7 @@ export function createApp(root, dependencies = {}) {
         // the score layout chosen now (each rebuild sends it, so an older job follows the toggle too)
         measureReflow: state.exportConfig.measureReflow !== false,
         ...(rejectedSeamIds ? { rejectedSeamIds, baseRevision: previousRevision } : {}),
+        ...(documentHeader ? { documentHeader } : {}),
       }, {
         onTask: (task) => trackExportTask(jobId, task, sourceSessionToken),
         shouldStop: () => destroyed || !runtimeGuards.isCurrentSourceSession(sourceSessionToken),
@@ -2745,7 +2752,7 @@ export function createApp(root, dependencies = {}) {
    * backend captures the video again; with them it uses only those saved screens. Same background
    * task, progress, cancel and error handling as the clean rebuild; the previous files stay on failure.
    */
-  async function runOriginalScreensExport({ keepCaptures = [], formats }) {
+  async function runOriginalScreensExport({ keepCaptures = [], formats, documentHeader = null }) {
     const state = store.getState();
     if (!state.exportConfig.jobId || ["running", "editing"].includes(state.review.status) || state.ui.savingPdfAs) return;
     const sourceSessionToken = runtimeGuards.captureSourceSession();
@@ -2759,7 +2766,7 @@ export function createApp(root, dependencies = {}) {
       return next;
     });
     try {
-      await runtimeApi.reviewExport(jobId, { outputModel: "original_screens_v1", keepCaptures, formats }, {
+      await runtimeApi.reviewExport(jobId, { outputModel: "original_screens_v1", keepCaptures, formats, ...(documentHeader ? { documentHeader } : {}) }, {
         onTask: (task) => trackExportTask(jobId, task, sourceSessionToken),
         shouldStop: () => destroyed || !runtimeGuards.isCurrentSourceSession(sourceSessionToken),
       });
@@ -2768,6 +2775,75 @@ export function createApp(root, dependencies = {}) {
     } catch (error) {
       await failReviewExport(error, { jobId, previousRevision, previousStatus, sourceSessionToken });
     }
+  }
+
+  function currentDocumentHeader(state = store.getState()) {
+    const sourceDisplayName = sourceDocumentDisplayName(state.source);
+    return normalizeDocumentHeader(state.exportConfig.documentHeader,
+      createDocumentHeaderState(state.source.filePath, new Date(), sourceDisplayName));
+  }
+
+  function editReviewTitle() {
+    const state = store.getState();
+    if (["running", "editing"].includes(state.review.status) || state.ui.savingPdfAs) return;
+    setState((next) => { next.ui.reviewTitleDraft = currentDocumentHeader(next).title; return next; });
+    focusReviewTitleInput();
+  }
+
+  function focusReviewTitleInput() {
+    queueMicrotask(() => {
+      const input = shell.stagePane?.querySelector?.("#reviewTitleInput");
+      input?.focus?.();
+      input?.select?.();
+    });
+  }
+
+  // back to "Edit title", or to the heading while a rebuild keeps that button disabled
+  function focusAfterReviewTitle() {
+    queueMicrotask(() => {
+      const button = shell.stagePane?.querySelector?.('[data-action="edit-review-title"]');
+      const target = button && !button.disabled ? button : shell.stagePane?.querySelector?.("[data-screen-heading]");
+      target?.focus?.();
+    });
+  }
+
+  function cancelReviewTitle() {
+    setState((next) => { next.ui.reviewTitleDraft = null; return next; });
+    focusAfterReviewTitle();
+  }
+
+  // The PDF is rebuilt with the new title from the systems kept now (no new capture).
+  async function applyReviewTitle() {
+    const state = store.getState();
+    if (typeof state.ui.reviewTitleDraft !== "string") return;
+    const input = shell.stagePane?.querySelector?.("#reviewTitleInput");
+    const title = String(input ? input.value : state.ui.reviewTitleDraft).replace(/\s+/g, " ").trim().slice(0, 120);
+    if (!title) {
+      setState((next) => { next.review.error = t("review.titleRequired", { locale: next.ui.locale }); return next; });
+      focusReviewTitleInput();
+      return;
+    }
+    const documentHeader = { ...currentDocumentHeader(state), title };
+    const { jobId } = state.exportConfig;
+    const previousRevision = Number(state.review.jobRevision || 0);
+    setState((next) => {
+      next.ui.reviewTitleDraft = null;
+      next.review.error = "";
+      return next;
+    });
+    const rebuilt = applyReviewSelection({ documentHeader });
+    focusAfterReviewTitle();
+    await rebuilt;
+    // the title is the document's only once the rebuilt files are installed; a failed or
+    // cancelled rebuild keeps the old title and offers the new one again
+    const after = store.getState();
+    if (after.exportConfig.jobId !== jobId) return;
+    const installed = Number(after.review.jobRevision || 0) > previousRevision;
+    setState((next) => {
+      if (installed) next.exportConfig.documentHeader = documentHeader;
+      else next.ui.reviewTitleDraft = title;
+      return next;
+    });
   }
 
   async function rebuildAsOriginalScreens() {
@@ -3049,6 +3125,10 @@ export function createApp(root, dependencies = {}) {
       await runExport();
       return;
     }
+    if (action === "edit-export-metadata") {
+      editExportMetadata();
+      return;
+    }
     if (action === "confirm-export-metadata") {
       await confirmExportMetadata();
       return;
@@ -3086,6 +3166,9 @@ export function createApp(root, dependencies = {}) {
       await applyReviewSelection();
       return;
     }
+    if (action === "edit-review-title") { editReviewTitle(); return; }
+    if (action === "cancel-review-title") { cancelReviewTitle(); return; }
+    if (action === "apply-review-title") { await applyReviewTitle(); return; }
     if (action === "cancel-review-export") {
       await cancelRunningReviewExport();
       return;
@@ -3303,6 +3386,20 @@ export function createApp(root, dependencies = {}) {
 
   const handleKeyDown = (event) => {
     if (isUpdateInstalling()) return;
+    const keyAction = event.target?.dataset?.action;
+    if (keyAction === "youtube-url-input" && event.key === "Enter" && !event.isComposing) {
+      event.preventDefault?.();
+      const state = store.getState();
+      if (state.source.prepareStatus !== "loading" && isLikelyYoutubeUrl(state.source.youtubeUrl)) void prepareYoutubeSource();
+      return;
+    }
+    if (keyAction === "review-title-input" && !event.isComposing && ["Enter", "Escape"].includes(event.key)) {
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      if (event.key === "Enter") void applyReviewTitle();
+      else cancelReviewTitle();
+      return;
+    }
     if (!bugReport.isOpen) reviewController.handleKey(event);
     if (event.key === "Tab" && store.getState().exportConfig.metadataModal?.isOpen) {
       const tabTargetIndex = exportMetadataTabTargetIndex(event.target);

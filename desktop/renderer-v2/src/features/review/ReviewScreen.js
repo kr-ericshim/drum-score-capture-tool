@@ -492,7 +492,8 @@ export function renderReviewScreen(state) {
   const legacyJob = hasPages && !isSystems && !reflowInfo && !original.active;
   // the current files are an incomplete chart: never shown as an ordinary saved result
   const incomplete = Boolean(reflowInfo?.incomplete) && state.exportConfig.runStatus === "done";
-  const reviewLabel = escapeHtml(state.source.displayName || t("review.fallbackLabel", { locale }));
+  const reviewLabel = escapeHtml(String(state.exportConfig.documentHeader?.title || "").trim()
+    || state.source.displayName || t("review.fallbackLabel", { locale }));
   const reviewCountLabel = escapeHtml(reviewDone
     ? t("review.keptCount", { locale, replacements: { count: selectedCount } })
     : t("review.selectedCount", { locale, replacements: { selected: selectedCount, total: pages.length } }));
@@ -512,13 +513,27 @@ export function renderReviewScreen(state) {
     || !hasFormats
     || hasPendingRoiDraft(state)
     || legacyJob;
+  // the PDF title can be fixed here and the PDF rebuilt from the kept systems (no new capture)
+  const titleEditing = typeof state.ui.reviewTitleDraft === "string";
+  const titleEditDisabled = outputBusy || !state.exportConfig.jobId || !isReviewableRun(state) || legacyJob || hasPendingRoiDraft(state);
+  const titleLine = titleEditing
+    ? `<div class="review-title-row is-editing">
+          <label class="visually-hidden" for="reviewTitleInput">${label("titleField")}</label>
+          <input id="reviewTitleInput" class="review-title-input" type="text" maxlength="120" autocomplete="off" spellcheck="false" value="${escapeHtml(state.ui.reviewTitleDraft)}" data-action="review-title-input" />
+          <button type="button" class="button button-primary review-title-button" data-action="apply-review-title" ${titleEditDisabled ? "disabled" : ""}>${label("titleApply")}</button>
+          <button type="button" class="button button-secondary review-title-button" data-action="cancel-review-title">${label("titleCancel")}</button>
+        </div>`
+    : `<div class="review-title-row">
+          <p title="${reviewLabel}">${reviewLabel}<span class="visually-hidden"> • ${reviewCountLabel}</span></p>
+          ${pdfSelected ? `<button type="button" class="review-title-edit" data-action="edit-review-title" ${titleEditDisabled ? "disabled" : ""}>${label("titleEdit")}</button>` : ""}
+        </div>`;
 
   return `
     <section class="screen screen-review" data-screen="review" aria-labelledby="reviewScreenTitle">
       <header class="screen-headline screen-headline-review">
         <div class="review-heading-copy">
           <h1 id="reviewScreenTitle" data-screen-heading tabindex="-1">${reviewTitle}</h1>
-          <p title="${reviewLabel}">${reviewLabel}<span class="visually-hidden"> • ${reviewCountLabel}</span></p>
+          ${titleLine}
         </div>
         <div class="review-toolbar review-output-actions" role="group" aria-label="${label("savedFiles")}">
           ${rebuilding
@@ -529,6 +544,8 @@ export function renderReviewScreen(state) {
           <span class="review-toolbar-divider" aria-hidden="true"></span>
           ${iconControl("save-output-pdf-as", label(state.ui.savingPdfAs ? "saveAsBusy" : reviewDone ? "saveAs" : "savePreviousAs"), !state.review.pdfPath || outputBusy, "", 'aria-describedby="reviewSaveHint"')}
           ${iconControl("open-output-dir", escapeHtml(t("rail.openFolder", { locale })), !state.review.outputDir || outputBusy)}
+          ${reviewDone && !outputBusy ? `<span class="review-toolbar-divider" aria-hidden="true"></span>
+          <button type="button" class="button button-secondary" data-action="select-source-file">${escapeHtml(t("source.openAnother", { locale }))}</button>` : ""}
         </div>
       </header>
       <div class="review-workspace">

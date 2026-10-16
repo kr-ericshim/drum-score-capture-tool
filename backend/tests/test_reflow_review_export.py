@@ -1,5 +1,6 @@
 """Clean reflow job path and review export (output_model clean_reflow_v1)."""
 
+import copy
 import hashlib
 import tempfile
 import unittest
@@ -14,6 +15,8 @@ from app import main
 from app.job_store import Job, JobStatus, JobStore
 from app.pipeline import reflow_pipeline
 from app.pipeline.export import export_composed_pages
+from app.pipeline.process_control import OperationCancelled
+from app.pipeline.reflow_verify_page import decode_lossless_pdf
 from app.schemas import JobCreate, JobReviewExportRequest
 
 
@@ -79,16 +82,53 @@ class ReflowReviewExportTest(unittest.TestCase):
         export_dir = self.artifact / "export"
         before = digest(export_dir)
         result_before = self.store.get("job-r").result
+        options_before = copy.deepcopy(self.store.get("job-r").options)
         paths = [s["strip_path"] for s in self.systems]
         with patch("app.main.job_store", self.store), \
                 patch("app.pipeline.export.export_composed_pages", side_effect=RuntimeError("disk full")):
             with self.assertRaises(HTTPException) as ctx:
-                main.review_export("job-r", JobReviewExportRequest(keep_captures=[paths[0]]))
+                main.review_export("job-r", JobReviewExportRequest(keep_captures=[paths[0]],
+                                                                   document_header={"title": "New title"}))
         self.assertEqual(ctx.exception.status_code, 500)
         self.assertEqual(digest(export_dir), before)
         self.assertEqual(self.store.get("job-r").result, result_before)
+        self.assertEqual(self.store.get("job-r").options, options_before)
+        self.assertEqual(JobStore(self.root).get("job-r").options, options_before)
         self.assertEqual([p.name for p in self.artifact.iterdir() if p.name.startswith("export_staged_")], [])
         self.assertEqual([p.name for p in self.artifact.iterdir() if "_backup_" in p.name], [])
+
+    def test_document_header_updates_pdf_result_and_survives_restart_and_rebuild(self):
+        header = {"title": "수정한 제목 / Corrected title", "performer": "Drummer", "bpm": 120,
+                  "date": "2026-10-16", "memo": "Review"}
+        path = self.systems[0]["strip_path"]
+        _, expected_pages = reflow_pipeline.compose_systems(self.systems[:1], header=header, all_systems=self.systems)
+        expected_header = cv2.cvtColor(expected_pages[0], cv2.COLOR_BGR2GRAY)[:300]
+        with patch("app.main.job_store", self.store):
+            response = main.review_export("job-r", JobReviewExportRequest(keep_captures=[path], document_header=header))
+        job = self.store.get("job-r")
+        self.assertEqual(job.result["reflow"]["header"], header)
+        self.assertEqual(job.result["reflow"]["page_plan"]["header"]["title"], header["title"])
+        self.assertEqual(job.options["export"], {"formats": ["png", "pdf"], "document_header": header})
+        np.testing.assert_array_equal(decode_lossless_pdf(response.pdf, profile="lossless")[0][:300], expected_header)
+        self.assertEqual(Path(response.pdf).name, "sheet_export.pdf")
+
+        restarted = JobStore(self.root)
+        self.assertEqual(restarted.get("job-r").options["export"]["document_header"], header)
+        with patch("app.main.job_store", restarted):
+            response = main.review_export("job-r", JobReviewExportRequest(keep_captures=[path]))
+        self.assertEqual(restarted.get("job-r").result["reflow"]["header"], header)
+        np.testing.assert_array_equal(decode_lossless_pdf(response.pdf, profile="lossless")[0][:300], expected_header)
+
+    def test_cancelled_header_rebuild_keeps_options_and_files(self):
+        before = copy.deepcopy(self.store.get("job-r").options)
+        files_before = digest(self.artifact / "export")
+        with patch("app.main.job_store", self.store), patch("app.main.checkpoint", side_effect=OperationCancelled):
+            with self.assertRaises(OperationCancelled):
+                main.review_export("job-r", JobReviewExportRequest(keep_captures=[self.systems[0]["strip_path"]],
+                                                                   document_header={"title": "Cancelled title"}))
+        self.assertEqual(self.store.get("job-r").options, before)
+        self.assertEqual(JobStore(self.root).get("job-r").options, before)
+        self.assertEqual(digest(self.artifact / "export"), files_before)
 
     # --- staged commit failures: the previous chart's bytes must stay retrievable ---
 
@@ -113,8 +153,8 @@ class ReflowReviewExportTest(unittest.TestCase):
             return out
         return patch.object(Path, "replace", autospec=True, side_effect=fake)
 
-    def _export(self, paths):
-        return main.review_export("job-r", JobReviewExportRequest(keep_captures=[paths[1]], formats=["png", "pdf"]))
+    def _export(self, paths, **kwargs):
+        return main.review_export("job-r", JobReviewExportRequest(keep_captures=[paths[1]], formats=["png", "pdf"], **kwargs))
 
     def _leftovers(self):
         return sorted(p.name for p in self.artifact.iterdir() if p.name != "export" and p.name.startswith("export"))
@@ -152,13 +192,16 @@ class ReflowReviewExportTest(unittest.TestCase):
         export_dir = self.artifact / "export"
         before = digest(export_dir)
         result_before = self.store.get("job-r").result
+        options_before = copy.deepcopy(self.store.get("job-r").options)
         paths = [s["strip_path"] for s in self.systems]
         with patch("app.main.job_store", self.store), self._fail_replace(job_json=True):
             with self.assertRaises(HTTPException) as ctx:
-                self._export(paths)
+                self._export(paths, document_header={"title": "Uncommitted title"})
         self.assertEqual(ctx.exception.status_code, 500)
         self.assertEqual(digest(export_dir), before)
         self.assertEqual(self.store.get("job-r").result, result_before)
+        self.assertEqual(self.store.get("job-r").options, options_before)
+        self.assertEqual(JobStore(self.root).get("job-r").options, options_before)
         self.assertEqual(self._leftovers(), [])
 
     def test_post_commit_failure_and_failed_restore_keep_the_backup(self):

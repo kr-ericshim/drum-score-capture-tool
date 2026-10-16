@@ -339,7 +339,7 @@ test("closing the metadata modal during Korean composition preserves the live dr
   });
 
   seedExportState(app);
-  await root.dispatchAction("run-export");
+  await root.dispatchAction("edit-export-metadata");
   await flush();
 
   app.debug.setState((next) => {
@@ -396,7 +396,7 @@ test("run-export is ignored while the metadata modal is already open", async () 
     return next;
   });
 
-  await root.dispatchAction("run-export");
+  await root.dispatchAction("edit-export-metadata");
   await flush();
 
   assert.deepEqual(app.debug.getState().exportConfig.metadataModal.draft, {
@@ -511,7 +511,7 @@ test("metadata typing preserves focus on the same field after rerender", async (
   });
 
   seedExportState(app);
-  await root.dispatchAction("run-export");
+  await root.dispatchAction("edit-export-metadata");
   await flush();
 
   const titleInput = root.querySelector("#stagePane")?.querySelector?.('[data-action="update-export-metadata"][data-field="title"]');
@@ -545,7 +545,7 @@ test("metadata typing keeps the title input mounted while the user is entering t
   });
 
   seedExportState(app);
-  await root.dispatchAction("run-export");
+  await root.dispatchAction("edit-export-metadata");
   await flush();
 
   const titleInput = root.querySelector("#stagePane")?.querySelector?.('[data-action="update-export-metadata"][data-field="title"]');
@@ -562,7 +562,7 @@ test("metadata typing keeps the title input mounted while the user is entering t
   assert.equal(rerenderedTitleInput?.value, "곽");
 });
 
-test("metadata modal moves focus into the title field on open and back to the run button on close", async () => {
+test("metadata modal moves focus into the title field on open and back to the edit button on close", async () => {
   installBrowserStubs();
   const root = createRoot();
   const app = createApp(root, {
@@ -576,11 +576,11 @@ test("metadata modal moves focus into the title field on open and back to the ru
   });
 
   seedExportState(app);
-  const runButton = root.querySelector("#stagePane")?.querySelector?.('[data-action="run-export"]');
+  const runButton = root.querySelector("#stagePane")?.querySelector?.('[data-action="edit-export-metadata"]');
   assert.ok(runButton);
   runButton.focus();
 
-  await root.dispatchAction("run-export");
+  await root.dispatchAction("edit-export-metadata");
   await flush();
 
   let activeElement = globalThis.document?.activeElement;
@@ -594,7 +594,7 @@ test("metadata modal moves focus into the title field on open and back to the ru
 
   activeElement = globalThis.document?.activeElement;
   assert.ok(activeElement);
-  assert.equal(activeElement.dataset?.action, "run-export");
+  assert.equal(activeElement.dataset?.action, "edit-export-metadata");
   app.destroy();
 });
 
@@ -612,7 +612,7 @@ test("metadata modal tab key commits the current field and moves focus to the ne
   });
 
   seedExportState(app);
-  await root.dispatchAction("run-export");
+  await root.dispatchAction("edit-export-metadata");
   await flush();
 
   const titleInput = root.querySelector("#stagePane")?.querySelector?.('[data-action="update-export-metadata"][data-field="title"]');
@@ -651,7 +651,7 @@ test("metadata composition input keeps draft state untouched until the field com
   });
 
   seedExportState(app);
-  await root.dispatchAction("run-export");
+  await root.dispatchAction("edit-export-metadata");
   await flush();
 
   app.debug.setState((next) => {
@@ -704,7 +704,7 @@ test("metadata compositionend preserves the final title in the live input until 
   });
 
   seedExportState(app);
-  await root.dispatchAction("run-export");
+  await root.dispatchAction("edit-export-metadata");
   await flush();
 
   app.debug.setState((next) => {
@@ -748,7 +748,7 @@ test("metadata title input preserves the live Korean composition text across mod
   });
 
   seedExportState(app);
-  await root.dispatchAction("run-export");
+  await root.dispatchAction("edit-export-metadata");
   await flush();
 
   app.debug.setState((next) => {
@@ -795,7 +795,7 @@ test("metadata title normalizes decomposed Hangul jamo before the field commits"
   });
 
   seedExportState(app);
-  await root.dispatchAction("run-export");
+  await root.dispatchAction("edit-export-metadata");
   await flush();
 
   app.debug.setState((next) => {
@@ -845,7 +845,7 @@ test("confirm-export-metadata uses the live title input when IME composition has
   });
 
   seedExportState(app);
-  await root.dispatchAction("run-export");
+  await root.dispatchAction("edit-export-metadata");
   await flush();
 
   app.debug.setState((next) => {

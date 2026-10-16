@@ -262,6 +262,7 @@ class JobReviewExportRequest(BaseModel):
     keep_captures: List[str] = Field(default_factory=list)
     keep_images: List[str] = Field(default_factory=list)
     formats: Optional[List[Literal["png", "jpg", "jpeg", "pdf"]]] = None
+    document_header: Optional[ExportOptions.DocumentHeaderOptions] = None
     # Clean reflow jobs: every system strip path in the order the user arranged
     # them (included and excluded). keep_captures are composed in this order.
     system_order: List[str] = Field(default_factory=list)

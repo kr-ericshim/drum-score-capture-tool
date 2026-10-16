@@ -23,7 +23,7 @@ function fileDirectory(filePath = "") {
   return directory.endsWith("/") ? directory : `${directory}/`;
 }
 
-function isLikelyYoutubeUrl(value = "") {
+export function isLikelyYoutubeUrl(value = "") {
   const text = String(value || "").trim();
   if (!text) {
     return false;

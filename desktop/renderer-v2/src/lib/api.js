@@ -328,16 +328,19 @@ function exportTaskError(task) {
   });
 }
 
-function reviewExportBody({ keepCaptures = [], keepImages = [], formats = [], systemOrder = [], staffGapMm = null, staffGapMmExplicit = null, measureReflow = null, rejectedSeamIds = null, baseRevision = null, outputModel = "" } = {}) {
+function reviewExportBody({ keepCaptures = [], keepImages = [], formats = [], systemOrder = [], staffGapMm = null, staffGapMmExplicit = null, measureReflow = null, rejectedSeamIds = null, baseRevision = null, outputModel = "", documentHeader = null } = {}) {
+  // a new PDF title (and the rest of the document info) for this rebuild; omitted = the job's own
+  const header = documentHeader ? { document_header: documentHeader } : {};
   if (outputModel === "original_screens_v1") {
     // Original screens: no selection captures from the video; a selection rebuilds from the saved
     // screens. Clean reflow fields (and empty selections) are never sent: the backend refuses them.
-    return JSON.stringify({ output_model: outputModel, formats, ...(keepCaptures.length ? { keep_captures: keepCaptures } : {}) });
+    return JSON.stringify({ output_model: outputModel, formats, ...(keepCaptures.length ? { keep_captures: keepCaptures } : {}), ...header });
   }
   return JSON.stringify({
     keep_captures: keepCaptures,
     keep_images: keepImages,
     formats,
+    ...header,
     // Clean reflow jobs: every system in the arranged order (included and excluded).
     ...(systemOrder.length ? { system_order: systemOrder } : {}),
     // Clean reflow jobs: an explicit user choice of the document staff size (mm).

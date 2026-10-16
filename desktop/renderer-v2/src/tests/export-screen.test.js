@@ -419,3 +419,20 @@ test("export screen never renders processing profile values", () => {
   assert.doesNotMatch(markup, /<script>alert\("layout"\)<\/script>/);
   assert.doesNotMatch(markup, /alert\(&quot;fill&quot;\)|alert\(&quot;layout&quot;\)/);
 });
+
+test("a PDF export starts from the primary button; the details are a secondary action", () => {
+  for (const [locale, run, edit] of [["ko", "PDF 만들기", "PDF 정보 수정…"], ["en", "Make PDF", "Edit PDF details…"]]) {
+    const state = createInitialSessionState();
+    state.ui.locale = locale;
+    state.source.displayName = "practice.mp4";
+    state.source.filePath = "/tmp/practice.mp4";
+    state.roi.frameTime = 5;
+    state.roi.appliedRect = [[0, 0], [320, 0], [320, 180], [0, 180]];
+    state.exportConfig.formats = ["pdf"];
+    const markup = renderExportScreen(state);
+    assert.match(markup, new RegExp(`data-action="run-export"[^>]*>${run}<`));
+    assert.match(markup, new RegExp(`data-action="edit-export-metadata"[^>]*>${edit}<`));
+    state.exportConfig.formats = ["png"];
+    assert.doesNotMatch(renderExportScreen(state), /edit-export-metadata/);
+  }
+});

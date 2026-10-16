@@ -296,6 +296,7 @@ test("a rebuild uses the normal request timeout and error details stay readable"
     // the rebuild runs in the background on the backend: its start answers at once
     await reviewExport("job-1", { keepCaptures: ["/a.png"], formats: ["pdf"] });
     assert.equal(calls[0].options.timeoutMs, undefined);
+    assert.equal(JSON.parse(calls[0].options.body).document_header, undefined);
     await getJob("job-1");
     assert.equal(calls[1].options.timeoutMs, undefined);
 
@@ -439,4 +440,31 @@ test("new jobs send explicit mode when a staff size is picked, preserving automa
     }
     assert.deepEqual(calls.map(body => body.options.staff_gap_mm_explicit), [undefined, true, true, false]);
   } finally { if (previous) Object.defineProperty(globalThis, "window", previous); else delete globalThis.window; }
+});
+
+test("a review rebuild with a new title sends the document header on both outputs", async () => {
+  const bodies = [];
+  const previousWindow = globalThis.window;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      drumSheetAPI: {
+        apiBase: "http://127.0.0.1:8000",
+        async requestJson(pathname, options) {
+          if (options?.body) bodies.push(JSON.parse(options.body));
+          return { ok: true, status: 200, data: {} };
+        },
+      },
+    },
+  });
+  try {
+  const documentHeader = { title: "새 제목", performer: "", bpm: null, date: "2026-10-16", memo: "" };
+  await reviewExport("job-1", { keepCaptures: ["/a.png"], formats: ["pdf"], documentHeader });
+  await reviewExport("job-1", { outputModel: "original_screens_v1", keepCaptures: ["/a.png"], formats: ["pdf"], documentHeader });
+  assert.deepEqual(bodies[0].document_header, documentHeader);
+  assert.deepEqual(bodies[1].document_header, documentHeader);
+  assert.equal(bodies[1].output_model, "original_screens_v1");
+  } finally {
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+  }
 });

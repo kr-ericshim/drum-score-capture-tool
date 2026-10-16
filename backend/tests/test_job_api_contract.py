@@ -513,14 +513,14 @@ class TestJobApiContract(unittest.TestCase):
             self.assertEqual(error.exception.status_code, 409)
             self.assertEqual(error.exception.detail, "job must be completed successfully before review export")
 
-    def test_review_export_request_rejects_document_header_override_payload(self):
-        with self.assertRaises(ValidationError):
-            JobReviewExportRequest.model_validate(
-                {
-                    "keep_captures": ["/tmp/capture_0001.png"],
-                    "document_header": {"title": "Override"},
-                }
-            )
+    def test_review_export_request_accepts_document_header_with_capture_validation(self):
+        for output in ({"keep_captures": ["/tmp/capture_0001.png"]}, {"output_model": "original_screens_v1"}):
+            with self.subTest(output=output):
+                request = JobReviewExportRequest.model_validate({**output, "document_header": {"title": " Override "}})
+                self.assertEqual(request.document_header.title, "Override")
+                for header in ({"title": " "}, {"title": "T", "bpm": True}, {"title": "T", "unknown": "x"}):
+                    with self.subTest(header=header), self.assertRaises(ValidationError):
+                        JobReviewExportRequest.model_validate({**output, "document_header": header})
 
     def test_capture_crop_rejects_capture_outside_current_review_candidates(self):
         with tempfile.TemporaryDirectory() as td:

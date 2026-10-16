@@ -2526,6 +2526,8 @@ def _reflow_export_inputs(job: Job, payload: JobReviewExportRequest) -> Dict[str
     composed = [s for s in order if s["id"] in keep_ids] if payload.system_order else keep
 
     export_config = _resolve_job_export_options(job)
+    if payload.document_header is not None:
+        export_config.document_header = payload.document_header
     requested = payload.formats if payload.formats is not None else list(export_config.formats)
     formats = _normalize_requested_export_formats(requested)
     if not formats:
@@ -2589,6 +2591,7 @@ def _compose_review_export_reflow(job: Job, job_id: str, payload: JobReviewExpor
     order, keep_ids, composed, formats = inputs["order"], inputs["keep_ids"], inputs["composed"], inputs["formats"]
     export_config = inputs["export_config"]
     previous_result = copy.deepcopy(job.result or {})
+    previous_options = copy.deepcopy(job.options)
     header = reflow.get("header") or {}
     if export_config.document_header is not None:
         header = export_config.document_header.model_dump()
@@ -2720,8 +2723,13 @@ def _compose_review_export_reflow(job: Job, job_id: str, payload: JobReviewExpor
             "measure_reflow": measure_summary,
             "line_review": reflow["line_review"],
         }
+        if payload.document_header is not None:
+            job.options = dict(job.options or {})
+            job.options["export"] = dict(job.options.get("export") or {},
+                                         document_header=payload.document_header.model_dump())
         job_store.set_state(job_id, JobStatus.DONE, 1.0, "done", "review export finished", result=result, error_code=None)
     except Exception as exc:
+        job.options = previous_options
         _revert_after_metadata_failure(job_id, commit, previous_result, exc, previous_status=job.status)
     commit.finalize()
     try:
@@ -2773,6 +2781,8 @@ def _original_screens_inputs(job: Job, payload: JobReviewExportRequest) -> Dict[
         raise HTTPException(status_code=409, detail=f"STALE_REVISION: expected revision {revision}, received {payload.base_revision}")
     options = job.options if isinstance(job.options, dict) else {}
     export_config = _resolve_job_export_options(job)
+    if payload.document_header is not None:
+        export_config.document_header = payload.document_header
     requested = payload.formats if payload.formats is not None else list(export_config.formats)
     formats = _normalize_requested_export_formats(requested)
     if not formats:
@@ -2828,6 +2838,7 @@ def _review_export_original_screens(job: Job, job_id: str, payload: JobReviewExp
 
     inputs = _original_screens_inputs(job, payload)
     previous_result = copy.deepcopy(job.result or {})
+    previous_options = copy.deepcopy(job.options)
     # set_state changes the in-memory job before it persists it: a rollback needs these values, not ``job``'s
     previous_state = dict(status=job.status, progress=job.progress, current_step=job.current_step, message=job.message,
                           error_code=job.error_code)
@@ -2888,8 +2899,13 @@ def _review_export_original_screens(job: Job, job_id: str, payload: JobReviewExp
         result["pdf"] = export_result.get("pdf")
         result["preview_images"] = export_result.get("preview_images", [])
         result["output_dir"] = str(target)
+        if payload.document_header is not None:
+            job.options = dict(job.options or {})
+            job.options["export"] = dict(job.options.get("export") or {},
+                                         document_header=payload.document_header.model_dump())
         job_store.set_state(job_id, JobStatus.DONE, 1.0, "done", "original screens finished", result=result, error_code=None)
     except Exception as exc:
+        job.options = previous_options
         try:
             # a pending layout conflict or ledger failure stays pending (status ERROR with its code)
             job_store.set_state(job_id, previous_state["status"], previous_state["progress"], previous_state["current_step"],

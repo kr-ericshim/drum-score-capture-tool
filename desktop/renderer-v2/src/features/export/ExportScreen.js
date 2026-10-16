@@ -135,6 +135,7 @@ export function buildExportScreenModel(state) {
     hasFormats,
     formats,
     canRun,
+    pdfSelected,
     progress,
     fileName,
     roiSummary,
@@ -248,6 +249,7 @@ export function renderExportScreen(state) {
         <div class="screen-inline-actions">
           ${state.exportConfig.connectionState && state.exportConfig.connectionState !== "connected" ? `<button class="button button-secondary" data-action="reconnect-job">${t("export.reconnect", { locale: model.locale })}</button>` : ""}
           ${state.exportConfig.runStatus === "running" ? `<button class="button button-secondary" data-action="cancel-job">${t("export.cancel", { locale: model.locale })}</button>` : ""}
+          ${model.pdfSelected && !model.running ? `<button class="button button-secondary" data-action="edit-export-metadata" ${model.canRun ? "" : "disabled"}>${t("export.editPdfInfo", { locale: model.locale })}</button>` : ""}
           <button class="button button-primary" data-action="run-export" ${model.canRun ? "" : "disabled"}>${model.primaryActionLabel}</button>
         </div>
       </header>
