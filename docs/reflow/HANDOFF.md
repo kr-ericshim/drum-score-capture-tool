@@ -1,4 +1,4 @@
-# 인계 (2026-10-19, 출시 전 정리 중단 시점)
+# 인계 (2026-10-20, v0.3.0 출시)
 
 > **이 문서는 누적하지 않는다.** 세션이 끝날 때 통째로 새로 쓴다. 현재 상태와 다음 할 일만 적는다(지난 경과는 `git log -p docs/reflow/HANDOFF.md`).
 > 100줄을 넘기지 않는다. 다른 문서와 다르면 이 문서와 사용자의 최신 말이 우선이다.
@@ -8,53 +8,36 @@
 영상에 이미 나오는 드럼 악보를 캡처해 A4 PDF/PNG로 만드는 Electron + Python 데스크톱 앱이다.
 - 기본 출력은 **clean reflow**, 보조 출력은 **원본 화면 fallback**(한 줄 영상 전용)이다.
 - 지원 범위: 불투명 판 위 한 줄 악보가 통째로 바뀌는 영상. 점프는 실험 기능, 반투명판·실사 합성은 거부, 여러 줄 페이지·세로 롤은 범위 밖.
-- 앞으로는 실험을 멈추고, 사용자가 직접 써 보며 생기는 문제를 고친다(2026-10-19).
+- **방향(2026-10-19)**: 실험·고도화는 멈췄다. 이제 사용자가 직접 써 보며 생기는 문제를 고친다.
 
-## 지금 하던 일: v0.3.0 출시
+## 현재 상태
 
-사용자 지시(2026-10-19): 정리 → Codex 리뷰 없이 리드가 직접 점검 → CI/CD → 릴리즈까지 진행.
+- `v0.3.0` 태그 = `2d2ae8f`. `main`과 `feature/clean-reflow`가 같은 커밋을 가리킨다. 릴리즈 노트는 [release-notes-v0.3.0.md](../release/release-notes-v0.3.0.md)에 있다.
+- 출시 전 정리(2026-10-19):
+  - backend: clean reflow 이전 캡처·이어붙이기 경로(약 5,000줄), HAT 업스케일 스크립트, PyYAML을 지웠다. 엔드포인트 27개는 그대로다.
+  - desktop: 쓰지 않는 코드·IPC·i18n 키·CSS, lean/full/compact 빌드 스크립트를 지웠다. 문구를 다듬었다.
+  - docs: README 3개를 v0.3.0 기준으로 다시 썼다. 끝난 RC·점프·이음매·디자인 문서는 `docs/archive/`로 옮겼다.
+- **Windows 수정**: 텍스트 입출력이 시스템 기본 인코딩을 쓰던 곳을 모두 UTF-8로 바꿨다. JSON 12곳, subprocess 출력 12곳이다. 이 때문에 Windows에서 검토 화면의 PDF 다시 만들기가 500으로 실패하고 있었다. 테스트도 Windows에서 통과하게 고쳤다(`/tmp` 하드코딩, JSON 안의 이스케이프된 경로, 경로 구분자).
+- **CI**: backend 테스트를 pytest-xdist로 병렬 실행한다(`backend/requirements-test.txt`). CI 제한 시간은 40분이고, CI도 고정 ffmpeg를 복원한다. 걸리는 시간은 macOS 약 11분, Windows 약 17분이다.
+- 확인한 것:
+  - CI 통과(macOS·Windows): backend 1462, renderer 382, desktop-node 97(Windows는 90)
+  - 로컬 `pack:release`, 서명 검증, 패키지 스모크 2개(합성 영상 캡처→PNG/PDF)
+  - 로컬에서 기본 인코딩을 ASCII로 강제한 backend 전체 실행
+- 확인하지 않은 것:
+  - **Windows 패키지 앱을 실제로 실행해 보지 않았다.**
+  - 실제 영상으로 v0.3.0 패키지를 확인하지 않았다(사용자가 직접 써 보며 확인할 예정).
 
-끝난 것(`feature/clean-reflow`, 로컬 HEAD `406ee81`):
-- 정리 세 갈래를 병합했다.
-  - backend: clean reflow 이전 파이프라인 등 약 5,000줄 삭제, PyYAML·HAT 스크립트 제거. 엔드포인트는 그대로다.
-  - desktop: 쓰지 않는 코드·IPC·i18n 키·lean/full/compact 스크립트 삭제, 문구 다듬기.
-  - docs: README 3개를 다시 썼고, 끝난 RC·점프·이음매 문서는 `docs/archive/`로 옮겼다.
-- CI·릴리즈 워크플로의 backend 테스트를 pytest-xdist 병렬 실행으로 바꿨다(`f666140`, `backend/requirements-test.txt`). 직렬로 돌면 로컬에서 19분이 걸려 CI 20분 제한에 걸리고 있었다. CI 제한 시간은 40분으로 늘렸다.
-- 버전 0.3.0으로 올림(`406ee81`, push 안 함). README의 "다음 공개 버전" 문장을 "v0.3.0 기준"으로 바꿨다.
-- 로컬 확인(병합 후): backend 1465 통과, 12 skip. scripts/tests OK. `check-release-version` 0.3.0 일치.
-- **확인 못 함**: renderer·desktop-node는 병합 후 결과를 보지 못했다(grep 패턴 문제). 릴리즈 노트 `docs/release/release-notes-v0.3.0.md`는 아직 없다. `pack:release`도 아직 하지 않았다.
+## 다음 할 일
 
-**막힌 것: CI 실패** (run 39205588955, 커밋 `f666140`, backend 병합 전 기준). 지금까지는 시간 제한 때문에 끝까지 돈 적이 없어 가려져 있었다.
-1. macOS 3개(`test_original_screens`): CI에 ffmpeg가 없다. 해결: release.yml의 "Restore and verify pinned media tools" 단계를 ci.yml에도 넣는다.
-2. Windows 32개.
-   - **실제 제품 버그**: 텍스트 파일을 encoding 없이 읽고 쓴다. 그래서 검토 화면의 PDF 다시 만들기가 `'charmap' codec` 500으로 실패한다. 확인된 위치:
-     - `reflow_pipeline.py` 136, 137, 194, 688, 1709
-     - `reflow_measure.py` 79, 80
-     - `observations.py` 763, 768
-     - `reflow_line_review.py` 245, 248
-     - `reflow_jump.py` 3159
-     - `extract.py` 28
-     - 이 밖에 `export_tasks`나 review 쪽에도 더 있을 수 있다. `PYTHONWARNDEFAULTENCODING=1`로 테스트를 돌리면 위치가 나온다. xdist 워커에는 `-X` 플래그가 전달되지 않으니 환경 변수를 쓴다.
-     - `process_control.py:68`의 `Popen(text=True)`도 확인한다.
-   - **테스트 문제**: `/tmp`를 하드코딩했다(`test_verify_page`, `test_export_lossless_pdf`, `test_verify_calibration`). 경로 구분자 비교(`test_reflow_strips_parallel`, `test_ledger_hooks_render` 4!=3)와 `test_reflow_jump_coverage`의 KeyError 'reflow_state'는 인코딩 실패의 후속일 수 있다. 고친 뒤 다시 본다.
-   - 실패 목록 전체: `gh run view 39205588955 --log-failed | grep FAILED`
-
-## 다음 할 일 (순서대로)
-
-1. 위 CI 실패를 고친다. 인코딩은 앱 코드 전체에 `encoding="utf-8"`를 넣는다. 테스트 `/tmp`는 `tempfile`로 바꾼다. ci.yml에 미디어 복원 단계를 넣는다.
-2. 로컬에서 backend 병렬, `verify:renderer-v2`, `test:desktop-node`, `pack:release`를 돌린다.
-3. 릴리즈 노트 v0.3.0을 쓴다(ko/en, `<!-- minimum-os: darwin=13.0 -->`). 요지:
-   - clean reflow 기본 출력, 원본 화면 대안, 검토 화면(줄 순서·비슷한 줄·이음매 확인·제목 수정).
-   - 편의 기능: PDF 바로 만들기, 폴더 기억, 다른 영상 열기, 유튜브 Enter.
-   - **v0.2.1 이하에서 만든 작업은 다시 만들 수 없고, 파일만 남는다(LEGACY_JOB)**는 점을 알린다.
-4. push → CI 통과 확인 → `main`을 fast-forward(현재 main은 이 브랜치의 조상) → `v0.3.0` 태그 push → Release 워크플로 확인.
-5. 끝나면 이 문서를 새로 쓴다.
+1. 사용자가 v0.3.0을 직접 쓰며 찾은 문제를 고친다. 문제마다 작은 수정으로 끝낸다.
+2. 보류 목록(사용자가 원하면): 완성 PDF를 정한 폴더에 자동 복사, 지난 영상의 악보 영역을 초안으로 재사용, 여러 영상 순차 처리, 출력 형식 기억.
+3. 로컬 정리(사용자 확인 필요): `dist/`(약 1.7 GB), `.tmp/`(약 0.9 GB), 병합된 `claude/cleanup-*` 브랜치와 worktree, 코퍼스 `eval_v2/jobs`(4.3 GB).
 
 ## 알려진 한계
 
 - 0.5초 샘플 사이에만 나온 화면은 놓친다. 점프 커버리지 판정은 1관측 화면을 보지 않는다.
 - F10: 화면이 7개 이하인 영상에서는 같은 자리의 작은 로고가 남을 수 있다.
-- Windows는 패키지 앱으로 확인한 적이 없다.
+- v0.2.1 이하에서 만든 작업은 다시 만들 수 없다(LEGACY_JOB). 파일만 남는다.
 
 ## 지금 유효한 문서
 
@@ -64,8 +47,8 @@
 
 - `backend/jobs/`는 건드리지 않는다. 실제 영상은 scratch `DRUMSHEET_JOBS_DIR`에서 확인한다.
 - 영상별 땜질과 특정 영상에 맞춘 임계값은 하지 않는다. 영상·코퍼스 실행 전에 전원 연결을 묻는다.
-- 정리 세션 worktree 브랜치(`claude/cleanup-*`)는 모두 병합됐다. 지워도 된다.
-- 로컬 미추적 산출물 `dist/`(1.7 GB), `.tmp/`(0.9 GB)은 지울지 사용자에게 묻는다.
+- 새 텍스트 입출력에는 `encoding="utf-8"`을 쓴다. subprocess는 `text=True, encoding="utf-8", errors="replace"`로 연다.
+- 배포: 버전 올리기(`check-release-version`) → 릴리즈 노트 → push → CI 통과 → `main` fast-forward → `vX.Y.Z` 태그 push.
 
 ## 검증 명령 (저장소 루트)
 
