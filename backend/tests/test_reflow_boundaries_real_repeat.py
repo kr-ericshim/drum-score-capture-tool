@@ -23,7 +23,7 @@ import cv2
 from app.pipeline import reflow_boundaries as rb
 
 FIX = Path(__file__).resolve().parent / "fixtures"
-SPEC = json.loads((FIX / "real_repeat_gpYDVEsuXio.json").read_text())
+SPEC = json.loads((FIX / "real_repeat_gpYDVEsuXio.json").read_text(encoding="utf-8"))
 
 
 def load(name, record_patch=None, image=None):

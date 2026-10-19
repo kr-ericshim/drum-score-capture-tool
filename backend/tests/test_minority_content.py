@@ -406,7 +406,7 @@ class PipelineAlternateTest(unittest.TestCase):
         self.assertEqual(alt["alternate_of"], "sys-001")
         self.assertIn(rp.MINORITY_ALTERNATE, alt["issues"])
         self.assertTrue(Path(alt["strip_path"]).is_file())
-        occ = json.loads((Path(self.record["workspace"]) / "occurrences.json").read_text())
+        occ = json.loads((Path(self.record["workspace"]) / "occurrences.json").read_text(encoding="utf-8"))
         self.assertEqual([s["id"] for s in occ["systems"]], ["sys-001", "sys-001-alt1"])
         self.assertTrue(occ["systems"][1]["observations"])
 

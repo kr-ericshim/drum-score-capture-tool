@@ -22,7 +22,7 @@ def _golden_available() -> bool:
     if not GOLDEN.exists():
         return False
     try:
-        gold = json.loads(GOLDEN.read_text())
+        gold = json.loads(GOLDEN.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
     return bool(gold) and all(Path(p).exists() for p in gold)
@@ -132,7 +132,7 @@ class SyntheticDetectionTest(unittest.TestCase):
 @unittest.skipUnless(_golden_available(), "drum-score corpus golden set not available")
 class GoldenRegressionTest(unittest.TestCase):
     def test_golden_set_reproduces_367(self):
-        gold = json.loads(GOLDEN.read_text())
+        gold = json.loads(GOLDEN.read_text(encoding="utf-8"))
         tot = {"tp": 0, "fp": 0, "fn": 0, "missing_staves": 0, "extra_staves": 0}
         for cap, staves in gold.items():
             res = sd.detect(cv2.imread(cap))

@@ -64,8 +64,8 @@ class IdentifierTest(unittest.TestCase):
     @unittest.skipUnless((CORPUS / "reflow/manifests/Q8XtphO6Xz0.json").exists() and (CORPUS / "reflow/gt/Q8XtphO6Xz0/gt.json").exists(),
                          "corpus Q8XtphO6Xz0 manifest not available")
     def test_corpus_q8_l14_l30_have_no_identifier(self):
-        m = json.loads((CORPUS / "reflow/manifests/Q8XtphO6Xz0.json").read_text())
-        gt = json.loads((CORPUS / "reflow/gt/Q8XtphO6Xz0/gt.json").read_text())
+        m = json.loads((CORPUS / "reflow/manifests/Q8XtphO6Xz0.json").read_text(encoding="utf-8"))
+        gt = json.loads((CORPUS / "reflow/gt/Q8XtphO6Xz0/gt.json").read_text(encoding="utf-8"))
         by = {o["id"]: o for o in m["observations"]}
         for lid in ("L14", "L30"):
             ref = next(l for l in gt["locations"] if l["id"] == lid)["reference"]

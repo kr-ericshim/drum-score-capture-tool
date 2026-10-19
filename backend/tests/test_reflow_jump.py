@@ -175,7 +175,7 @@ class JumpViewTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             out = Path(td) / "reflow" / "jump.json"
             res, _t = analyse(jump_frames(self.score, self.offsets[:4]), out_path=out)
-            data = json.loads(out.read_text())
+            data = json.loads(out.read_text(encoding="utf-8"))
         self.assertEqual(data["config_hash"], rj.config_hash())
         self.assertEqual(data["config"], rj.CONFIG)
         self.assertEqual(data["version"], rj.JUMP_VERSION)

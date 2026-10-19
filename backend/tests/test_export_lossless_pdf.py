@@ -82,7 +82,7 @@ def fixture_pdf(path, *, image_extra=b"", page_extra=b"", contents=None,
 
 class ExportLosslessPDFTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix="WP-", dir="/tmp")
+        self.tmp = tempfile.TemporaryDirectory(prefix="WP-")
         self.addCleanup(self.tmp.cleanup)
         self.work = Path(self.tmp.name)
 

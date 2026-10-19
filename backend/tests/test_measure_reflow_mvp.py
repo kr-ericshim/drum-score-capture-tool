@@ -43,7 +43,7 @@ class DefaultOptionTest(unittest.TestCase):
                          options={"detect": {"roi": ROI}, "export": {"formats": ["png"]}, "staff_gap_mm": 1.5},
                          artifact_dir=str(art), status=JobStatus.DONE).to_record()
             self.assertNotIn("measure_reflow", record["options"])
-            (art / "job.json").write_text(json.dumps(record))
+            (art / "job.json").write_text(json.dumps(record), encoding="utf-8")
             job = JobStore(root).get("old-job")  # loaded the way the app loads it after a restart
             self.assertFalse(main._job_measure_reflow(job))
             job.options = dict(job.options, measure_reflow=True)

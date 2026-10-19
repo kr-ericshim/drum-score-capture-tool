@@ -116,7 +116,7 @@ class MarkTests(unittest.TestCase):
             im = source(); frame = frames/"kept.png"; cv2.imwrite(str(frame),im)
             cv2.imwrite(str(evidence/"mask.png"),im)
             cv2.imwrite(str(frames/"unused.png"),im)
-            (work/"ledger_base.json").write_text(json.dumps({"observations":[{"frame_path":str(frame)}]}))
+            (work/"ledger_base.json").write_text(json.dumps({"observations":[{"frame_path":str(frame)}]}), encoding="utf-8")
             main.prune_job_workspace(root,keep_review=True,keep_ledger=True)
             self.assertTrue(frame.exists()); self.assertTrue((evidence/"mask.png").exists())
             self.assertFalse((frames/"unused.png").exists())

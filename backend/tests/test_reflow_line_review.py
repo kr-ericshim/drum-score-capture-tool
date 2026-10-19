@@ -177,14 +177,14 @@ class LineReviewTest(unittest.TestCase):
         plan, systems, jump, episodes = sample()
         with tempfile.TemporaryDirectory() as td:
             workspace = Path(td)
-            (workspace / "jump.json").write_text(json.dumps(jump))
-            (workspace / "tracking.json").write_text(json.dumps({"episodes": episodes}))
+            (workspace / "jump.json").write_text(json.dumps(jump), encoding="utf-8")
+            (workspace / "tracking.json").write_text(json.dumps({"episodes": episodes}), encoding="utf-8")
             reflow = {"systems": systems, "workspace": td, "episodes": 3}
             expected = build_line_review(plan, systems, jump, episodes)
             self.assertEqual(load_line_review(plan, reflow), expected)
             (workspace / "tracking.json").unlink()
             self.assertEqual(load_line_review(plan, reflow), expected)  # t_a/t_b fallback
-            (workspace / "jump.json").write_text("broken json")
+            (workspace / "jump.json").write_text("broken json", encoding="utf-8")
             reflow.update(jump=jump, episodes=episodes)
             self.assertEqual(load_line_review(plan, reflow), expected)
             reflow.pop("jump")

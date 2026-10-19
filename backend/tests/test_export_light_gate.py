@@ -74,7 +74,7 @@ class ExportLightGateTests(unittest.TestCase):
                 self.assertTrue(all(Path(p).is_file() for p in job.result["images"]))
                 if measure:
                     self.assertEqual(job.result["reflow"]["page_plan"]["measure_reflow"]["status"], "measure_lines")
-                report = json.loads((Path(job.result["output_dir"])/"ledger_report.json").read_text())
+                report = json.loads((Path(job.result["output_dir"])/"ledger_report.json").read_text(encoding="utf-8"))
                 print(f"LIGHT_GATE measure={measure} seconds={report['gate_seconds']:.6f} stages={report['stage_seconds']}")
 
     def test_dev_only_codes_stay_out_of_the_review_items(self):
@@ -91,7 +91,7 @@ class ExportLightGateTests(unittest.TestCase):
         self.assertEqual(summary["status"], "pass")
         self.assertEqual(summary["review_hypotheses"], 0)
         self.assertEqual(summary["dev_issue_counts"], {"PLAN_INVALID": 1})
-        dev = json.loads((Path(job.result["output_dir"])/"verify_dev_findings.json").read_text())
+        dev = json.loads((Path(job.result["output_dir"])/"verify_dev_findings.json").read_text(encoding="utf-8"))
         self.assertEqual(dev["issue_counts"], {"PLAN_INVALID": 1})
         self.assertNotIn("LEDGER_REVIEW_REQUIRED", self.codes(job))
 
@@ -104,7 +104,7 @@ class ExportLightGateTests(unittest.TestCase):
         self.assertEqual(job.result["reflow_state"], "review_required")
         self.assertIn("LEDGER_REVIEW_REQUIRED", self.codes(job))
         output = Path(job.result["output_dir"])
-        cert_c = json.loads((output/"verify_C.json").read_text())
+        cert_c = json.loads((output/"verify_C.json").read_text(encoding="utf-8"))
         self.assertEqual(cert_c["status"], "fail")  # local loss cannot be diluted into a staff component
         self.assertTrue(any(f["code"] == "DELIVERED_EXTRA_INK" for f in cert_c["findings"]))
         with patch("app.main.job_store", self.flow.store):
@@ -112,13 +112,13 @@ class ExportLightGateTests(unittest.TestCase):
         finding = next(e for e in endpoint["hypotheses"] if e["code"] == "DELIVERED_EXTRA_INK")
         self.assertTrue(Path(finding["raw_crop"]).is_file())
         self.assertTrue(Path(finding["primary_crop"]).is_file())
-        raw_json = json.loads((output/"review_hypotheses.json").read_text())
+        raw_json = json.loads((output/"review_hypotheses.json").read_text(encoding="utf-8"))
         entry = next(e for e in raw_json["hypotheses"] if e["id"] == finding["id"])
         self.assertEqual(entry["raw_crop_kind"], "source_strip")
         # Independently reproduce an ordinary rectangular page crop. No inverse
         # mapping, discontinuous grid, or unexplained white columns is allowed.
         actual = vp.decode_lossless_pdf(job.result["pdf"], profile="lossless")[finding["page_index"]-1]
-        cert_b = json.loads((output/"verify_B.json").read_text())
+        cert_b = json.loads((output/"verify_B.json").read_text(encoding="utf-8"))
         matrix = np.asarray(cert_b["instances"][0]["transform"][1]["matrix"])
         gap = record["systems"][0]["strip"]["staff_gap_px"]
         a, b, c, d = entry["bbox"]
@@ -222,7 +222,7 @@ class ExportLightGateTests(unittest.TestCase):
         self.assertTrue((self.flow.root/"offline"/"verify_report.json").is_file())
         artifact_report = module.verify_job(Path(job.result["output_dir"]), output=self.flow.root/"artifact-offline")
         self.assertEqual(artifact_report["status"], "pass", artifact_report["issues"])
-        base = json.loads(Path(record["ledger_base_path"]).read_text())
+        base = json.loads(Path(record["ledger_base_path"]).read_text(encoding="utf-8"))
         obs = base["observations"][0]
         image = cv2.imread(obs["frame_path"])
         image[0, 0] = 0

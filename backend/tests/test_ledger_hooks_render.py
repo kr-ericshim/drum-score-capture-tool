@@ -65,7 +65,8 @@ class PageOrigins(unittest.TestCase):
         before = copy.deepcopy(self.plan)
         plain = render.render_pages(self.plan, self.images, header=self.header)
         self.assertEqual(self.plan, before)
-        self.assertEqual(len(plain), 3)
+        # the appendix page count follows the platform font; the pages themselves must match
+        self.assertEqual(len(plain), len(self.pages))
         for a, b in zip(plain, self.pages):
             np.testing.assert_array_equal(a, b)
 

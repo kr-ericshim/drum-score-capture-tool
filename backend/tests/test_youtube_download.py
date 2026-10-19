@@ -118,7 +118,7 @@ class DownloadYoutubeTests(unittest.TestCase):
         FakeYoutubeDL.plans = [{"ext": "webm"}]
         with tempfile.TemporaryDirectory() as tmpdir:
             fake_node = Path(tmpdir) / "node"
-            fake_node.write_text("#!/bin/sh\n")
+            fake_node.write_text("#!/bin/sh\n", encoding="utf-8")
             with patch.dict(os.environ, {"DRUMSHEET_NODE_BIN": str(fake_node)}, clear=False), patch.object(
                 extract,
                 "YoutubeDL",
@@ -141,7 +141,7 @@ class DownloadYoutubeTests(unittest.TestCase):
         FakeYoutubeDL.plans = [{"ext": "webm"}]
         with tempfile.TemporaryDirectory() as tmpdir:
             fake_node = Path(tmpdir) / "node"
-            fake_node.write_text("#!/bin/sh\n")
+            fake_node.write_text("#!/bin/sh\n", encoding="utf-8")
             with patch.dict(os.environ, {"DRUMSHEET_NODE_BIN": "custom-node"}, clear=False), patch.object(
                 extract,
                 "YoutubeDL",

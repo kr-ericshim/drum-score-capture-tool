@@ -321,7 +321,7 @@ class RepairExportTests(unittest.TestCase):
         self.td2=tempfile.TemporaryDirectory(); self.addCleanup(self.td2.cleanup); self.root2=Path(self.td2.name); self.artifact=self.root2/'job'
         shutil.copytree(self.root,self.artifact)
         # All fixture references are local to this test.
-        for f in self.artifact.rglob('*.json'): f.write_text(f.read_text().replace(str(self.root),str(self.artifact)))
+        for f in self.artifact.rglob('*.json'): f.write_text(f.read_text(encoding="utf-8").replace(str(self.root),str(self.artifact)))
         record=json.loads(json.dumps(self.record).replace(str(self.root),str(self.artifact)))
         self.store=JobStore(self.root2); self.job=Job(id='job',source_type='file',file_path=None,youtube_url=None,options={'export':{'formats':['png','pdf']},'measure_reflow':True},artifact_dir=str(self.artifact),status=JobStatus.DONE,result=dict(output_model='clean_reflow_v1',reflow=record))
         self.store.create(self.job)

@@ -862,9 +862,9 @@ class UncutStripRegenerationTest(unittest.TestCase):
         import json
         # the stored observations no longer reproduce the recorded pixels
         occ_path = self.artifact / "reflow" / "occurrences.json"
-        occ = json.loads(occ_path.read_text())
+        occ = json.loads(occ_path.read_text(encoding="utf-8"))
         occ["systems"][0]["observations"] = occ["systems"][2]["observations"]  # another system's observations
-        occ_path.write_text(json.dumps(occ))
+        occ_path.write_text(json.dumps(occ), encoding="utf-8")
         self.uncut.unlink()
         before = digest(self.artifact / "export")
         result_before = self.store.get("job-g").result

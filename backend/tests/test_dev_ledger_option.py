@@ -87,7 +87,7 @@ class DevLedgerOptionTests(unittest.TestCase):
         self.assertFalse(record["dev_ledger"])
         self.assertFalse((workspace/"ledger_base.json").exists())
         self.assertFalse((workspace/"ledger_evidence").exists())
-        self.assertTrue(json.loads((workspace/"ledger_chains.json").read_text()))
+        self.assertTrue(json.loads((workspace/"ledger_chains.json").read_text(encoding="utf-8")))
         for measure in (False, True):
             sink, staged, result = self.compose(record, measure=measure, name=f"export-{measure}")
             report = rp.verify_light_deliverable(record, result, staged, sink=sink)
@@ -143,7 +143,7 @@ class DevLedgerOptionTests(unittest.TestCase):
     def test_analysis_pixels_occurrences_jump_and_plan_hashes_match(self):
         records = [self.analyse(self.root/f"hash-{dev}", dev=dev) for dev in (False, True)]
         for filename in ("occurrences.json", "jump.json"):
-            values = [json.loads((Path(r["workspace"])/filename).read_text()) for r in records]
+            values = [json.loads((Path(r["workspace"])/filename).read_text(encoding="utf-8")) for r in records]
             # analyse_jumps includes elapsed wall time, which is intentionally variable.
             if filename == "jump.json":
                 for v in values:

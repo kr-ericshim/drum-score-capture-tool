@@ -227,7 +227,7 @@ class VerifyPage(unittest.TestCase):
     def test_lossless_pdf_gray_and_rgb_contract_and_digest(self):
         cert = certificate(self.image, page_px=page.PAGE_SIZE, origin=(100, 100))
         expected = page.render_expected(cert, {"s": self.image}, [], 1)
-        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "page.pdf"
             for gray in (True, False):
                 profile = "lossless-gray" if gray else "lossless-rgb"
@@ -241,7 +241,7 @@ class VerifyPage(unittest.TestCase):
         from app.pipeline.export import _write_composed_pdf
         cert = certificate(self.image, page_px=page.PAGE_SIZE, origin=(100, 100))
         expected = page.render_expected(cert, {"s": self.image}, [], 1)
-        with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
+        with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "production.pdf"
             _write_composed_pdf(path, expected, 300.)
             result = page.verify_pages(cert, {"s": self.image}, path, generated=[], profile="lossless-gray")
@@ -258,7 +258,7 @@ class VerifyPage(unittest.TestCase):
         cert["features"]["c"] = feature_records(color, "c", supporters=["a", "b"])
         images = {"s": self.image, "c": color}
         expected = page.render_expected(cert, images, [], 2)
-        with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
+        with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "mixed.pdf"
             _write_composed_pdf(path, expected, 300.)
             result = page.verify_pages(cert, images, path, generated=[], profile="lossless")
@@ -283,7 +283,7 @@ class VerifyPage(unittest.TestCase):
         variants = [{"dct": True}, {"commands": b"q 595.2756 0 0 841.8898 2 0 cm /Im Do Q"},
                     {"commands": b"q 595.2756 0 0 841.8898 0 0 cm /Im Do Q 1 0 0 rg"},
                     {"page_extra": b"/Annots []"}, {"parent_extra": b"/Rotate 90"}, {"image_extra": b"/SMask 5 0 R"}]
-        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "bad.pdf"
             for kwargs in variants:
                 with self.subTest(kwargs=kwargs):

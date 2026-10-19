@@ -154,8 +154,6 @@ class VerifyCalibration(unittest.TestCase):
             self.assertEqual(stats["benign_max"], page.CALIBRATION_BENIGN_MAX[profile])
             self.assertEqual(stats["epsilon"], page.PROFILE_EPSILON[profile])
             self.assertTrue(stats["holdout_pass"])
-        root = Path("/tmp/wc"); root.mkdir(exist_ok=True)
-        (root / "calibration-benign.json").write_text(json.dumps(result, indent=2))
         print("\nCALIBRATION " + json.dumps(result))
 
     def test_every_declared_destructive_variant_and_low_contrast_widths(self):
@@ -219,7 +217,7 @@ class VerifyCalibration(unittest.TestCase):
         # Actual PDF placement and profile are structural controls, on full A4.
         image = staff_and_dots(); cert = certificate(image, page_px=page.PAGE_SIZE)
         expected = page.render_expected(cert, {"s": image}, [], 1)
-        with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
+        with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "mutation.pdf"
             for profile in page.PROFILE_EPSILON:
                 gray = profile == "lossless-gray"
@@ -231,8 +229,6 @@ class VerifyCalibration(unittest.TestCase):
                 result = page.verify_pages(cert, {"s": image}, path, generated=[], profile=profile)
                 self.assertIn("PDF_CONTRACT", {f["code"] for f in result["findings"]})
                 counts["wrong_render_profile"] += 1
-        root = Path("/tmp/wc"); root.mkdir(exist_ok=True)
-        (root / "calibration-destructive.json").write_text(json.dumps(dict(counts), indent=2))
         print("\nDESTRUCTIVE " + json.dumps(dict(counts)))
 
 

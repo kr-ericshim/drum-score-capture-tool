@@ -35,7 +35,7 @@ class TestPreviewFrameExtraction(unittest.TestCase):
                 out_path.write_bytes(b"png")
                 return 0, ""
 
-            def fake_run(cmd, stdout=None, stderr=None, text=None, check=None):
+            def fake_run(cmd, stdout=None, stderr=None, text=None, check=None, encoding=None, errors=None):
                 return _Result(returncode=0, stdout="10.0\n")
 
             with patch("app.pipeline.extract.resolve_ffmpeg_bin", return_value="ffmpeg"), patch(
@@ -80,7 +80,7 @@ class TestPreviewFrameExtraction(unittest.TestCase):
             out_path = root / "preview.png"
             seen = []
 
-            def fake_run(cmd, stdout=None, stderr=None, text=None):
+            def fake_run(cmd, stdout=None, stderr=None, text=None, encoding=None, errors=None):
                 seen.append(cmd)
                 out_path.write_bytes(b"png")
                 return _Result(returncode=0)
@@ -106,7 +106,7 @@ class TestPreviewFrameExtraction(unittest.TestCase):
             source.write_bytes(b"fake-video")
             out_path = root / "preview.png"
 
-            def fake_run(cmd, stdout=None, stderr=None, text=None):
+            def fake_run(cmd, stdout=None, stderr=None, text=None, encoding=None, errors=None):
                 if any(isinstance(part, str) and "thumbnail=90" in part for part in cmd):
                     out_path.write_bytes(b"png")
                     return _Result(returncode=0)

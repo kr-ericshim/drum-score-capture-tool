@@ -84,7 +84,7 @@ class RawInventoryProbe(unittest.TestCase):
             record = {"workspace": str(workspace), "ledger": ledger, "dev_ledger": True}
             rp.prune_frames(record)
             self.assertFalse(frames.exists())
-            persisted = json.loads((workspace / "ledger.json").read_text())
+            persisted = json.loads((workspace / "ledger.json").read_text(encoding="utf-8"))
             alternative = Path(persisted["dispositions"][0]["review_artifact"])
             self.assertTrue(alternative.is_file())
             self.assertTrue(np.array_equal(cv2.imread(str(alternative)), raw))

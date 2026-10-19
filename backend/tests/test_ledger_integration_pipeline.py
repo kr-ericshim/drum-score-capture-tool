@@ -63,7 +63,7 @@ def fixture(root, count=1):
         system.update(strip_path=rec["path"], strip={k: v for k, v in rec.items() if k != "path"})
         system.pop("observations")
     rl.write_ledger(root / "ledger_base.json", base)
-    (root / "ledger_chains.json").write_text(json.dumps(chains))
+    (root / "ledger_chains.json").write_text(json.dumps(chains), encoding="utf-8")
     return {"workspace": str(root), "dev_ledger": True, "ledger_base_path": str(root / "ledger_base.json"),
         "ledger_chains_path": str(root / "ledger_chains.json"), "systems": systems,
         "source_class": {"class": sc.CLASS_LIGHT_PAPER}, "review_reasons": [], "output_model": rp.OUTPUT_MODEL}
@@ -93,8 +93,8 @@ class LedgerIntegrationTest(unittest.TestCase):
         if report["status"] == "fail":
             raise ExportVerificationError("LEDGER_VERIFICATION_FAILED", "legacy library finding")
         elapsed = time.perf_counter()-t
-        report = json.loads((path / "ledger_report.json").read_text())
-        ledger = json.loads((path / "ledger.json").read_text())
+        report = json.loads((path / "ledger_report.json").read_text(encoding="utf-8"))
+        ledger = json.loads((path / "ledger.json").read_text(encoding="utf-8"))
         print(f"INTEGRATION_EXPORT case={staged} status={report['status']} base_bytes={Path(record['ledger_base_path']).stat().st_size} "
               f"delivered_bytes={(path/'ledger.json').stat().st_size} verify_seconds={elapsed:.6f} "
               f"issue_counts={dict(Counter(i['code'] for i in report['issues']))}")
@@ -110,8 +110,8 @@ class LedgerIntegrationTest(unittest.TestCase):
         with patch.object(rp, "classify_source_class", return_value={"class": sc.CLASS_LIGHT_PAPER}), \
                 patch.object(rp.ob, "build_manifest", side_effect=sampled), patch.object(rp.rj, "analyse_jumps", return_value=None):
             record = rp.analyse_source(video_path=self.root / "synthetic.mp4", roi=[[0,0],[800,0],[800,160],[0,160]], workspace=root, ledger=True)
-        base = json.loads(Path(record["ledger_base_path"]).read_text())
-        chains = json.loads(Path(record["ledger_chains_path"]).read_text())
+        base = json.loads(Path(record["ledger_base_path"]).read_text(encoding="utf-8"))
+        chains = json.loads(Path(record["ledger_chains_path"]).read_text(encoding="utf-8"))
         self.assertEqual(len(base["observations"]), 8)
         self.assertEqual(base["source_video"], str(self.root / "synthetic.mp4"))
         self.assertTrue(base["items"] and chains)
@@ -119,7 +119,7 @@ class LedgerIntegrationTest(unittest.TestCase):
         public = rp.public_record(record)
         self.assertNotIn("ledger", public)
         self.assertTrue(all("ledger" not in s["strip"] for s in public["systems"]))
-        self.assertNotIn("ledger", json.loads((root / "occurrences.json").read_text()))
+        self.assertNotIn("ledger", json.loads((root / "occurrences.json").read_text(encoding="utf-8")))
         print(f"ANALYSE_BASE bytes={Path(record['ledger_base_path']).stat().st_size} result_bytes={len(json.dumps(public).encode())}")
 
     def test_whole_system_staged_pdf_pass_and_written_dot_erasure_fail(self):
@@ -136,7 +136,7 @@ class LedgerIntegrationTest(unittest.TestCase):
         with self.assertRaises(ExportVerificationError) as caught:
             self.verify(record, sink, staged="erased")
         self.assertEqual(caught.exception.code, "LEDGER_VERIFICATION_FAILED")
-        report = json.loads((self.root / "erased" / "ledger_report.json").read_text())
+        report = json.loads((self.root / "erased" / "ledger_report.json").read_text(encoding="utf-8"))
         self.assertEqual(report["status"], "fail")
         self.assertIn("SOURCE_FOREGROUND_MISSING_OR_CHANGED", {i["code"] for i in report["issues"]})
 
@@ -200,7 +200,7 @@ class LedgerIntegrationTest(unittest.TestCase):
         self.assertEqual(report["user_excluded"]["displays"], 2)  # strip + occurrence inventory
         self.assertGreater(report["user_excluded"]["items"], 0)
         # Measured duplicate-display equivalence, excluded by the pipeline.
-        base = json.loads(Path(record["ledger_base_path"]).read_text())
+        base = json.loads(Path(record["ledger_base_path"]).read_text(encoding="utf-8"))
         for item in list(base["items"]):
             if item["display_id"] == f"strip:{first['id']}":
                 clone = copy.deepcopy(item); clone.update(id=f"duplicate/{item['id']}", display_id="pipeline-duplicate")
@@ -229,7 +229,7 @@ class LedgerIntegrationTest(unittest.TestCase):
 
     def test_user_exclusion_with_shared_observation_does_not_poison_kept_terminal(self):
         record = fixture(self.root / "reflow", 2)
-        base = json.loads(Path(record["ledger_base_path"]).read_text())
+        base = json.loads(Path(record["ledger_base_path"]).read_text(encoding="utf-8"))
         # The same sampled frame can contribute to two row displays. Reuse the
         # first raw witness only for matching staff hypotheses of the second.
         first, second = record["systems"]
@@ -259,7 +259,7 @@ class LedgerIntegrationTest(unittest.TestCase):
         self.assertEqual(after["status"], before["status"])
         self.assertTrue(all(Path(o["frame_path"]).is_file() for o in ledger["observations"]))
         record = fixture(self.root / "bad_retention")
-        base = json.loads(Path(record["ledger_base_path"]).read_text())
+        base = json.loads(Path(record["ledger_base_path"]).read_text(encoding="utf-8"))
         Path(base["observations"][0]["frame_path"]).write_bytes(b"damaged")
         with self.assertLogs("app.pipeline.reflow_pipeline", level="WARNING"):
             rp.prune_frames(record)
@@ -272,7 +272,7 @@ class LedgerIntegrationTest(unittest.TestCase):
         staged = self.root/"png_only"
         exported = export_composed_pages(pages=sink["pages"], formats=["png"], workspace=staged, logger=lambda _m: None)
         main._verify_reflow_ledger(record, exported, staged, sink)
-        report = json.loads((staged/"ledger_report.json").read_text())
+        report = json.loads((staged/"ledger_report.json").read_text(encoding="utf-8"))
         self.assertEqual(report["status"], "pass", report["issues"])
         self.assertNotIn("DELIVERED_PDF_UNASSESSED", record["review_reasons"])
         old = {"workspace": str(self.root / "old"), "systems": [], "source_class": {"class": sc.CLASS_LIGHT_PAPER}}
@@ -339,7 +339,7 @@ class LedgerIntegrationTest(unittest.TestCase):
             records.append({"system_id": sid, "ledger": fragment, "ledger_chain": chain})
         inventory = assembly.inventory_observations({"observations": manifests}, root / "manifest", source_video="synthetic")
         base, chains = rp._build_base_ledger(inventory, {}, records)
-        rl.write_ledger(root / "ledger_base.json", base); (root / "ledger_chains.json").write_text(json.dumps(chains))
+        rl.write_ledger(root / "ledger_base.json", base); (root / "ledger_chains.json").write_text(json.dumps(chains), encoding="utf-8")
         return {"workspace": str(root), "dev_ledger": True, "ledger_base_path": str(root / "ledger_base.json"), "systems": doc.systems,
             "source_class": {"class": sc.CLASS_LIGHT_PAPER}}, doc.context
 
@@ -356,7 +356,7 @@ class LedgerIntegrationTest(unittest.TestCase):
         report = rp.verify_delivered_ledger(record, exported["pdf"], staged, sink=sink)
         self.assertEqual(record["ledger_summary"]["status"], report["status"])
         self.assertEqual(record["ledger_summary"]["issue_counts"], dict(Counter(i["code"] for i in report["issues"])))
-        delivered = json.loads((staged / "ledger.json").read_text())
+        delivered = json.loads((staged / "ledger.json").read_text(encoding="utf-8"))
         removed = [d for d in delivered["dispositions"] if d.get("reason", "").startswith("REMOVED_BY_")]
         self.assertTrue(removed)
         self.assertNotEqual(report["status"], "pass")
@@ -552,11 +552,11 @@ class ReviewAccessTest(unittest.TestCase):
                 if report["status"] == "fail":
                     raise ExportVerificationError("LEDGER_VERIFICATION_FAILED", "legacy library finding")
         self.assertEqual(extract.call_count, 1)
-        body = json.loads((staged/"review_hypotheses.json").read_text())
+        body = json.loads((staged/"review_hypotheses.json").read_text(encoding="utf-8"))
         entry = next(e for e in body["hypotheses"] if e["code"] == "SOURCE_FOREGROUND_MISSING_OR_CHANGED")
         raw = cv2.imread(str(staged/entry["raw_crop"])); primary = cv2.imread(str(staged/entry["primary_crop"]))
         self.assertEqual(raw.shape[:2], primary.shape[:2])
-        ledger = json.loads((staged/"ledger.json").read_text())
+        ledger = json.loads((staged/"ledger.json").read_text(encoding="utf-8"))
         item = next(i for i in ledger["items"] if i["id"] == entry["item_id"])
         resolver = rl.EvidenceResolver(ledger); view = next(resolver.views(item))
         _, frame_to_display = rp._review_native_frame(resolver, item, view)

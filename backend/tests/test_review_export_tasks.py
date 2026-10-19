@@ -125,7 +125,7 @@ class ReviewExportTaskTest(unittest.TestCase):
         self.assertEqual(job.status, JobStatus.DONE)
         latest = main.get_latest_review_export("job-t")
         self.assertEqual((latest.task_id, latest.state), (started.task_id, "done"))
-        saved = json.loads((self.artifact / xt.TASK_FILE).read_text())
+        saved = json.loads((self.artifact / xt.TASK_FILE).read_text(encoding="utf-8"))
         self.assertEqual(saved["state"], "done")
         self.assertEqual(saved["result"]["revision"], 2)
 
@@ -259,7 +259,7 @@ class ReviewExportTaskTest(unittest.TestCase):
         with patch.object(reflow_pipeline, "compose_systems", side_effect=compose):
             task = main.start_review_export("job-t", self._request())
             self.assertTrue(started.wait(10))
-            on_disk = json.loads((self.artifact / xt.TASK_FILE).read_text())
+            on_disk = json.loads((self.artifact / xt.TASK_FILE).read_text(encoding="utf-8"))
             self.assertEqual(on_disk["state"], "running")
             # a new backend process: same files, no live task
             restarted = xt.ExportTaskStore()
@@ -268,7 +268,7 @@ class ReviewExportTaskTest(unittest.TestCase):
                 self.assertEqual((seen.state, seen.error_code, seen.stage), ("failed", "EXPORT_INTERRUPTED", "interrupted"))
                 self.assertTrue(seen.error.startswith("EXPORT_INTERRUPTED:"))
                 self.assertEqual(main.app_activity().active_exports, 0)
-            self.assertEqual(json.loads((self.artifact / xt.TASK_FILE).read_text())["state"], "failed")
+            self.assertEqual(json.loads((self.artifact / xt.TASK_FILE).read_text(encoding="utf-8"))["state"], "failed")
             self.tasks.request_cancel("job-t", task.task_id)
             release.set()
             self.assertEqual(self._wait(task.task_id).state, "cancelled")

@@ -198,7 +198,7 @@ class MixedAlternateNumberingTest(unittest.TestCase):
         self.assertTrue(all(Path(s["strip_path"]).is_file() for s in systems))
         ev = main_s["strip"]["minority_content"]["events"]
         self.assertEqual([e.get("alternate") for e in ev], ["alt1"])
-        occ = json.loads((Path(self.record["workspace"]) / "occurrences.json").read_text())
+        occ = json.loads((Path(self.record["workspace"]) / "occurrences.json").read_text(encoding="utf-8"))
         self.assertEqual([s["id"] for s in occ["systems"]], ["sys-001", "sys-001-alt1", "sys-002", "sys-002-alt1"])
         # the moment shows the dot, the placed strip leaves it out
         box = [598, 28, 603, 33]

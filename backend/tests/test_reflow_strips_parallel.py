@@ -34,7 +34,9 @@ def normalized(value, root):
     if isinstance(value, np.generic):
         return value.item()
     if isinstance(value, (str, Path)):
-        return str(value).replace(str(root), "<OUT>")
+        # also the JSON-escaped form a nested record holds on Windows (backslashes doubled)
+        text = str(value).replace(str(root).replace("\\", "\\\\"), "<OUT>")
+        return text.replace(str(root), "<OUT>")
     return value
 
 
@@ -84,7 +86,7 @@ class ParallelEquivalenceTest(unittest.TestCase):
                             logger=logs.append, progress=progress.append, checkpoint=checkpoint, ledger=ledger)
                 self.assertEqual(set(callback_threads), {threading.get_ident()})
                 snapshots.append((json.dumps(normalized(records, root), sort_keys=True),
-                    {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*.png")}, logs, progress))
+                    {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*.png")}, logs, progress))
             self.assertEqual(snapshots[0], snapshots[1])
         self.assertEqual(before, (manifest, systems))
         for key, image in images.items():

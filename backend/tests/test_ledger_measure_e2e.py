@@ -51,7 +51,7 @@ class LedgerMeasureE2E(unittest.TestCase):
         start = time.perf_counter()
         report = pipeline.verify_delivered_ledger(record, exported["pdf"], staged, sink=sink)
         elapsed = time.perf_counter()-start
-        ledger = json.loads((staged / "ledger.json").read_text())
+        ledger = json.loads((staged / "ledger.json").read_text(encoding="utf-8"))
         print(f"\nMEASURE_E2E case={name} status={report['status']} ledger_bytes={(staged/'ledger.json').stat().st_size} "
               f"verify_seconds={elapsed:.6f} counts={dict(Counter(i['code'] for i in report['issues']))}")
         return report, ledger, Path(exported["pdf"])
@@ -85,7 +85,7 @@ class LedgerMeasureE2E(unittest.TestCase):
         chain = {"display_id":"strip:native", "strip_id":"native",
                  "stages":[{"stage":"display_to_strip", "kind":"affine", "matrix":np.eye(3).tolist()}]}
         rl.write_ledger(root/"ledger_base.json", base)
-        (root/"ledger_chains.json").write_text(json.dumps({"native": [chain]}))
+        (root/"ledger_chains.json").write_text(json.dumps({"native": [chain]}), encoding="utf-8")
         return {"workspace":str(root), "ledger_base_path":str(root/"ledger_base.json"), "systems":[system]}, doc.context
 
     def test_clean_measure_pdf_pass_auto_off_and_on(self):
@@ -130,7 +130,7 @@ class LedgerMeasureE2E(unittest.TestCase):
                 self.assertEqual(job.result["reflow"]["ledger_summary"]["status"], "unassessed")
                 self.assertEqual(job.result["reflow"]["ledger_summary"]["issue_counts"],
                                  {"VERIFICATION_UNASSESSED": 2 if target.endswith("verify_plan") else 1})
-                report = json.loads(Path(job.result["reflow"]["ledger_attempt_path"]).read_text())
+                report = json.loads(Path(job.result["reflow"]["ledger_attempt_path"]).read_text(encoding="utf-8"))
                 self.assertEqual(report["status"], "unassessed")
                 self.assertEqual(report["issues"][0]["detail"]["exception_type"], "RuntimeError")
                 self.assertEqual(report["issues"][0]["detail"]["reason"], "injected verifier failure")
@@ -188,7 +188,7 @@ class LedgerMeasureE2E(unittest.TestCase):
 
     def test_referenced_batch_preserves_every_view_and_reduces_frame_decodes(self):
         record = fixtures.fixture(self.root / "batched-views")
-        ledger = json.loads(Path(record["ledger_base_path"]).read_text())
+        ledger = json.loads(Path(record["ledger_base_path"]).read_text(encoding="utf-8"))
         items = ledger["items"][:32]
         plain, batched = rl.EvidenceResolver(ledger), rl.EvidenceResolver(ledger)
         with patch.object(cv2, "imdecode", wraps=cv2.imdecode) as decode:
@@ -213,7 +213,7 @@ class LedgerMeasureE2E(unittest.TestCase):
                 image = cv2.imread(system["strip_path"])
                 image[400:402,500:502] = 0
                 # The same raw dot belongs to every immutable observation.
-                base = json.loads(Path(record["ledger_base_path"]).read_text())
+                base = json.loads(Path(record["ledger_base_path"]).read_text(encoding="utf-8"))
                 for obs in base["observations"]:
                     frame = cv2.imread(obs["frame_path"]); frame[400:402,500:502] = 0
                     cv2.imwrite(obs["frame_path"], frame)

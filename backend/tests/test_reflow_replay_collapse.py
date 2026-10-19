@@ -378,7 +378,7 @@ class ReplayPipelineTests(ReplayFixture):
     def test_occurrences_and_returned_systems_persist_exclusion_without_order_change(self):
         record, collapse, log = self.analyse()
         collapse.assert_called_once()
-        stored = json.loads((self.root / "job" / "occurrences.json").read_text())
+        stored = json.loads((self.root / "job" / "occurrences.json").read_text(encoding="utf-8"))
         self.assertEqual(stored["exclusions"]["replay_blocks"], record["exclusions"]["replay_blocks"])
         self.assertEqual(len(record["systems"]), 8)
         for rows in (stored["systems"], record["systems"]):
@@ -435,7 +435,7 @@ class ReplayPipelineTests(ReplayFixture):
         self.assertEqual(by_id["B1-alt1"]["alternate_of"], "B1")
         self.assertTrue(Path(by_id["B1-alt1"]["strip_path"]).is_file())
         self.assertTrue(by_id["B1"]["strip"]["minority_content"]["alternates"])
-        stored = json.loads((self.root / "job" / "occurrences.json").read_text())
+        stored = json.loads((self.root / "job" / "occurrences.json").read_text(encoding="utf-8"))
         self.assertEqual([s["id"] for s in stored["systems"]], [s["id"] for s in record["systems"]])
         self.assertFalse(next(s for s in stored["systems"] if s["id"] == "B1")["included"])
         self.assertFalse(next(s for s in stored["systems"] if s["id"] == "B1-alt1")["included"])
