@@ -18,7 +18,6 @@
     "start": "electron .",
     "check:renderer-v2": "node scripts/check-renderer-v2.js",
     "check:locale-init": "node scripts/check-locale-init.js",
-    "measure:renderer-footprint": "node scripts/measure-renderer-v2-baseline.js",
     "test:desktop-smoke": "node --test tests/main-startup-smoke.test.mjs",
     "test:packaged-release": "node --test tests/validate-packaged-release.test.mjs",
     "test:renderer-entry": "node --test tests/renderer-entry.test.cjs",
@@ -29,14 +28,8 @@
     "smoke:packaged-electron": "node scripts/smoke-packaged-electron.js",
     "verify:renderer-v2": "npm run test:renderer-entry && npm run test:workflow-shell && npm run test:renderer-v2 && npm run check:renderer-v2 && npm run check:locale-init",
     "pack": "node scripts/run-builder.js pack release",
-    "pack:lean": "node scripts/run-builder.js pack lean",
-    "pack:full": "node scripts/run-builder.js pack full",
-    "pack:compact": "node scripts/run-builder.js pack compact",
     "pack:release": "node scripts/run-builder.js pack release",
     "dist": "node scripts/run-builder.js dist release",
-    "dist:lean": "node scripts/run-builder.js dist lean",
-    "dist:full": "node scripts/run-builder.js dist full",
-    "dist:compact": "node scripts/run-builder.js dist compact",
     "dist:release": "node scripts/run-builder.js dist release"
   },
   "devDependencies": {
