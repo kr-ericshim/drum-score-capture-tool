@@ -28,3 +28,8 @@ backend/bin/
 /tmp/
 
 backend/.venv-build/
+
+# Local tool state (code index, Claude Code local settings and worktrees)
+.codegraph/
+.claude/settings.local.json
+.claude/worktrees/

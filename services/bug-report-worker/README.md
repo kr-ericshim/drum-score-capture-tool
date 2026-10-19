@@ -6,7 +6,7 @@ A Cloudflare Worker that receives reports from the app's **문제 보고 / Repor
 App dialog ──POST /reports──▶ Worker (validation, 5 per minute per IP) ──▶ Resend ──▶ maintainer inbox
 ```
 
-Until the Worker URL is set in the app, the dialog opens a pre-filled GitHub issue instead of sending.
+The app ships with the deployed Worker URL (`BUG_REPORT_ENDPOINT` in `desktop/bug-report.js`). If that constant is empty or not a valid HTTPS URL, the dialog opens a pre-filled GitHub issue instead of sending. If sending fails, the dialog also offers **GitHub에서 보고 / Report on GitHub**.
 
 ## What a report contains
 
@@ -18,7 +18,7 @@ Until the Worker URL is set in the app, the dialog opens a pre-filled GitHub iss
 
 Videos, capture images, and generated files are never sent.
 
-## Setup (once)
+## Setup (done once; repeat only for a new account or Worker)
 
 1. Create a [Resend](https://resend.com) account and an API key with **Sending access** only.
    - `REPORT_FROM` in `wrangler.toml` must use a domain verified in Resend (currently `mail.teamit.ericshim.me`). With `onboarding@resend.dev` instead, mail can only go to the Resend account's own address.
@@ -32,7 +32,7 @@ npx wrangler deploy
 ```
 
    Enter the Resend account's email address for `REPORT_TO`.
-3. Put the URL that `deploy` prints, with `/reports` appended, into `BUG_REPORT_ENDPOINT` in `desktop/bug-report.js`, and ship it in the next release:
+3. Put the URL that `deploy` prints, with `/reports` appended, into `BUG_REPORT_ENDPOINT` in `desktop/bug-report.js` (already set to the current Worker), and ship it in the next release:
 
 ```js
 const BUG_REPORT_ENDPOINT = 'https://drum-sheet-bug-report.<account>.workers.dev/reports';
