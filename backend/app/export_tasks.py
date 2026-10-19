@@ -215,13 +215,6 @@ class ExportTaskStore:
                 self._persist_locked(task)
             return ExportTask(**asdict(task))
 
-    def forget(self) -> None:
-        """Tests only: drop live tasks (as a restarted backend would have none)."""
-        with self._lock:
-            self._live.clear()
-            self._dirs.clear()
-            self._cancel.clear()
-
     # -- persistence -----------------------------------------------------------------------
     def _persist_locked(self, task: ExportTask) -> None:
         folder = self._dirs.get(task.job_id)
