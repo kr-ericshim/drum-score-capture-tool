@@ -1,0 +1,3 @@
+# Test runner for CI: runs the unittest suite in parallel. Not shipped in the app.
+pytest==9.1.1
+pytest-xdist==3.8.0
