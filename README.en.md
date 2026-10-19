@@ -6,7 +6,7 @@ The app does not transcribe audio, recognize notes, or export MusicXML/MIDI.
 
 [Download the latest release](https://github.com/kr-ericshim/drum-score-capture-tool/releases/latest) · [Project home (Korean)](./README.md) · [한국어 가이드](./README.ko.md)
 
-This guide follows the next public version (the current source). Installers up to v0.2.1 use the earlier method, which captures score screens as page images, so their screens and results differ. Check the [release notes](https://github.com/kr-ericshim/drum-score-capture-tool/releases) for your installed version.
+This guide follows v0.3.0. Installers up to v0.2.1 use the earlier method, which captures score screens as page images, so their screens and results differ. Check the [release notes](https://github.com/kr-ericshim/drum-score-capture-tool/releases) for your installed version.
 
 [Supported videos](#supported-videos) · [Installation](#installation) · [Workflow](#workflow) · [Output](#output) · [Shortcuts](#shortcuts) · [Troubleshooting](#troubleshooting)
 

@@ -6,7 +6,7 @@
 
 [설치 파일 다운로드](https://github.com/kr-ericshim/drum-score-capture-tool/releases/latest) · [프로젝트 홈](./README.md) · [English](./README.en.md)
 
-이 문서는 다음 공개 버전(현재 소스) 기준입니다. v0.2.1 이하 설치 파일은 악보 화면을 페이지 이미지로 캡처하는 이전 방식이라 화면과 결과가 다릅니다. 설치한 버전의 기능은 [릴리스 노트](https://github.com/kr-ericshim/drum-score-capture-tool/releases)를 확인하세요.
+이 문서는 v0.3.0 기준입니다. v0.2.1 이하 설치 파일은 악보 화면을 페이지 이미지로 캡처하는 이전 방식이라 화면과 결과가 다릅니다. 설치한 버전의 기능은 [릴리스 노트](https://github.com/kr-ericshim/drum-score-capture-tool/releases)를 확인하세요.
 
 [지원하는 영상](#지원하는-영상) · [설치](#설치) · [사용법](#사용법) · [결과물](#결과물) · [단축키](#단축키) · [문제 해결](#문제-해결)
 
