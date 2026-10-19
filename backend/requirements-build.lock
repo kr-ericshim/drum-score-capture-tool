@@ -76,8 +76,6 @@ pyinstaller-hooks-contrib==2026.8
     # via pyinstaller
 pywin32-ctypes==0.2.3 ; sys_platform == 'win32'
     # via pyinstaller
-pyyaml==6.0.3
-    # via -r backend/requirements.txt
 requests==2.34.2
     # via yt-dlp
 setuptools==84.0.0
