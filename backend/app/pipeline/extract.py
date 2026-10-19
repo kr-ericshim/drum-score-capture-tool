@@ -519,7 +519,7 @@ def _probe_download_resolution(path: Path) -> tuple[int, int]:
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             check=False,
         )
     except (OSError, RuntimeError, ValueError):
@@ -556,7 +556,7 @@ def _probe_video_duration_seconds(path: Path) -> float:
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             check=False,
         )
     except (OSError, RuntimeError, ValueError):
@@ -760,7 +760,7 @@ def _extract_single_frame_with_ffmpeg(
                     cmd += ["-i", str(source_video), "-ss", str(seek_sec)]
                 cmd += ["-frames:v", "1", str(out_path)]
 
-                result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
                 if result.returncode == 0 and out_path.exists() and out_path.stat().st_size > 0:
                     return
 
@@ -796,7 +796,7 @@ def _extract_single_frame_with_ffmpeg(
         "1",
         str(out_path),
     ]
-    thumb_result = subprocess.run(thumb_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    thumb_result = subprocess.run(thumb_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     if thumb_result.returncode == 0 and out_path.exists() and out_path.stat().st_size > 0:
         return
 

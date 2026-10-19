@@ -760,12 +760,12 @@ def write_manifest(manifest: Dict[str, Any], path: Path) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(manifest, ensure_ascii=False, separators=(",", ":")))
+    tmp.write_text(json.dumps(manifest, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     tmp.replace(path)
 
 
 def load_manifest(path: Path) -> Dict[str, Any]:
-    m = json.loads(Path(path).read_text())
+    m = json.loads(Path(path).read_text(encoding="utf-8"))
     problems = validate_manifest(m)
     if problems:
         raise ValueError(f"invalid manifest {path}: {problems[:5]}")

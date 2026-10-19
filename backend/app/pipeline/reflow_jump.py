@@ -1040,7 +1040,7 @@ def _tesseract_number(crop: np.ndarray, min_votes: int) -> Optional[int]:
                 cv2.imwrite(str(path), big)
                 try:
                     r = subprocess.run([exe, str(path), "stdout", "--psm", "7", "-c", "tessedit_char_whitelist=0123456789"],
-                                       capture_output=True, text=True, timeout=10)
+                                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
                 except Exception:  # noqa: BLE001
                     return None
                 t = r.stdout.strip()
@@ -3157,5 +3157,5 @@ def write_json(result: Dict[str, Any], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps({k: v for k, v in result.items() if not k.startswith("_")}, ensure_ascii=False, indent=1,
-                              default=lambda o: o.tolist() if hasattr(o, "tolist") else None))
+                              default=lambda o: o.tolist() if hasattr(o, "tolist") else None), encoding="utf-8")
     tmp.replace(path)

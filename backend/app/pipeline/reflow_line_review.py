@@ -242,10 +242,10 @@ def load_line_review(plan: dict, reflow: dict, *, logger: Optional[Callable[[str
         if any(s["id"] in placed and (s.get("strip") or {}).get("jump") is not None for s in systems):
             workspace = reflow.get("workspace")
             if jump is None:
-                jump = json.loads((Path(workspace) / "jump.json").read_text())
+                jump = json.loads((Path(workspace) / "jump.json").read_text(encoding="utf-8"))
             if episodes is None and workspace is not None:
                 try:
-                    episodes = json.loads((Path(workspace) / "tracking.json").read_text())["episodes"]
+                    episodes = json.loads((Path(workspace) / "tracking.json").read_text(encoding="utf-8"))["episodes"]
                 except FileNotFoundError:
                     pass  # Seam t_a/t_b intervals can supply the same episode times.
         return _build(plan, systems, jump, episodes)

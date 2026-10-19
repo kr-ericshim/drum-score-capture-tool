@@ -133,8 +133,8 @@ def regenerate_uncut_strip(workspace: Path, s: Dict[str, Any]) -> Dict[str, Any]
     path = unc.get("path")
     out: Dict[str, Any] = {"system_id": s["id"], "regenerated": False}
     try:
-        occ = json.loads((workspace / "occurrences.json").read_text())
-        manifest = json.loads((workspace / "manifest.json").read_text())
+        occ = json.loads((workspace / "occurrences.json").read_text(encoding="utf-8"))
+        manifest = json.loads((workspace / "manifest.json").read_text(encoding="utf-8"))
         occ_s = next((x for x in occ["systems"] if x["id"] == s["id"]), None)
         if occ_s is None or not path:
             out["reason"] = "no_record_to_regenerate_from"
@@ -191,7 +191,7 @@ def regenerate_uncut_strip(workspace: Path, s: Dict[str, Any]) -> Dict[str, Any]
 def _dump(obj: Any, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(obj, ensure_ascii=False, default=lambda o: None))
+    tmp.write_text(json.dumps(obj, ensure_ascii=False, default=lambda o: None), encoding="utf-8")
     tmp.replace(path)
 
 
@@ -685,7 +685,7 @@ def duplicate_suggestions(record: Dict[str, Any], *, logger: Callable[[str], Non
     occ_path = Path(record["workspace"]) / "occurrences.json"
     if not occ_path.is_file():
         return out
-    occ = json.loads(occ_path.read_text())
+    occ = json.loads(occ_path.read_text(encoding="utf-8"))
     included = [s for s in occ["systems"] if s["included"]]
     strip_of = {s["id"]: s["strip_path"] for s in record.get("systems", []) if s.get("strip_path")}
     seen = {x["system_id"] for x in out}
@@ -1706,7 +1706,7 @@ def resolve_dependencies(systems: Sequence[Dict[str, Any]], all_systems: Optiona
 
 def _compose_ledger_inputs(sink: dict, decided: Sequence[dict], all_systems: Sequence[dict], workspace: Optional[Path]) -> None:
     path = Path(workspace) / "ledger_chains.json" if workspace is not None else None
-    saved = json.loads(path.read_text()) if path is not None and path.is_file() else {}
+    saved = json.loads(path.read_text(encoding="utf-8")) if path is not None and path.is_file() else {}
     chains, unavailable = [], []
     for d in decided:
         s = d["system"]

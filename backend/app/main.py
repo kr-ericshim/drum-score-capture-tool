@@ -3085,7 +3085,7 @@ def _probe_video_resolution_with_ffprobe(path: Path) -> tuple[int, int]:
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             check=False,
         )
     except (OSError, RuntimeError, ValueError):
@@ -3150,7 +3150,7 @@ def _probe_video_duration_with_ffprobe(path: Path) -> float:
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             check=False,
         )
     except (OSError, RuntimeError, ValueError):

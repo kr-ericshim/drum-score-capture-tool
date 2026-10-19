@@ -65,7 +65,7 @@ def report_progress(stage: str, fraction: Optional[float] = None) -> None:
 def run_capture_process(command, *, on_line=None, idle_timeout=120.0):
     """Consume both pipes immediately; keep only the last 64 KiB of stderr."""
     checkpoint()
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     lines = SimpleQueue()
     errors = deque(maxlen=64)
 

@@ -76,8 +76,8 @@ def load_context(workspace: Optional[Path]) -> Optional[Dict[str, Any]]:
     if workspace is None:
         return None
     try:
-        manifest = json.loads((Path(workspace) / "manifest.json").read_text())
-        occ = json.loads((Path(workspace) / "occurrences.json").read_text())
+        manifest = json.loads((Path(workspace) / "manifest.json").read_text(encoding="utf-8"))
+        occ = json.loads((Path(workspace) / "occurrences.json").read_text(encoding="utf-8"))
     except Exception:
         return None
     return {"manifest": manifest, "occurrences": occ}

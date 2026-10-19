@@ -317,7 +317,7 @@ def _ffmpeg_hwaccels(ffmpeg_bin: str) -> List[str]:
             [ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-hwaccels"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             check=False,
         )
     except Exception:
@@ -345,7 +345,7 @@ def _ffmpeg_has_filter(ffmpeg_bin: str, filter_name: str) -> bool:
             [ffmpeg_bin, "-hide_banner", "-filters"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             check=False,
             timeout=3.5,
         )
@@ -405,7 +405,7 @@ def _probe_scale_vt_pipeline(ffmpeg_bin: str) -> bool:
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             check=False,
             timeout=4.0,
         )
@@ -491,7 +491,7 @@ def _run_cmd(cmd: List[str], *, timeout_sec: float = 2.0) -> str:
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=timeout_sec,
             check=False,
         )
