@@ -12,7 +12,7 @@
 
 ## 현재 상태
 
-- `v0.3.0` 태그 = `2d2ae8f`. `main`과 `feature/clean-reflow`가 같은 커밋을 가리킨다. 릴리즈 노트는 [release-notes-v0.3.0.md](../release/release-notes-v0.3.0.md)에 있다.
+- **v0.3.0 배포 완료(2026-10-20 02:23 KST)**: [릴리스](https://github.com/kr-ericshim/drum-score-capture-tool/releases/tag/v0.3.0)에 dmg·exe와 ffmpeg 소스가 올라갔다. 태그는 `5823634`이다. 첫 태그 실행은 macOS 테스트 하나가 해시 순서에 따라 실패해 배포되지 않았고, 테스트를 고친 뒤 태그를 옮겼다. `main`과 `feature/clean-reflow`는 같은 커밋이다. 릴리즈 노트는 [release-notes-v0.3.0.md](../release/release-notes-v0.3.0.md)에 있다.
 - 출시 전 정리(2026-10-19):
   - backend: clean reflow 이전 캡처·이어붙이기 경로(약 5,000줄), HAT 업스케일 스크립트, PyYAML을 지웠다. 엔드포인트 27개는 그대로다.
   - desktop: 쓰지 않는 코드·IPC·i18n 키·CSS, lean/full/compact 빌드 스크립트를 지웠다. 문구를 다듬었다.
