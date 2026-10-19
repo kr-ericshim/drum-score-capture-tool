@@ -7,7 +7,7 @@ Use this checklist immediately before cutting a public release for Drum Sheet Ca
 - [ ] Release scope is frozen for this version.
 - [ ] Version is updated in `desktop/package.json` and both root version fields of `desktop/package-lock.json`.
 - [ ] `node desktop/scripts/check-release-version.js` passes; the intended tag exactly matches the version.
-- [ ] `docs/release/release-notes-vX.Y.Z.md` exists and describes the new version.
+- [ ] `docs/release/release-notes-vX.Y.Z.md` exists, describes the new version, and carries the minimum-OS marker on its first line (currently `<!-- minimum-os: darwin=13.0 -->`).
 - [ ] Backend app version matches `desktop/package.json`.
 - [ ] README files still match the actual product behavior and supported platforms.
 - [ ] Public release target is still limited to Windows `x64` and macOS `arm64`.
@@ -16,7 +16,7 @@ Use this checklist immediately before cutting a public release for Drum Sheet Ca
 ## Automated Checks
 
 - [ ] `PYTHONPATH=backend backend/.venv/bin/python -m unittest discover -s backend/tests -p 'test_*.py'`
-- [ ] `backend/.venv/bin/pip install -r backend/requirements-build.txt`
+- [ ] Build dependencies match the lock: `uv pip sync --python backend/.venv-build/bin/python backend/requirements-build.lock` (or `pip install -r backend/requirements-build.lock` in the build environment)
 - [ ] `cd desktop && npm ci`
 - [ ] `cd desktop && npm run test:desktop-smoke`
 - [ ] `cd desktop && npm run test:desktop-node`
@@ -29,7 +29,8 @@ Use this checklist immediately before cutting a public release for Drum Sheet Ca
 - [ ] Treat `pack:release` as unpacked-app validation only; it does not prove DMG/installer generation.
 - [ ] Confirm packaged artifact validation passes at the end of the build logs, including frozen backend runtime plus bundled `ffmpeg`/`ffprobe` detection.
 - [ ] Confirm packaged Electron smoke starts the generated app and reaches `/health` plus `/runtime`.
-- [ ] Confirm packaged runtime smoke starts the backend executable from `dist/`, reads `/runtime`, extracts a preview frame from a synthetic score video, and completes PNG/PDF export.
+- [ ] Confirm packaged runtime smoke starts the backend executable from `dist/`, reads `/runtime`, extracts a preview frame from a synthetic score video, and completes a clean reflow PNG/PDF export.
+- [ ] On macOS, confirm the build log shows `[verify-macos-signature]` lines for the app and, after `dist:release`, the DMG. To re-check by hand: `node desktop/scripts/verify-macos-signature.js <app|dmg>`.
 - [ ] Treat `test:desktop-smoke` as a no-GUI Electron startup contract only; full packaged app behavior still requires the manual smoke test below.
 
 ## Manual Smoke Test
@@ -40,13 +41,14 @@ Use this checklist immediately before cutting a public release for Drum Sheet Ca
 - [ ] Local video import works.
 - [ ] YouTube URL import works.
 - [ ] Preview frame loads.
-- [ ] Score region can be selected and adjusted.
-- [ ] The selected score-area preview appears before export.
-- [ ] Full run completes without user-facing errors.
-- [ ] Export works for PNG.
-- [ ] Export works for JPG.
-- [ ] Export works for PDF.
-- [ ] Exported files open correctly outside the app.
+- [ ] Score region suggestion appears as a draft, can be adjusted, and is applied only by **Apply region**.
+- [ ] **Make PDF** on a supported one-line video completes without user-facing errors, and review lists its score lines.
+- [ ] Review: include/exclude and reorder a line, then **Rebuild PDF**; the PDF reflects it.
+- [ ] **Edit title** rebuilds the PDF with the new title without capturing again.
+- [ ] **Rebuild as original screens** works on a one-line video.
+- [ ] An unsupported video (translucent plate or scrolling) shows the not-supported message instead of a PDF.
+- [ ] PNG and JPG (under More options) export the same pages.
+- [ ] **Save PDF as…** saves a copy; exported files open correctly outside the app.
 - [ ] Korean bootstrap works for `ko*` locale or saved Korean preference.
 - [ ] English bootstrap works for non-`ko*` locale or saved English preference.
 - [ ] Relaunch preserves saved language setting.
@@ -78,7 +80,7 @@ Use this checklist immediately before cutting a public release for Drum Sheet Ca
 - [ ] macOS app and DMG-contained app pass strict signature verification; Gatekeeper warnings remain expected without notarization.
 - [ ] Install docs describe Open Anyway first and the scoped app quarantine fallback.
 - [ ] macOS Intel or universal builds are not part of the default release target unless explicitly added.
-- [ ] Auto-update is not part of the current release checklist unless updater support is intentionally introduced.
+- [ ] In-app update (since v0.1.35): an installed previous version offers this release, downloads it, and installs after **Restart to install**. Release notes state the minimum OS for users who cannot update.
 
 ## Version Decision Rule
 

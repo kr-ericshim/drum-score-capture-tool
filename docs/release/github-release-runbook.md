@@ -38,7 +38,8 @@ Follow [Media toolchain and local release builds](media-toolchain.md) before pac
 
 ## Pre-Release Checklist
 
-1. Update `desktop/package.json`, both version fields in `desktop/package-lock.json`, and the FastAPI version in `backend/app/main.py`; add `docs/release/release-notes-vX.Y.Z.md`. Run `node desktop/scripts/check-release-version.js`. Tag builds reject an exact tag/version mismatch before installing dependencies.
+1. Update `desktop/package.json`, both version fields in `desktop/package-lock.json`, and the FastAPI version in `backend/app/main.py`; add `docs/release/release-notes-vX.Y.Z.md`. Run `node desktop/scripts/check-release-version.js`. CI and the Release workflow run the same check; on a tag build it also rejects a tag/version mismatch and missing release notes before installing dependencies.
+   - The release notes must carry the minimum-OS marker the packaged app declares, currently `<!-- minimum-os: darwin=13.0 -->` on the first line. `dist:release` on macOS refuses notes whose marker does not match the app's `LSMinimumSystemVersion`, and the in-app updater reads the same marker.
 2. Review `README.md`, `README.ko.md`, `README.en.md`
 3. Run local checks
 
@@ -52,10 +53,13 @@ npm run test:desktop-smoke
 npm run verify:renderer-v2
 npm run test:desktop-node
 npm run test:packaged-release
+npm run pack:release        # optional quick check: unpacked app only, no installer
 npm run dist:release
 npm run smoke:packaged-electron
 npm run smoke:packaged-runtime
 ```
+
+   To re-check signatures by hand on macOS: `node desktop/scripts/verify-macos-signature.js "dist/mac-arm64/Drum Sheet Capture.app"` or pass the `.dmg` path. Both `pack:release` and `dist:release` already run it (see Free macOS Release Policy).
 
 4. Commit the release changes
 5. Push the branch
@@ -63,8 +67,8 @@ npm run smoke:packaged-runtime
 7. Push the tag
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
 ## GitHub Secrets
@@ -116,13 +120,13 @@ It verifies:
 
 `desktop/scripts/validate-packaged-release.js` still checks a few packaged backend source markers because current release packages intentionally ship the backend source tree next to the frozen runtime. Treat these as source-package compatibility and stale-copy checks only.
 
-Packaged behavior is gated in two layers: `npm run smoke:packaged-electron` starts the generated Electron app and waits for its backend to expose `/health` and `/runtime`; `npm run smoke:packaged-runtime` starts the backend executable from the generated `dist/` payload, reads `/runtime`, extracts a preview frame from a generated synthetic score video, and runs a capture job through PNG/PDF export with file-signature checks. This is a synthetic local-file test, not YouTube coverage or visual validation of musical notation.
+Packaged behavior is gated in two layers: `npm run smoke:packaged-electron` starts the generated Electron app and waits for its backend to expose `/health` and `/runtime`; `npm run smoke:packaged-runtime` starts the backend executable from the generated `dist/` payload, reads `/runtime`, extracts a preview frame from a generated synthetic score video, and runs a capture job that must produce the clean reflow output (`clean_reflow_v1`) through PNG/PDF export with file-signature checks. This is a synthetic local-file test, not YouTube coverage, real-video coverage, or visual validation of musical notation.
 
 ## Free macOS Release Policy
 
 - From v0.1.34, `DRUMSHEET_ENABLE_SIGNING=false` disables certificate discovery, but explicitly uses `mac.identity: "-"` for free ad-hoc signing.
 - Hardened runtime remains enabled; Electron JIT and library validation entitlements support bundled code without a Team ID.
-- `dist:release` verifies the sealed app and backend tools, verifies the DMG checksum, then mounts the DMG read-only and verifies its app/version before allowing upload.
+- `desktop/scripts/validate-packaged-release.js` calls `desktop/scripts/verify-macos-signature.js` after every macOS `pack:release` and `dist:release`: it verifies the sealed app and backend tools (`ffmpeg`, `ffprobe`, the frozen backend). For `dist:release` it also verifies the DMG checksum, then mounts the DMG read-only and verifies its app/version before allowing upload.
 - A failed signature must fail the build. Do not repair release artifacts after validation or skip verification to publish.
 - Ad-hoc integrity verification is not Gatekeeper approval or notarization. Test a browser-downloaded DMG on a fresh Mac separately.
 - Direct users to Privacy & Security → Open Anyway first. The scoped quarantine fallback is in the Korean and English installation guides; it does not repair invalid signatures.

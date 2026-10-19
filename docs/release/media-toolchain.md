@@ -66,11 +66,11 @@ FFmpeg's build configuration and notices are checked, but this is not an audit o
 
 ## Updates and support
 
-The packaged app checks the public GitHub latest stable release after rendering. It coalesces requests, uses a five-second timeout and a one-day persistent cache, and never blocks capture on offline/rate-limit failures. Version comparisons are numeric and prereleases are excluded. A user may skip a version. Download opens the project's fixed releases page; no arbitrary URL from the response is opened. This is notification only, not automatic installation. Development mode does not poll GitHub.
+The packaged app checks the public GitHub latest stable release at launch and when the user presses **Update**. Offline or rate-limit failures never block capture. Version comparisons are numeric and prereleases are excluded. A user may skip a version. Since v0.1.35 the app downloads the new installer only when the user chooses **Update**, verifies its checksum, and installs on **Restart to install**; since v0.2.0 it refuses a release whose minimum OS is newer than the running system (`desktop/release-updates.js`, `desktop/release-install.js`). Development mode does not check for updates.
 
 yt-dlp remains pinned to 2026.8.19, the latest stable version returned by PyPI during the 2026-09-27 verification. Upgrading it requires refreshing the lock, package smoke tests and a live YouTube import. An unavailable test video is not proof that import works or is broken. Do not self-update Python files inside the frozen backend.
 
-Diagnostic copy retains at most 100 recent backend log lines, redacts configured session tokens, credential lines, URLs and local user paths, and adds platform/app state. Nothing is submitted automatically. The user must review the copied report and paste it into an issue themselves.
+Diagnostic copy retains at most 100 recent backend log lines, redacts configured session tokens, credential lines, URLs and local user paths, and adds platform/app state. Nothing is submitted automatically: **Copy diagnostics** puts it on the clipboard, and the **Report** dialog sends it (with the user's text and an optional screenshot) only when the user presses **Send** (`services/bug-report-worker/`).
 
 ## Signing boundary
 
