@@ -338,7 +338,7 @@ test("failed source preparation does not advertise continuing progress", () => {
   state.source.prepareStage = "download";
   state.source.error = "Network unavailable";
   const markup = renderSourceScreen(state);
-  assert.match(markup, /Prepare failed/);
+  assert.match(markup, /Preparation failed/);
   assert.doesNotMatch(markup, /role="progressbar"|In progress/);
   assert.match(markup, /Network unavailable/);
 });

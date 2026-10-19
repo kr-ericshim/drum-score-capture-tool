@@ -2401,7 +2401,7 @@ test("archive runtime wiring covers retry loading, selection, and open path acti
 
   assert.equal(archiveRequests, 1);
   assert.equal(app.debug.getState().archive.status, "loading");
-  assert.match(root.querySelector("#shellModalLayer").innerHTML, /Loading archive\.\.\.|보관함을 불러오는 중입니다\./);
+  assert.match(root.querySelector("#shellModalLayer").innerHTML, /Loading archive…|보관함을 불러오는 중입니다\./);
   assert.doesNotMatch(root.querySelector("#shellModalLayer").innerHTML, /Stale Archive Item/);
 
   archiveRequest.resolve({

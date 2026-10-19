@@ -144,7 +144,7 @@ test("archive modal shows an explicit loading state instead of stale rows during
 
   const markup = renderArchiveModal(state);
 
-  assert.match(markup, /Loading archive\.\.\.|보관함을 불러오는 중입니다\./);
+  assert.match(markup, /Loading archive…|보관함을 불러오는 중입니다\./);
   assert.doesNotMatch(markup, /Stale Library Row/);
 });
 
