@@ -25,7 +25,7 @@ async function readProtectedJobAsset(pathname) {
 
   const response = await fetch(apiPath(pathname));
   if (!response.ok) {
-    throw new Error("보호된 작업 파일을 불러오지 못했습니다.");
+    throw new Error("보호된 작업 파일을 불러오지 못했습니다. / Could not load the job file.");
   }
   return {
     bytes: await response.arrayBuffer(),
@@ -87,7 +87,7 @@ export async function requestPreviewFrame({ filePath, startSec }) {
       file_path: filePath,
       start_sec: Number.isFinite(startSec) ? startSec : null,
     }),
-  }, "미리보기를 불러오지 못했습니다.");
+  }, "미리보기를 불러오지 못했습니다. / Could not load the preview.");
   return {
     imagePath: data.image_url ? await protectedImageUrl(data.image_url) : data.image_path,
     sourcePath: data.image_path,
@@ -105,7 +105,7 @@ export async function requestAutoRoi({ filePath, startSec }) {
       youtube_url: null,
       start_sec: Number.isFinite(startSec) ? startSec : null,
     }),
-  }, "악보 영역을 자동으로 찾지 못했습니다.");
+  }, "악보 영역을 자동으로 찾지 못했습니다. / Could not find the score region automatically.");
   return {
     status: String(data.status || "not_found"),
     roi: Array.isArray(data.roi) ? data.roi : null,
@@ -126,7 +126,7 @@ export async function requestLabelRegion({ filePath, roi, startSec = null, endSe
       ...(Number.isFinite(startSec) ? { start_sec: startSec } : {}),
       ...(Number.isFinite(endSec) ? { end_sec: endSec } : {}),
     }),
-  }, "구간 표시 영역을 확인하지 못했습니다.");
+  }, "구간 표시 영역을 확인하지 못했습니다. / Could not check the section-label area.");
   return {
     status: String(data?.status || "not_found"),
     labelRoi: Array.isArray(data?.label_roi) ? data.label_roi : null,
@@ -145,7 +145,7 @@ export async function requestPreviewRoiHealth({ sourceType = "file", filePath, y
       start_sec: Number.isFinite(startSec) ? startSec : null,
       roi: Array.isArray(roi) ? roi : [],
     }),
-  }, "악보 영역 상태를 점검하지 못했습니다.");
+  }, "악보 영역 상태를 점검하지 못했습니다. / Could not check the score region.");
   return {
     riskLevel: String(data.risk_level || "info"),
     summary: String(data.summary || ""),
@@ -177,7 +177,7 @@ export async function preparePreviewSource({ sourceType, filePath, youtubeUrl })
       file_path: filePath || null,
       youtube_url: youtubeUrl || null,
     }),
-  }, "소스를 준비하지 못했습니다.");
+  }, "소스를 준비하지 못했습니다. / Could not prepare the video.");
   return {
     videoPath: data.video_path,
     videoUrl: data.video_url ? apiPath(data.video_url) : "",
@@ -193,12 +193,12 @@ export async function createPreviewSourceJob({ youtubeUrl }) {
     body: JSON.stringify({
       youtube_url: youtubeUrl || "",
     }),
-  }, "유튜브 준비 작업을 시작하지 못했습니다.");
+  }, "유튜브 준비 작업을 시작하지 못했습니다. / Could not start preparing the YouTube video.");
   return String(data.job_id || "");
 }
 
 export async function getPreviewSourceJob(jobId) {
-  const data = await requestApiJson(`/preview/source-jobs/${jobId}`, {}, "유튜브 준비 상태를 불러오지 못했습니다.");
+  const data = await requestApiJson(`/preview/source-jobs/${jobId}`, {}, "유튜브 준비 상태를 불러오지 못했습니다. / Could not load the YouTube preparation status.");
   const result = data.result || {};
   return {
     jobId: String(data.job_id || jobId || ""),
@@ -220,7 +220,7 @@ export async function getPreviewSourceJob(jobId) {
 }
 
 export async function getLocalMediaRegistry() {
-  const data = await requestApiJson("/library/local-media", {}, "로컬 미디어 목록을 불러오지 못했습니다.");
+  const data = await requestApiJson("/library/local-media", {}, "로컬 미디어 목록을 불러오지 못했습니다. / Could not load the recent videos.");
   return {
     items: Array.isArray(data.items)
       ? data.items.map((item) => ({
@@ -244,7 +244,7 @@ export async function getLocalMediaRegistry() {
 }
 
 export async function getArchiveLibrary() {
-  const data = await requestApiJson("/library/archive", {}, "보관함을 불러오지 못했습니다.");
+  const data = await requestApiJson("/library/archive", {}, "보관함을 불러오지 못했습니다. / Could not load the archive.");
   return {
     items: Array.isArray(data.items)
       ? data.items.map((item) => ({
@@ -271,26 +271,26 @@ export async function createJob(payload) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-  }, "작업 생성에 실패했습니다.");
+  }, "작업 생성에 실패했습니다. / Could not create the job.");
   return data.job_id;
 }
 
 export async function getJob(jobId) {
-  return requestApiJson(`/jobs/${jobId}`, {}, "작업 조회에 실패했습니다.");
+  return requestApiJson(`/jobs/${jobId}`, {}, "작업 조회에 실패했습니다. / Could not read the job.");
 }
 
 export async function cancelJob(jobId) {
-  return requestApiJson(`/jobs/${jobId}/cancel`, { method: "POST" }, "작업 취소에 실패했습니다.");
+  return requestApiJson(`/jobs/${jobId}/cancel`, { method: "POST" }, "작업 취소에 실패했습니다. / Could not cancel the job.");
 }
 
 export async function cropCapture(jobId, capturePath, roi = []) {
   return requestApiJson(`/jobs/${jobId}/capture-crop`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ capture_path: capturePath, roi }),
-  }, "캡처 자르기에 실패했습니다.");
+  }, "캡처 자르기에 실패했습니다. / Could not crop the capture.");
 }
 
-const REVIEW_EXPORT_FAILED = "검토 반영에 실패했습니다.";
+const REVIEW_EXPORT_FAILED = "검토 반영에 실패했습니다. / Could not apply the review.";
 const ACTIVE_EXPORT_STATES = new Set(["queued", "running"]);
 /** Poll delays for a background review export: 500 ms, growing to 2 s. */
 export const REVIEW_EXPORT_POLL_DELAYS_MS = [500, 500, 750, 1000, 1500, 2000];
@@ -464,12 +464,12 @@ export function normalizeReviewHypotheses(data = {}) {
 export async function getReviewHypotheses(jobId, { offset = 0, limit = 100, codes = null } = {}) {
   const query = new URLSearchParams({ offset: String(count(offset)), limit: String(count(limit) || 100) });
   if (Array.isArray(codes)) query.set("codes", codes.join(","));
-  const data = await requestApiJson(`/jobs/${jobId}/review-hypotheses?${query}`, {}, "확인 항목을 불러오지 못했습니다.");
+  const data = await requestApiJson(`/jobs/${jobId}/review-hypotheses?${query}`, {}, "확인 항목을 불러오지 못했습니다. / Could not load the items to check.");
   return normalizeReviewHypotheses(data);
 }
 
 export async function getCacheUsage() {
-  const data = await requestApiJson("/maintenance/cache-usage", {}, "저장 공간을 확인하지 못했습니다.");
+  const data = await requestApiJson("/maintenance/cache-usage", {}, "저장 공간을 확인하지 못했습니다. / Could not check the storage usage.");
   return {
     totalPaths: Number(data.total_paths || 0),
     totalBytes: Number(data.total_bytes || 0),
@@ -478,7 +478,7 @@ export async function getCacheUsage() {
 }
 
 export async function clearCache() {
-  const data = await requestApiJson("/maintenance/clear-cache", { method: "POST" }, "캐시를 비우지 못했습니다.");
+  const data = await requestApiJson("/maintenance/clear-cache", { method: "POST" }, "캐시를 비우지 못했습니다. / Could not clear the cache.");
   return {
     clearedPaths: Number(data.cleared_paths || 0),
     reclaimedBytes: Number(data.reclaimed_bytes || 0),

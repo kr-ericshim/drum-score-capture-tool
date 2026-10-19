@@ -106,7 +106,7 @@ export async function readVideoMetadata(filePath) {
     };
     video.onerror = () => {
       cleanup();
-      reject(new Error("영상 메타데이터를 읽지 못했습니다."));
+      reject(new Error("영상 메타데이터를 읽지 못했습니다. / Could not read the video metadata."));
     };
   });
 }

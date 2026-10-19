@@ -308,7 +308,7 @@ test("a rebuild uses the normal request timeout and error details stay readable"
     await assert.rejects(getJob("job-1"), (error) => !/\[object Object\]/.test(error.message) && error.status === 409);
     // a rejection that crossed the preload bridge as a plain object
     reply = () => { throw {}; };
-    await assert.rejects(reviewExport("job-1", { keepCaptures: ["/a.png"], formats: ["pdf"] }), (error) => error instanceof Error && error.message === "검토 반영에 실패했습니다.");
+    await assert.rejects(reviewExport("job-1", { keepCaptures: ["/a.png"], formats: ["pdf"] }), (error) => error instanceof Error && error.message === "검토 반영에 실패했습니다. / Could not apply the review.");
   } finally {
     Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
   }
