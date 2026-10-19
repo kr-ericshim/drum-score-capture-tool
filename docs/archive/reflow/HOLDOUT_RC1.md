@@ -2,7 +2,7 @@
 
 # Holdout run: checkpoint5-rc1 (2026-10-10)
 
-Frozen build per [FREEZE_RC1.md](../../reflow/FREEZE_RC1.md): commit 3de6ff2 (code = 8a1125f), packaged macOS backend
+Frozen build per [FREEZE_RC1.md](FREEZE_RC1.md): commit 3de6ff2 (code = 8a1125f), packaged macOS backend
 (`drumsheet-backend` 38fa792c…), driven over HTTP like the app, auto ROI and auto label region, one run per video.
 Outputs: `~/Documents/drum-score-corpus/eval_v1/holdout_rc1/`. Graded first export, Pro rubric, by the lead (single
 reviewer; not blind).
