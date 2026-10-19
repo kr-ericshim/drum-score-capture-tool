@@ -37,7 +37,8 @@ def normalized(value, root):
         # On Windows a path may also appear resolved (long name instead of RUNNER~1) and, inside a
         # nested JSON record, with its backslashes escaped.
         text = str(value)
-        for prefix in {str(root), str(Path(root).resolve())}:
+        # longest first: one prefix can contain the other (/private/var vs /var on macOS)
+        for prefix in sorted({str(root), str(Path(root).resolve())}, key=len, reverse=True):
             text = text.replace(json.dumps(prefix)[1:-1], "<OUT>").replace(prefix, "<OUT>")
         return text
     return value
