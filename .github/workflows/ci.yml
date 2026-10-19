@@ -62,6 +62,21 @@ jobs:
             exit 1
           fi
 
+      # The backend suite runs real ffmpeg (original screens); use the same pinned tools as the release.
+      - name: Restore and verify pinned media tools
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if python scripts/media_bundle.py restore; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::Media bundle restore failed (attempt $attempt of 3); retrying in $((attempt * 15))s"
+              sleep $((attempt * 15))
+            fi
+          done
+          exit 1
+
       - name: Verify release docs exist
         shell: bash
         run: |
