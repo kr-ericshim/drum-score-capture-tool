@@ -4,7 +4,7 @@ Status: selected and being implemented across all four steps: Floating Dock Canv
 
 ## Product and user
 
-Drum Sheet Capture is a local desktop app that captures notation already visible in a video and saves PNG, JPG, or PDF files. It does not transcribe audio, recognize notes into MusicXML, or create MIDI.
+Drum Sheet Capture is a local desktop app that captures notation already visible in a video and lays it out as an A4 PDF (PNG/JPG optional). The default output is the clean reflowed chart: cleaned source images of each score line, re-laid out measure by measure on A4. A simple "original screens" fallback keeps whole screens for one-line videos. It does not transcribe audio, recognize notes into MusicXML, or create MIDI. Product rules and the supported video types are in [reflow/DECISIONS.md](reflow/DECISIONS.md) and [reflow/HANDOFF.md](reflow/HANDOFF.md).
 
 The primary user has a video with an on-screen drum score and wants readable pages to practice, review, or share. They may use a local file or a public YouTube link. The app processes media locally after import; YouTube import needs network access.
 
@@ -36,7 +36,7 @@ This is a starting hypothesis to test with real screens, not a frozen palette.
 - Reserve depth for an actual elevated layer such as a modal or a score sheet. Avoid glow, decorative gradients, constant pulsing, and movement that does not explain state.
 - Informational text, including captions and status labels, should reach at least 4.5:1 contrast against its real background. Disabled controls may be visually quieter but must remain identifiable.
 
-The existing Apple and Vercel reference files under docs/design are historical inputs. Borrow a specific useful principle only after checking it against this workflow; neither brand is the desired identity.
+The Apple and Vercel reference files (now `archive/app/design/apple.md`, `vercel.md`) are historical inputs. Borrow a specific useful principle only after checking it against this workflow; neither brand is the desired identity.
 
 ## Screen hierarchy
 
@@ -64,7 +64,7 @@ A status should name what happened and the next useful action. Do not use a succ
 
 ## Selected visual direction: Floating Dock Canvas (2026-09-27)
 
-The user judged the Light Side-Rail result as generic ("AI-made"): a page title and subtitle repeated the step tab, status appeared in three places, and more than fifteen equal-weight buttons competed on the review screen. Four styles were compared with the same review content (quiet pro tool, paper and red pencil, instrument panel, canvas editor); the user chose the canvas-editor style (Figma/Framer). Three header-free arrangements were then compared (floating dock, bottom timeline, all-in-one sidebar); the user chose the floating dock. Comparison pages: `design/design-directions.html`, `design/canvas-layouts.html`, `design/floating-dock-flow.html`.
+The user judged the Light Side-Rail result as generic ("AI-made"): a page title and subtitle repeated the step tab, status appeared in three places, and more than fifteen equal-weight buttons competed on the review screen. Four styles were compared with the same review content (quiet pro tool, paper and red pencil, instrument panel, canvas editor); the user chose the canvas-editor style (Figma/Framer). Three header-free arrangements were then compared (floating dock, bottom timeline, all-in-one sidebar); the user chose the floating dock. Comparison pages (history): `archive/app/design/design-directions.html`, `canvas-layouts.html`, `floating-dock-flow.html`.
 
 - No top header. A narrow floating dock at the far left holds the four steps (number, or a check when complete), archive, language, and a single engine-status dot.
 - Beside the dock, one floating panel per step holds the step title, the file name, and that step's controls. It replaces the page headline band.
@@ -80,7 +80,7 @@ The user judged the Light Side-Rail result as generic ("AI-made"): a page title 
 
 The user approved Proposal A's left-list / right-artifact composition, then explicitly extended the scope to the whole application. They rejected the dark aesthetic as generic and welcomed Airbnb-like brightness and clarity. This direction supersedes the Review-only dark implementation.
 
-Two arrangements were compared for the export screen with the same settings and score: (A) shared top navigation, 290px settings at left, large score at right; (B) permanent step rail plus right settings inspector, leaving two sidebars around the score. Choose A: it carries the already approved Review structure to each step and leaves more width for actual media. See `design/light-workspace-layouts.svg`.
+Two arrangements were compared for the export screen with the same settings and score: (A) shared top navigation, 290px settings at left, large score at right; (B) permanent step rail plus right settings inspector, leaving two sidebars around the score. Choose A: it carries the already approved Review structure to each step and leaves more width for actual media. See `archive/app/design/light-workspace-layouts.svg`.
 
 - All four steps share one compact top navigation and the same light surfaces, typography, controls and status line. Source/ROI/Export/Review, archive and metadata dialogs use common tokens.
 - Source: a left import area for local files and secondary YouTube input; recent videos occupy the larger right area.
