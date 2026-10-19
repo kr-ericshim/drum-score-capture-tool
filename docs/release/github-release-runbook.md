@@ -87,7 +87,7 @@ git push origin vX.Y.Z
 
 The authoritative CI definition is `.github/workflows/ci.yml`. Do not keep a copied YAML block in this runbook; it drifts too easily. Before tagging a release, confirm the workflow still runs the backend suite, `verify:renderer-v2`, and desktop node tests on both `macos-15` and `windows-latest`.
 
-CI runs on branch pushes and pull requests, not on tag pushes: the tagged commit was already tested on its branch, and the Release workflow tests it again before packaging. Wait for CI on the release commit to pass before pushing the tag. CI also fails when the media recipe no longer matches `backend/media-tools.lock.json`, which would otherwise surface only as a failed release restore.
+CI runs on pushes to work branches and on pull requests. It does not run on `main` pushes, which are fast-forwards of commits already tested on their branch, on tag pushes, or on commits that only change Markdown or `docs/`. Quick checks (renderer, desktop node, media bundle) run before the backend suite so their failures show within minutes. Wait for CI on the release commit to pass on both platforms before pushing the tag: the Release workflow then reuses that result and skips its own backend suite. It runs the suite itself when no passing CI run covers both platforms for the tagged commit, including when the lookup fails. CI also fails when the media recipe no longer matches `backend/media-tools.lock.json`, which would otherwise surface only as a failed release restore.
 
 ## Release Workflow
 
@@ -95,7 +95,7 @@ The authoritative release workflow is `.github/workflows/release.yml`. Do not ke
 
 - runs on `windows-latest` and `macos-15`
 - restores the pinned media bundle before the test suite (retried for transient download failures)
-- installs backend build dependencies and runs the backend unittest suite
+- installs backend build dependencies and runs the backend unittest suite, unless a CI run already passed on both platforms for the same commit
 - builds the frozen backend runtime
 - runs renderer-v2 and desktop node checks (the desktop node suite includes the startup smoke test)
 - runs `npm run dist:release`

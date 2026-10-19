@@ -2,19 +2,27 @@ name: CI
 
 on:
   push:
-    # Branches only: a version tag points at a commit CI already tested on its
-    # branch, and the Release workflow runs the full suite again before packaging.
-    branches:
-      - "**"
+    # Work branches only. main receives fast-forwards of commits already tested on
+    # their branch, and a version tag reuses this run's result for the same commit
+    # (the Release workflow runs the backend suite itself when no such run exists).
+    branches-ignore:
+      - main
+    # A docs-only commit needs no test run.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
   pull_request:
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
 
 permissions:
   contents: read
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
-  # Keep every main run for history; superseded branch and PR runs are cancelled.
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  # A newer push to the same branch or PR supersedes the running one.
+  cancel-in-progress: true
 
 jobs:
   validate:
@@ -94,11 +102,7 @@ jobs:
         working-directory: desktop
         run: npm ci
 
-      # Same unittest suite, spread over the runner's cores; serially it outgrows the timeout.
-      - name: Run backend tests
-        shell: bash
-        run: PYTHONPATH=backend python -m pytest backend/tests -n auto --dist loadfile -p no:cacheprovider -q
-
+      # The quick checks run first so their failures show in minutes, not after the backend suite.
       - name: Verify renderer-v2
         working-directory: desktop
         run: npm run verify:renderer-v2
@@ -109,3 +113,16 @@ jobs:
 
       - name: Test media bundle validation
         run: python -m unittest discover -s scripts/tests -p 'test_*.py'
+
+      # Real-time scanning of the many temp files the suite writes slows the Windows runner.
+      - name: Turn off Defender real-time scanning
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: pwsh
+        run: Set-MpPreference -DisableRealtimeMonitoring $true
+
+      # Same unittest suite, spread over the runner's cores; serially it outgrows the timeout.
+      # worksteal rebalances uneven modules (one holds the 120 s and 43 s tests).
+      - name: Run backend tests
+        shell: bash
+        run: PYTHONPATH=backend python -m pytest backend/tests -n auto --dist worksteal -p no:cacheprovider -q --durations 15

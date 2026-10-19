@@ -31,6 +31,10 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    permissions:
+      contents: read
+      # read CI runs to reuse a passing result for this exact commit
+      actions: read
 
     env:
       # Disable certificate signing; macOS still receives an explicit ad-hoc signature.
@@ -79,12 +83,38 @@ jobs:
       - name: Install backend build dependencies
         run: python -m pip install -r backend/requirements-build.lock -r backend/requirements-test.txt
 
+      # Skip the backend suite only when the CI workflow already passed on both platforms for
+      # this exact commit. No run, a run still going, a failed or cancelled run, or any API error
+      # leaves reuse=false, and the suite runs here.
+      - name: Reuse a passing CI run for this commit
+        id: ci_reuse
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          reuse=false
+          sha="$(git rev-parse 'HEAD^{commit}')"
+          run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$sha" --status success \
+            --limit 1 --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null)"
+          if [ -n "$run_id" ]; then
+            passed="$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json jobs \
+              --jq '[.jobs[] | select(.conclusion == "success") | .name] | map(select(test("macos|windows"))) | length' 2>/dev/null)"
+            if [ "$passed" = "2" ]; then
+              reuse=true
+              echo "Reusing CI run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id for $sha"
+            fi
+          fi
+          [ "$reuse" = true ] || echo "No passing CI run on both platforms for $sha; running the backend suite."
+          echo "reuse=$reuse" >> "$GITHUB_OUTPUT"
+
       # Same unittest suite, spread over the runner's cores; serially it outgrows the timeout.
       - name: Run backend test suite
+        if: steps.ci_reuse.outputs.reuse != 'true'
         shell: bash
         env:
           PYTHONPATH: backend
-        run: python -m pytest backend/tests -n auto --dist loadfile -p no:cacheprovider -q
+        run: python -m pytest backend/tests -n auto --dist worksteal -p no:cacheprovider -q
 
       - name: Install desktop dependencies
         working-directory: desktop
