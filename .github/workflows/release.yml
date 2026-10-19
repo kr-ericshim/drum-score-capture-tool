@@ -114,7 +114,7 @@ jobs:
         shell: bash
         env:
           PYTHONPATH: backend
-        run: python -m pytest backend/tests -n auto --dist worksteal -p no:cacheprovider -q
+        run: python -m pytest backend/tests -n auto --dist loadfile -p no:cacheprovider -q
 
       - name: Install desktop dependencies
         working-directory: desktop

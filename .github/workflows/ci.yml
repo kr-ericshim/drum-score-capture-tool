@@ -122,7 +122,8 @@ jobs:
         run: Set-MpPreference -DisableRealtimeMonitoring $true
 
       # Same unittest suite, spread over the runner's cores; serially it outgrows the timeout.
-      # worksteal rebalances uneven modules (one holds the 120 s and 43 s tests).
+      # loadfile keeps each module on one worker: worksteal repeated heavy class fixtures and
+      # measured slower (Windows 1242 s vs 1029 s).
       - name: Run backend tests
         shell: bash
-        run: PYTHONPATH=backend python -m pytest backend/tests -n auto --dist worksteal -p no:cacheprovider -q --durations 15
+        run: PYTHONPATH=backend python -m pytest backend/tests -n auto --dist loadfile -p no:cacheprovider -q --durations 15
