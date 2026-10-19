@@ -4,9 +4,9 @@ Read this file for a substantial UI redesign or a new screen. The root AGENTS.md
 
 ## Goal and scope
 
-The user should be able to take a video that already shows a drum score, choose the visible score area, capture pages, inspect them, and save usable files. Good design makes those decisions clear and keeps the score readable.
+The user should be able to take a video that already shows a drum score, choose the visible score area, capture the score lines, inspect them, and save a usable A4 PDF. Good design makes those decisions clear and keeps the score readable.
 
-A visual reset may replace the current look. Do not assume the current Apple/Vercel styling, existing CSS tokens, or this protocol's examples are the final aesthetic. Keep product facts and working behavior. Do not turn a visual task into a backend rewrite or framework migration.
+A visual reset may replace the current look. Do not assume the existing CSS tokens or this protocol's examples are the final aesthetic. Keep product facts and working behavior. Do not turn a visual task into a backend rewrite or framework migration.
 
 ## Before drawing
 
@@ -28,7 +28,7 @@ A visual reset may replace the current look. Do not assume the current Apple/Ver
 - Source: make local file selection obvious; keep public YouTube input available but secondary. Show recent sources and failures clearly.
 - ROI: the video frame and score-region editor dominate. Distinguish suggested draft, user-edited draft, and applied region. Keep manual adjustment visible.
 - Export: show what will be captured, which formats are selected, what is running, and what failed. Progress must not imply success before files exist.
-- Review: the score image is the main artifact. Make inclusion selection and currently viewed capture distinct. Keep rebuild, open PDF, Save As, and output-folder actions understandable.
+- Review: the score (score lines, or composed A4 pages) is the main artifact. Make inclusion selection and the currently viewed item distinct. Keep rebuild, open PDF, Save As, and output-folder actions understandable.
 - Group related controls by proximity and dividers before adding boxes. Use a card when an item is independently selectable or needs containment, such as a captured page.
 - Use color for action, focus, selection, and warnings. Decorative glow, gradients, repeated badges, and motion need a product reason. Shadows may convey actual elevation, such as a modal or score sheet, but should not decorate every control.
 - Prefer system fonts that work without a network request. Use tabular numerals for timecodes and counts. Keep informational small text readable; target at least 4.5:1 text contrast against its actual background.
