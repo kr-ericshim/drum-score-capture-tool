@@ -1,4 +1,4 @@
-# 인계 (2026-10-16, 편의 개선 묶음 후)
+# 인계 (2026-10-19, 출시 전 정리 중단 시점)
 
 > **이 문서는 누적하지 않는다.** 세션이 끝날 때 통째로 새로 쓴다. 현재 상태와 다음 할 일만 적는다(지난 경과는 `git log -p docs/reflow/HANDOFF.md`).
 > 100줄을 넘기지 않는다. 다른 문서와 다르면 이 문서와 사용자의 최신 말이 우선이다.
@@ -6,74 +6,66 @@
 ## 제품
 
 영상에 이미 나오는 드럼 악보를 캡처해 A4 PDF/PNG로 만드는 Electron + Python 데스크톱 앱이다.
-- 기본 출력은 **clean reflow**(원본 악보 이미지를 정리해 마디 단위로 A4에 재배치)다. 보조 출력은 **원본 화면 fallback**(한 줄 영상 전용)이다.
-- 지원 범위: **불투명 판 위 한 줄 악보가 통째로 바뀌는 영상**. 점프는 실험 기능, 반투명판·실사 합성은 거부, 여러 줄 페이지와 세로 롤은 범위 밖.
-- 사용자가 실제로 쓰는 채널: atthedrum, 북선생 열드럼, 드럼플레이스.
+- 기본 출력은 **clean reflow**, 보조 출력은 **원본 화면 fallback**(한 줄 영상 전용)이다.
+- 지원 범위: 불투명 판 위 한 줄 악보가 통째로 바뀌는 영상. 점프는 실험 기능, 반투명판·실사 합성은 거부, 여러 줄 페이지·세로 롤은 범위 밖.
+- 앞으로는 실험을 멈추고, 사용자가 직접 써 보며 생기는 문제를 고친다(2026-10-19).
 
-## 현재 상태
+## 지금 하던 일: v0.3.0 출시
 
-- 브랜치 `feature/clean-reflow`, 작업 트리 깨끗함.
-- **편의 개선 묶음(2026-10-16)**: Astra·Fable 토론에서 합의한 5개를 넣었다.
-  - `7a67260`: 영상 열기·"PDF 다른 이름으로 저장" 대화상자가 마지막 폴더를 재시작 후에도 기억한다(`desktop/recent-folders.js`, userData `recent-folders.json`).
-  - `fb8b019`:
-    - 파일 만들기 단계의 주 버튼은 "PDF 만들기"이고 정보 창 없이 바로 시작한다(제목은 영상 제목에서 자동). "PDF 정보 수정…"은 보조 버튼이다.
-    - 검토 화면에서 "제목 수정"을 하면 다시 캡처하지 않고 PDF를 다시 만든다. 백엔드 review export가 `document_header`를 받는다(clean reflow, 원본 화면 둘 다). 파일이 설치된 뒤에만 job에 저장하고 화면에도 반영한다. 실패하거나 취소하면 이전 제목을 유지한다.
-    - 저장된 검토 화면에 "다른 영상 열기" 버튼을 둔다.
-    - 유튜브 링크 칸에서 Enter를 누르면 가져오기를 시작한다(한글 조합 중에는 시작하지 않음).
-  - 검증: renderer 382, desktop-node 97, backend 바뀐 3개 모듈 68개 통과(Codex가 전체 1530 OK, 12 skipped 확인). Codex 검수 지적 2건(제목을 미리 확정함, 입력값이 다시 그릴 때 지워짐)은 고쳤다.
-  - 화면은 임시 하네스로 1440×960과 1120×840에서 확인했다(ko/en).
-  - **패키지 앱에서 5개 모두 확인(2026-10-16, `pack:release`, scratch `DRUMSHEET_JOBS_DIR`, 영상 0Zaz·k_o9)**:
-    - "PDF 만들기"를 누르면 정보 창 없이 바로 추출한다.
-    - 제목을 "노스탈지아"로 고치면 다시 캡처하지 않고 PDF 첫 페이지 제목이 바뀐다. job.json에 저장되고 재시작해도 남는다.
-    - 재시작 뒤 저장 대화상자는 '문서'에서, 영상 대화상자는 테스트 영상 폴더에서 열린다.
-    - 검토 화면의 "다른 영상 열기"로 2단계로 바로 넘어간다.
-    - 유튜브 링크를 넣고 Enter를 누르면 가져오기를 시작하고 2단계로 간다.
-    - Windows는 확인하지 않았다.
-  - 패키지 확인 중에 기본 제목에 확장자가 붙는 것(`0ZazKGcY0uo.mp4`)을 발견해 고쳤다. 고친 뒤 패키지로 다시 확인하지는 않았다(renderer 테스트만).
-- 백엔드 PDF 파일명은 제목과 상관없이 `sheet_export.pdf`다. "다른 이름으로 저장"의 제안 이름만 현재 제목을 따른다.
-- 이전 상태(그대로 유효): 새 영상 6개 모두 지원으로 판정, 사용자 판별 문제없음. F09 철회(`7f1cce2`)는 코퍼스로 확인. 재시작 관련 수정 4개는 패키지 앱에서 확인(0.2.1).
+사용자 지시(2026-10-19): 정리 → Codex 리뷰 없이 리드가 직접 점검 → CI/CD → 릴리즈까지 진행.
 
-## 다음 할 일
+끝난 것(`feature/clean-reflow`, 로컬 HEAD `406ee81`):
+- 정리 세 갈래를 병합했다.
+  - backend: clean reflow 이전 파이프라인 등 약 5,000줄 삭제, PyYAML·HAT 스크립트 제거. 엔드포인트는 그대로다.
+  - desktop: 쓰지 않는 코드·IPC·i18n 키·lean/full/compact 스크립트 삭제, 문구 다듬기.
+  - docs: README 3개를 다시 썼고, 끝난 RC·점프·이음매 문서는 `docs/archive/`로 옮겼다.
+- CI·릴리즈 워크플로의 backend 테스트를 pytest-xdist 병렬 실행으로 바꿨다(`f666140`, `backend/requirements-test.txt`). 직렬로 돌면 로컬에서 19분이 걸려 CI 20분 제한에 걸리고 있었다. CI 제한 시간은 40분으로 늘렸다.
+- 버전 0.3.0으로 올림(`406ee81`, push 안 함). README의 "다음 공개 버전" 문장을 "v0.3.0 기준"으로 바꿨다.
+- 로컬 확인(병합 후): backend 1465 통과, 12 skip. scripts/tests OK. `check-release-version` 0.3.0 일치.
+- **확인 못 함**: renderer·desktop-node는 병합 후 결과를 보지 못했다(grep 패턴 문제). 릴리즈 노트 `docs/release/release-notes-v0.3.0.md`는 아직 없다. `pack:release`도 아직 하지 않았다.
 
-1. 배포는 급하지 않다(사용자, 2026-10-15). 할 때는 `dist:release`, 서명·버전은 `check-release-version`, `verify-macos-signature` 참고.
-2. 토론에서 보류한 것(사용자가 원하면): 완성 PDF를 정한 폴더에 자동 복사(Fable 찬성, Astra 반대), 지난 영상의 악보 영역을 초안으로 재사용, 여러 영상 순차 처리, 출력 형식 기억.
+**막힌 것: CI 실패** (run 39205588955, 커밋 `f666140`, backend 병합 전 기준). 지금까지는 시간 제한 때문에 끝까지 돈 적이 없어 가려져 있었다.
+1. macOS 3개(`test_original_screens`): CI에 ffmpeg가 없다. 해결: release.yml의 "Restore and verify pinned media tools" 단계를 ci.yml에도 넣는다.
+2. Windows 32개.
+   - **실제 제품 버그**: 텍스트 파일을 encoding 없이 읽고 쓴다. 그래서 검토 화면의 PDF 다시 만들기가 `'charmap' codec` 500으로 실패한다. 확인된 위치:
+     - `reflow_pipeline.py` 136, 137, 194, 688, 1709
+     - `reflow_measure.py` 79, 80
+     - `observations.py` 763, 768
+     - `reflow_line_review.py` 245, 248
+     - `reflow_jump.py` 3159
+     - `extract.py` 28
+     - 이 밖에 `export_tasks`나 review 쪽에도 더 있을 수 있다. `PYTHONWARNDEFAULTENCODING=1`로 테스트를 돌리면 위치가 나온다. xdist 워커에는 `-X` 플래그가 전달되지 않으니 환경 변수를 쓴다.
+     - `process_control.py:68`의 `Popen(text=True)`도 확인한다.
+   - **테스트 문제**: `/tmp`를 하드코딩했다(`test_verify_page`, `test_export_lossless_pdf`, `test_verify_calibration`). 경로 구분자 비교(`test_reflow_strips_parallel`, `test_ledger_hooks_render` 4!=3)와 `test_reflow_jump_coverage`의 KeyError 'reflow_state'는 인코딩 실패의 후속일 수 있다. 고친 뒤 다시 본다.
+   - 실패 목록 전체: `gh run view 39205588955 --log-failed | grep FAILED`
+
+## 다음 할 일 (순서대로)
+
+1. 위 CI 실패를 고친다. 인코딩은 앱 코드 전체에 `encoding="utf-8"`를 넣는다. 테스트 `/tmp`는 `tempfile`로 바꾼다. ci.yml에 미디어 복원 단계를 넣는다.
+2. 로컬에서 backend 병렬, `verify:renderer-v2`, `test:desktop-node`, `pack:release`를 돌린다.
+3. 릴리즈 노트 v0.3.0을 쓴다(ko/en, `<!-- minimum-os: darwin=13.0 -->`). 요지:
+   - clean reflow 기본 출력, 원본 화면 대안, 검토 화면(줄 순서·비슷한 줄·이음매 확인·제목 수정).
+   - 편의 기능: PDF 바로 만들기, 폴더 기억, 다른 영상 열기, 유튜브 Enter.
+   - **v0.2.1 이하에서 만든 작업은 다시 만들 수 없고, 파일만 남는다(LEGACY_JOB)**는 점을 알린다.
+4. push → CI 통과 확인 → `main`을 fast-forward(현재 main은 이 브랜치의 조상) → `v0.3.0` 태그 push → Release 워크플로 확인.
+5. 끝나면 이 문서를 새로 쓴다.
 
 ## 알려진 한계
 
-- 0.5초 샘플 사이에만 나온 화면은 여전히 놓친다(F06 중간 부분).
-- 점프 커버리지 판정은 1관측 화면을 보지 않는다(목록에는 남음).
-- 리셋 사슬의 먼 쌍은 번호 차이로만 해제한다(최악은 ‡ 하나 더).
+- 0.5초 샘플 사이에만 나온 화면은 놓친다. 점프 커버리지 판정은 1관측 화면을 보지 않는다.
 - F10: 화면이 7개 이하인 영상에서는 같은 자리의 작은 로고가 남을 수 있다.
-- 검토 화면 제목 줄은 좁은 패널에서 두 줄로 접힌다(원래 규칙).
-
-## 하지 않는 것
-
-실사 합성 지원, 이음매 대응표, 점프 고도화, 미관 작업(C4l 라벨, 로고, RnY5), 세로 스크롤, 고정 다단 페이지, 반투명판 완화(F13). PDF 첫 페이지 "확인 필요" 고지는 보류(사용자 결정). 정교한 홀드아웃 선정 절차는 하지 않는다.
+- Windows는 패키지 앱으로 확인한 적이 없다.
 
 ## 지금 유효한 문서
 
-- [DECISIONS.md](DECISIONS.md): 규칙과 기본값. 설계 문서보다 우선한다.
-- [audit_2026-10-13/README.md](audit_2026-10-13/README.md): 감사 항목.
-- [ORIGINAL_SCREENS_DESIGN.md](ORIGINAL_SCREENS_DESIGN.md): fallback 설계.
-- **[docs/archive/](../archive/README.md)는 기록일 뿐 지시가 아니다.**
-
-## 코드와 코퍼스 위치
-
-- reflow 흐름: `reflow_pipeline.py` → `system_tracking` → `reflow_occurrences` → `reflow_strips` → `reflow_measure`/`reflow_layout` → `reflow_render`. 점프 `reflow_jump`, 배경 판정 `source_class`, 디코딩 `observations`, chrome `overlay_composite`.
-- 코퍼스 `~/Documents/drum-score-corpus/`:
-  - 실행기 `reflow/tools/dashboard.py`(spec에 roi가 없으면 앱 자동 ROI), `eval_v2/tools/`.
-  - 27개는 `eval_v2/audit27_{a,b}.json` 두 묶음(약 1시간), 새 6개는 `eval_v2/holdout2_{a,b}.json`(약 7분).
-  - `DASHBOARD_HOOK=eval_v2/tools/keep_tracking.py`로 돌리면 작업 폴더 JSON이 남는다.
-- `eval_v2/jobs`(4.3 GB)는 패키지 실행 작업 폴더다. 지울지는 사용자에게 묻는다.
+[DECISIONS.md](DECISIONS.md), [audit_2026-10-13/README.md](audit_2026-10-13/README.md), [ORIGINAL_SCREENS_DESIGN.md](ORIGINAL_SCREENS_DESIGN.md), 배포는 [github-release-runbook.md](../release/github-release-runbook.md). `docs/archive/`는 기록일 뿐 지시가 아니다.
 
 ## 작업 규칙 (프로젝트 한정)
 
 - `backend/jobs/`는 건드리지 않는다. 실제 영상은 scratch `DRUMSHEET_JOBS_DIR`에서 확인한다.
-- 영상별 땜질과 특정 영상에 맞춘 임계값은 하지 않는다.
-- 영상·코퍼스 실행 전에 전원 연결을 사용자에게 묻는다.
-- 워커를 띄우기 전에 `git status`와 다른 세션의 작업 파일을 확인한다. worktree 워커는 `main`에서 시작할 수 있으니 `feature/clean-reflow` 기준인지 확인한다.
-- Codex는 `~/Documents/drum-score-corpus`에 쓸 수 없다. Codex가 HANDOFF를 고치면 되돌린다.
-- backend 일부 테스트 모듈만 돌릴 때는 `PYTHONPATH=backend:backend/tests`로 모듈 이름을 준다(`drum_score_fixture` import).
+- 영상별 땜질과 특정 영상에 맞춘 임계값은 하지 않는다. 영상·코퍼스 실행 전에 전원 연결을 묻는다.
+- 정리 세션 worktree 브랜치(`claude/cleanup-*`)는 모두 병합됐다. 지워도 된다.
+- 로컬 미추적 산출물 `dist/`(1.7 GB), `.tmp/`(0.9 GB)은 지울지 사용자에게 묻는다.
 
 ## 검증 명령 (저장소 루트)
 
@@ -83,3 +75,4 @@ npm --prefix desktop run verify:renderer-v2
 npm --prefix desktop run test:desktop-node
 npm --prefix desktop run pack:release
 ```
+병렬 실행: `pip install -r backend/requirements-test.txt` 후 `PYTHONPATH=backend python -m pytest backend/tests -n auto --dist loadfile -p no:cacheprovider -q`.
