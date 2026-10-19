@@ -61,26 +61,13 @@ from app.pipeline.acceleration import get_runtime_acceleration, runtime_public_i
 from app.pipeline.ffmpeg_runtime import resolve_ffmpeg_bin, resolve_ffprobe_bin
 from app.pipeline.extract import (
     YOUTUBE_DOWNLOAD_STRATEGY_VERSION,
-    extract_frames,
     extract_preview_frame,
     prepare_preview_source,
 )
-from app.pipeline.layout_profiles import infer_layout_hint_from_roi, resolve_layout_hint
+from app.pipeline.layout_profiles import infer_layout_hint_from_roi
 from app.pipeline.auto_roi_detector import estimate_auto_roi_for_source
 from app.pipeline.roi_health import analyze_roi_health_for_source
-try:
-    from app.pipeline.roi_health import should_block_roi_capture
-except ImportError:
-    def should_block_roi_capture(analysis: Dict[str, object]) -> bool:
-        return str(analysis.get("risk_level") or "info").strip().lower() == "critical"
-from app.pipeline.detect import detect_sheet_regions
 from app.pipeline.observations import VideoDecodeIncompleteError
-from app.pipeline.rectify import rectify_frames
-from app.pipeline.overlay_composite import compose_overlay_free_captures
-from app.pipeline.paper_tone import flatten_capture_backgrounds
-from app.pipeline.stitch import select_review_candidates, stitch_pages
-from app.pipeline.upscale import upscale_frames
-from app.pipeline.export import export_frames, export_selected_pages
 from app.pipeline.process_control import OperationCancelled, checkpoint, operation_scope, progress_scope, report_progress
 from yt_dlp.version import __version__ as YTDLP_VERSION
 
@@ -273,30 +260,6 @@ def _analyze_roi_health(
         workspace=workspace,
         logger=logger,
     )
-
-
-def _enforce_roi_capture_gate(
-    *,
-    source_type: str,
-    file_path: str | None,
-    youtube_url: str | None,
-    start_sec: float | None,
-    roi: List[List[float]],
-    workspace: Path,
-    logger,
-) -> Dict[str, object]:
-    analysis = _analyze_roi_health(
-        source_type=source_type,
-        file_path=file_path,
-        youtube_url=youtube_url,
-        start_sec=start_sec,
-        roi=roi,
-        workspace=workspace,
-        logger=logger,
-    )
-    if should_block_roi_capture(analysis):
-        raise RuntimeError(f"ROI is unsafe for capture: {analysis.get('summary') or 'critical ROI diagnostics'}")
-    return analysis
 
 
 def _resolve_jobs_file_path(file_path: str) -> Path:
@@ -1162,159 +1125,6 @@ LEGACY_JOB_DETAIL = (
 )
 
 
-def legacy_review_export(job_id: str, payload: JobReviewExportRequest) -> JobReviewExportResponse:
-    """The pre-reflow capture/stitch review export. Not reachable over HTTP; kept
-    callable for its regression tests."""
-    with maintenance_lock:
-        lock = review_locks.setdefault(job_id, RLock())
-    with lock:
-        job = job_store.get(job_id)
-        if not job:
-            raise HTTPException(status_code=404, detail="job not found")
-        if job.status != JobStatus.DONE:
-            if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
-                raise HTTPException(status_code=409, detail="job is still running")
-            raise HTTPException(status_code=409, detail="job must be completed successfully before review export")
-        return _review_export_legacy(job, job_id, payload)
-
-
-def _review_export_legacy(job: Job, job_id: str, payload: JobReviewExportRequest) -> JobReviewExportResponse:
-    has_capture_selection = bool(payload.keep_captures)
-    has_page_selection = bool(payload.keep_images)
-    if has_capture_selection and has_page_selection:
-        raise HTTPException(status_code=400, detail="keep_captures and keep_images cannot be used together")
-    if not has_capture_selection and not has_page_selection:
-        raise HTTPException(status_code=400, detail="keep_captures must include at least one capture")
-
-    selection_mode = "captures" if has_capture_selection else "pages"
-    raw_inputs = payload.keep_captures if has_capture_selection else payload.keep_images
-    keep_raw = [str(path or "").strip() for path in raw_inputs]
-    keep_raw = [path for path in keep_raw if path]
-    if not keep_raw:
-        raise HTTPException(status_code=400, detail="keep_captures must include at least one capture")
-
-    selectable_paths = _resolve_selectable_capture_paths_for_job_ordered(
-        job=job,
-        preferred_keys=("review_candidates",) if selection_mode == "captures" else ("original_images", "images"),
-    )
-    resolved_paths = _resolve_selected_capture_paths_for_job(
-        job=job,
-        raw_paths=keep_raw,
-        selectable_paths=selectable_paths,
-    )
-    if not resolved_paths:
-        raise HTTPException(status_code=400, detail="no valid captures selected")
-
-    # Legacy page-only jobs store images inside the replaceable export folder.
-    # Preserve the complete set once, including pages excluded in this revision.
-    if selection_mode == "pages" and not job.result.get("original_images"):
-        originals_dir = Path(job.artifact_dir) / "original-pages"
-        originals_dir.mkdir(exist_ok=True)
-        preserved = {}
-        for index, source in enumerate(selectable_paths):
-            target = (originals_dir / f"page_{index + 1:04d}{source.suffix}").resolve()
-            shutil.copy2(source, target)
-            preserved[source] = target
-        resolved_paths = [preserved[path] for path in resolved_paths]
-        saved_result = dict(job.result)
-        saved_result["original_images"] = [str(path) for path in preserved.values()]
-        job_store.set_state(job_id, job.status, result=saved_result)
-
-    export_config = _resolve_job_export_options(job)
-    configured_formats = list(export_config.formats)
-    configured_page_fill_mode = export_config.page_fill_mode
-    configured_document_header = export_config.document_header.model_dump() if export_config.document_header else None
-    stitch_options_payload: Optional[dict[str, object]] = None
-    if isinstance(job.options, dict):
-        stitch_opts = job.options.get("stitch")
-        if isinstance(stitch_opts, dict):
-            stitch_options_payload = stitch_opts
-
-    requested_formats = payload.formats if payload.formats is not None else configured_formats
-    normalized_requested_formats = _normalize_requested_export_formats(requested_formats)
-    if not normalized_requested_formats:
-        raise HTTPException(status_code=400, detail="formats must include at least one export format")
-    export_workspace = Path(job.artifact_dir) / "export"
-    staged_export_workspace = _create_staged_export_workspace(target_workspace=export_workspace)
-
-    try:
-        edits = job.result.get("capture_edits", {})
-        page_paths = [Path(edits.get(str(path), {}).get("image_path", str(path))) for path in resolved_paths]
-        if selection_mode == "captures":
-            stitch_opts = _build_stitch_options(stitch_options_payload)
-            page_paths = stitch_pages(
-                frame_paths=page_paths,
-                options=stitch_opts,
-                workspace=staged_export_workspace / "stitched",
-                source_type=job.source_type,
-                prepared_frames=page_paths,
-                logger=lambda msg: _append(job_id, msg),
-            )
-            if not page_paths:
-                raise RuntimeError("no pages available after stitching selected captures")
-        export_result = export_selected_pages(
-            page_paths=page_paths,
-            formats=normalized_requested_formats,
-            page_fill_mode=configured_page_fill_mode,
-            document_header=configured_document_header,
-            workspace=staged_export_workspace,
-            logger=lambda msg: _append(job_id, msg),
-        )
-        commit = _install_staged_export_workspace(
-            staged_workspace=staged_export_workspace,
-            target_workspace=export_workspace,
-        )
-    except Exception as exc:
-        shutil.rmtree(staged_export_workspace, ignore_errors=True)
-        raise HTTPException(status_code=500, detail=_export_failure_detail(exc))
-    previous_result = dict(job.result or {})
-    try:
-        export_result = _rewrite_export_result_paths(
-            export_result=export_result,
-            staged_workspace=staged_export_workspace,
-            target_workspace=export_workspace,
-        )
-
-        result = dict(job.result or {})
-        result["images"] = export_result.get("images", [])
-        result["pdf"] = export_result.get("pdf")
-        result["raw_frames"] = export_result.get("raw_frames", [])
-        result["page_diagnostics"] = export_result.get("page_diagnostics", [])
-        result["dropped_pages"] = export_result.get("dropped_pages", [])
-        result["output_dir"] = str(export_workspace)
-        result["preview_images"] = [str(path) for path in export_result.get("preview_images", [])]
-        if selection_mode == "captures":
-            # Keep every candidate, including excluded ones, with canonical paths.
-            result["review_candidates"] = [str(path) for path in selectable_paths]
-        result["review_export"] = {
-            "revision": int(result.get("review_export", {}).get("revision", 0)) + 1,
-            "kept_count": len(resolved_paths),
-            "requested_count": len(keep_raw),
-            "selection_mode": selection_mode,
-            "selected_captures": [str(path) for path in resolved_paths] if selection_mode == "captures" else [],
-            "selected_pages": [str(path) for path in resolved_paths] if selection_mode == "pages" else [],
-        }
-        job_store.set_state(
-            job_id,
-            JobStatus.DONE,
-            1.0,
-            "done",
-            "review export finished",
-            result=result,
-            error_code=None,
-        )
-    except Exception as exc:
-        _revert_after_metadata_failure(job_id, commit, previous_result, exc)
-    commit.finalize()
-
-    return JobReviewExportResponse(
-        images=[str(path) for path in export_result.get("images", [])],
-        pdf=str(export_result.get("pdf")) if export_result.get("pdf") else None,
-        output_dir=str(export_workspace),
-        kept_count=len(resolved_paths),
-    )
-
-
 @app.post("/jobs/{job_id}/capture-crop", response_model=CaptureCropResponse)
 def crop_capture(job_id: str, payload: CaptureCropRequest) -> CaptureCropResponse:
     if export_task_store.is_active(job_id):
@@ -1454,14 +1264,13 @@ def cancel_job(job_id: str) -> JobStatusResponse:
         return JobStatusResponse(**job.to_public_dict())
 
 
-def _run_job(job_id: str, payload: JobCreate, *, legacy_pipeline: bool = False) -> None:
-    """Run a capture job. ``legacy_pipeline`` (the pre-reflow raw-stitch path) is not
-    reachable over HTTP; it stays callable for its regression tests only."""
+def _run_job(job_id: str, payload: JobCreate) -> None:
+    """Run a capture job."""
     with maintenance_lock:
         control = capture_controls.setdefault(job_id, Event())
     try:
         with operation_scope(control):
-            _execute_job(job_id, payload, legacy_pipeline=legacy_pipeline)
+            _execute_job(job_id, payload)
     except OperationCancelled:
         job_store.set_state(job_id, JobStatus.CANCELLED, current_step="cancelled", message="capture cancelled", error_code=None)
     finally:
@@ -1574,7 +1383,7 @@ def _cleanup_ended_job_workspace(job_id: str) -> Optional[Dict[str, Any]]:
         return report
 
 
-def _execute_job(job_id: str, payload: JobCreate, *, legacy_pipeline: bool = False) -> None:
+def _execute_job(job_id: str, payload: JobCreate) -> None:
     job = job_store.get(job_id)
     if not job:
         return
@@ -1589,11 +1398,7 @@ def _execute_job(job_id: str, payload: JobCreate, *, legacy_pipeline: bool = Fal
         options = payload.options
         extract_opts = options.extract
         detect_opts = options.detect
-        rectify_opts = options.rectify
-        stitch_opts = options.stitch
-        upscale_opts = options.upscale
         export_opts = _resolve_job_export_options(job, fallback=options.export)
-        runtime_capture: Dict[str, str] = {}
         resolved_source_type = payload.source_type
         normalized_file_path, normalized_youtube_url = _normalize_source_inputs(
             source_type=payload.source_type,
@@ -1639,207 +1444,14 @@ def _execute_job(job_id: str, payload: JobCreate, *, legacy_pipeline: bool = Fal
             else:
                 _append(job_id, f"roi health [{level}] {title}")
 
-        if not legacy_pipeline:
-            _execute_reflow_job(
-                job_id=job_id,
-                job=job,
-                payload=payload,
-                result=result,
-                video_path=resolved_file_path,
-                export_opts=export_opts,
-            )
-            return
-
-        accel = get_runtime_acceleration(
-            logger=lambda msg: _append(job_id, msg),
-            ffmpeg_bin=resolve_ffmpeg_bin(strict=platform.system().lower() == "windows"),
-        )
-
-        frames = extract_frames(
-            source_type=resolved_source_type,
-            file_path=resolved_file_path,
-            youtube_url=resolved_youtube_url,
-            options=extract_opts,
-            workspace=artifact_dir,
-            runtime_info=runtime_capture,
-            logger=lambda msg: _append(job_id, msg),
-            progress_callback=lambda update: _apply_export_extract_progress(job_id, update),
-        )
-        checkpoint()
-        result["extracted_frames"] = [str(frame_path) for frame_path in frames]
-        result["runtime"] = runtime_public_info(accel, ffmpeg_mode=runtime_capture.get("ffmpeg_mode"))
-        source_video_path = runtime_capture.get("source_video")
-        if source_video_path:
-            result["source_video_path"] = str(source_video_path)
-        src_w, src_h = _detect_source_resolution(source_video_path=source_video_path, extracted_frames=frames)
-        if src_w > 0 and src_h > 0:
-            result["source_resolution"] = {"width": int(src_w), "height": int(src_h)}
-            job_store.log(job_id, f"source resolution: {src_w}x{src_h}")
-        job_store.set_state(job_id, JobStatus.RUNNING, 0.2, "detecting", "frame extraction completed")
-
-        if not frames:
-            raise RuntimeError("No frames were extracted from source")
-
-        checkpoint()
-        detections = detect_sheet_regions(
-            frame_paths=frames,
-            options=detect_opts,
-            workspace=artifact_dir / "detect",
-            source_type=payload.source_type,
-            logger=lambda msg: _append(job_id, msg),
-        )
-        result["detections"] = len(detections)
-        result["region_adjustments"] = [
-            {"frame_index": item.get("frame_index"), "roi": item.get("roi"), **item.get("auto_fit", {})}
-            for item in detections if item.get("auto_fit", {}).get("status") == "adjusted"
-        ]
-        if not detections:
-            job_store.log(job_id, "no detection candidate found; using fallback rectification path")
-        job_store.set_state(job_id, JobStatus.RUNNING, 0.45, "rectifying", "sheet detection completed")
-
-        checkpoint()
-        rectified_paths = rectify_frames(
-            detections=detections,
-            options=rectify_opts,
-            workspace=artifact_dir / "rectified",
-            logger=lambda msg: _append(job_id, msg),
-        )
-        result["rectified_frames"] = [str(path) for path in rectified_paths]
-        job_store.set_state(job_id, JobStatus.RUNNING, 0.68, "stitching", "rectification completed")
-
-        checkpoint()
-        dedupe_report: dict = {}
-        review_candidate_paths = select_review_candidates(
-            frame_paths=rectified_paths,
-            options=stitch_opts,
-            source_type=payload.source_type,
-            logger=lambda msg: _append(job_id, msg),
-            report=dedupe_report,
-        )
-        original_candidate_paths = review_candidate_paths
-        overlay_composites: Dict[str, List[str]] = {}
-        if stitch_opts.remove_overlays:
-            review_candidate_paths = compose_overlay_free_captures(
-                kept_paths=review_candidate_paths,
-                groups=dedupe_report.get("observation_groups", {}),
-                layout_mode=resolve_layout_hint(stitch_opts.layout_hint, source_type=payload.source_type),
-                workspace=artifact_dir / "clean",
-                logger=lambda msg: _append(job_id, msg),
-                report=overlay_composites,
-            )
-        result["overlay_composites"] = overlay_composites
-        if stitch_opts.flatten_background:
-            review_candidate_paths = flatten_capture_backgrounds(
-                paths=review_candidate_paths,
-                workspace=artifact_dir / "clean",
-                logger=lambda msg: _append(job_id, msg),
-            )
-        composed_path_map = {
-            str(original): str(composed)
-            for original, composed in zip(original_candidate_paths, review_candidate_paths)
-        }
-        # Cleaned capture -> the rectified capture it replaced, so originals stay
-        # traceable (and restorable) whichever cleanup step produced the file.
-        result["clean_capture_sources"] = {
-            composed: original for original, composed in composed_path_map.items() if composed != original
-        }
-        # Frames kept although they look almost identical to the previous kept
-        # frame (few note heads changed, or the playhead jumped back): the review
-        # screen can present these pairs instead of the pipeline guessing.
-        result["similar_capture_pairs"] = [
-            {
-                **pair,
-                "kept": composed_path_map.get(pair["kept"], pair["kept"]),
-                "candidate": composed_path_map.get(pair["candidate"], pair["candidate"]),
-            }
-            for pair in dedupe_report.get("similar_pairs", [])
-        ]
-
-        from app.pipeline.export import diagnose_capture_sequence
-        result["capture_diagnostics"] = diagnose_capture_sequence(review_candidate_paths)
-        excluded_paths = {
-            path for path in review_candidate_paths
-            if result["capture_diagnostics"].get(str(path), {}).get("recommended_action") == "exclude"
-        }
-        accepted_paths = [path for path in review_candidate_paths if path not in excluded_paths]
-        result["auto_excluded_captures"] = [str(path) for path in review_candidate_paths if path in excluded_paths]
-        result["capture_classification_summary"] = {
-            label: sum(item["score_classification"] == label for item in result["capture_diagnostics"].values())
-            for label in ("score", "non_score", "uncertain")
-        }
-        job_store.log(
-            job_id, f"score screening: {len(accepted_paths)} retained, "
-            f"{len(excluded_paths)} excluded; originals available for review",
-        )
-
-        checkpoint()
-        stitched_paths = stitch_pages(
-            frame_paths=rectified_paths,
-            options=stitch_opts,
-            workspace=artifact_dir / "stitched",
-            source_type=payload.source_type,
-            prepared_frames=accepted_paths,
-            logger=lambda msg: _append(job_id, msg),
-        )
-        result["stitched_frames"] = [str(path) for path in stitched_paths]
-        job_store.set_state(job_id, JobStatus.RUNNING, 0.82, "upscaling", "stitching completed")
-
-        checkpoint()
-        upscaled_paths = upscale_frames(
-            frame_paths=stitched_paths,
-            options=upscale_opts,
-            workspace=artifact_dir / "upscaled",
-            acceleration=accel,
-            logger=lambda msg: _append(job_id, msg),
-        )
-        result["upscaled_frames"] = [str(path) for path in upscaled_paths] if upscale_opts.enable else []
-        review_candidate_paths = review_candidate_paths or upscaled_paths or stitched_paths
-        result["review_candidates"] = [str(path) for path in review_candidate_paths]
-        upscale_message = "upscaling completed" if upscale_opts.enable else "upscaling skipped"
-        job_store.set_state(job_id, JobStatus.RUNNING, 0.92, "exporting", upscale_message)
-
-        configured_document_header = export_opts.document_header.model_dump() if export_opts.document_header else None
-        checkpoint()
-        if upscaled_paths:
-            export_result = export_frames(
-                frame_paths=upscaled_paths,
-                options=export_opts,
-                document_header=configured_document_header,
-                workspace=artifact_dir / "export",
-                logger=lambda msg: _append(job_id, msg),
-                source_frames=frames,
-            )
-        elif accepted_paths:
-            raise RuntimeError("retained captures produced no pages for export")
-        else:
-            export_result = {"images": [], "pdf": None, "raw_frames": [], "page_diagnostics": [], "dropped_pages": []}
-            (artifact_dir / "export").mkdir(parents=True, exist_ok=True)
-            if export_opts.include_raw_frames:
-                raw_dir = artifact_dir / "export" / "raw_frames"
-                raw_dir.mkdir(parents=True, exist_ok=True)
-                for index, source_path in enumerate(frames):
-                    checkpoint()
-                    target = raw_dir / f"raw_{index:05d}.png"
-                    shutil.copy2(source_path, target)
-                    export_result["raw_frames"].append(str(target))
-            job_store.log(job_id, "all captures excluded by score screening; review originals to restore captures")
-        checkpoint()
-        result["images"] = export_result.get("images", [])
-        result["pdf"] = export_result.get("pdf")
-        result["raw_frames"] = export_result.get("raw_frames", [])
-        result["page_diagnostics"] = export_result.get("page_diagnostics", [])
-        result["dropped_pages"] = export_result.get("dropped_pages", [])
-        result["output_dir"] = str(artifact_dir / "export")
-        job_store.set_state(
-            job_id,
-            JobStatus.DONE,
-            1.0,
-            "done",
-            "export finished",
+        _execute_reflow_job(
+            job_id=job_id,
+            job=job,
+            payload=payload,
             result=result,
-            error_code=None,
+            video_path=resolved_file_path,
+            export_opts=export_opts,
         )
-        job_store.log(job_id, "job finished")
     except OperationCancelled:
         raise
     except Exception as exc:
@@ -3017,29 +2629,6 @@ def _apply_source_prepare_progress(job_id: str, update: Dict[str, Any]) -> None:
     )
 
 
-def _apply_export_extract_progress(job_id: str, update: Dict[str, Any]) -> None:
-    if not update:
-        return
-    progress_value = update.get("progress")
-    try:
-        sub_progress = float(progress_value) if progress_value is not None else None
-    except (TypeError, ValueError):
-        sub_progress = None
-
-    progress = None
-    if sub_progress is not None:
-        progress = 0.02 + max(0.0, min(sub_progress, 1.0)) * 0.18
-    stage = str(update.get("stage") or "extracting").strip() or "extracting"
-    message = str(update.get("message") or "frame extraction in progress").strip()
-    job_store.set_state(
-        job_id,
-        JobStatus.RUNNING,
-        progress,
-        stage,
-        message,
-    )
-
-
 def _coerce_prepare_progress_mode(value: object) -> ProgressMode:
     raw = str(value or ProgressMode.INDETERMINATE.value).strip().lower()
     if raw == ProgressMode.DETERMINATE.value:
@@ -3307,31 +2896,6 @@ def _resolve_selectable_capture_paths_for_job(*, job: Job, preferred_keys: tuple
     return set(_resolve_selectable_capture_paths_for_job_ordered(job=job, preferred_keys=preferred_keys))
 
 
-def _resolve_selected_capture_paths_for_job(
-    *,
-    job: Job,
-    raw_paths: List[str],
-    selectable_paths: List[Path],
-) -> List[Path]:
-    selectable_set = set(selectable_paths)
-    requested_order: List[Path] = []
-    selected_set: set[Path] = set()
-    for raw_path in raw_paths:
-        resolved = _resolve_capture_path_for_job(job=job, raw_path=raw_path, must_exist=True)
-        if selectable_set and resolved not in selectable_set:
-            raise HTTPException(status_code=400, detail=f"capture is not selectable for this job: {raw_path}")
-        if resolved in selected_set:
-            continue
-        selected_set.add(resolved)
-        requested_order.append(resolved)
-
-    if selectable_paths:
-        ordered = [path for path in selectable_paths if path in selected_set]
-        if ordered:
-            return ordered
-    return requested_order
-
-
 def _apply_auto_layout_hints(payload: JobCreate) -> None:
     detect_opts = payload.options.detect
     stitch_opts = payload.options.stitch
@@ -3341,13 +2905,6 @@ def _apply_auto_layout_hints(payload: JobCreate) -> None:
         detect_opts.layout_hint = inferred_hint
     if stitch_opts.layout_hint == "auto":
         stitch_opts.layout_hint = detect_opts.layout_hint if detect_opts.layout_hint != "auto" else inferred_hint
-
-
-def _build_stitch_options(raw_options: Optional[dict[str, object]]):
-    from app.schemas import StitchOptions
-
-    payload = raw_options if isinstance(raw_options, dict) else {}
-    return StitchOptions(**payload)
 
 
 def _create_staged_export_workspace(*, target_workspace: Path) -> Path:
@@ -3471,22 +3028,6 @@ def _rewrite_export_result_path(raw_value: object, *, staged_workspace: Path, ta
     except ValueError:
         return candidate
     return target_workspace / rel
-
-
-def _detect_source_resolution(*, source_video_path: str | None, extracted_frames: List[Path]) -> tuple[int, int]:
-    if source_video_path:
-        width, height = _probe_video_resolution(Path(source_video_path))
-        if width > 0 and height > 0:
-            return width, height
-
-    if extracted_frames:
-        frame = cv2.imread(str(extracted_frames[0]))
-        if frame is not None and frame.size > 0:
-            h, w = frame.shape[:2]
-            if w > 0 and h > 0:
-                return int(w), int(h)
-
-    return 0, 0
 
 
 def _probe_video_resolution(path: Path) -> tuple[int, int]:

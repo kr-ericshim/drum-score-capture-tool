@@ -1,14 +1,12 @@
 """Even out the paper background of captured scores without touching the ink."""
 from __future__ import annotations
 
-from pathlib import Path
 from typing import List, Optional
 
 import cv2
 import numpy as np
 
 from app.pipeline.page_diff import _ink_mask, estimate_staff_gap
-from app.pipeline.process_control import checkpoint
 
 
 _TARGET_PAPER = 250.0
@@ -83,30 +81,3 @@ def _edge_rule_rows(gray: np.ndarray, paper_level: float, *, gap: float) -> List
         rules.append(row)
     return sorted(set(rules))
 
-
-def flatten_capture_backgrounds(*, paths: List[Path], workspace: Path, logger) -> List[Path]:
-    """Return one path per capture, flattened where it looks like a score page.
-
-    Files already inside `workspace` (our own composites) are rewritten in place;
-    source frames are never modified, their flattened copy goes to `workspace`.
-    """
-    output_paths = list(paths)
-    flattened_count = 0
-    workspace_root = workspace.resolve()
-    for index, path in enumerate(paths):
-        checkpoint()
-        image = cv2.imread(str(path))
-        flattened = flatten_paper_background(image) if image is not None else None
-        if flattened is None:
-            continue
-        workspace.mkdir(parents=True, exist_ok=True)
-        if path.resolve().parent == workspace_root:
-            target = path
-        else:
-            target = workspace / f"{path.stem}_clean.png"
-        if not cv2.imwrite(str(target), flattened):
-            raise RuntimeError(f"failed to write flattened capture: {target}")
-        output_paths[index] = target
-        flattened_count += 1
-    logger(f"paper tone: {flattened_count} flattened, {len(paths) - flattened_count} kept as captured")
-    return output_paths

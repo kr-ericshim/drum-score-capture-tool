@@ -12,49 +12,21 @@ def _import_main_with_stubs():
 
     extract = types.ModuleType("app.pipeline.extract")
     extract.YOUTUBE_DOWNLOAD_STRATEGY_VERSION = "test"
-    extract.extract_frames = lambda *args, **kwargs: []
     extract.extract_preview_frame = lambda *args, **kwargs: None
     extract.prepare_preview_source = lambda *args, **kwargs: None
 
-    detect = types.ModuleType("app.pipeline.detect")
-    detect.detect_sheet_regions = lambda *args, **kwargs: []
-
     layout_profiles = types.ModuleType("app.pipeline.layout_profiles")
     layout_profiles.infer_layout_hint_from_roi = lambda *args, **kwargs: "full_scroll"
-    layout_profiles.resolve_layout_hint = lambda *args, **kwargs: "full_scroll"
 
     roi_health = types.ModuleType("app.pipeline.roi_health")
     roi_health.analyze_roi_health_for_source = lambda *args, **kwargs: {}
-
-    rectify = types.ModuleType("app.pipeline.rectify")
-    rectify.rectify_frames = lambda *args, **kwargs: []
-
-    overlay_composite = types.ModuleType("app.pipeline.overlay_composite")
-    overlay_composite.compose_overlay_free_captures = lambda *args, **kwargs: []
-
-    stitch = types.ModuleType("app.pipeline.stitch")
-    stitch.select_review_candidates = lambda *args, **kwargs: []
-    stitch.stitch_pages = lambda *args, **kwargs: []
-
-    upscale = types.ModuleType("app.pipeline.upscale")
-    upscale.upscale_frames = lambda *args, **kwargs: []
-
-    export = types.ModuleType("app.pipeline.export")
-    export.export_frames = lambda *args, **kwargs: {}
-    export.export_selected_pages = lambda *args, **kwargs: {}
 
     stubbed_modules = {
         "cv2": types.ModuleType("cv2"),
         "app.pipeline.acceleration": acceleration,
         "app.pipeline.extract": extract,
-        "app.pipeline.detect": detect,
         "app.pipeline.layout_profiles": layout_profiles,
         "app.pipeline.roi_health": roi_health,
-        "app.pipeline.rectify": rectify,
-        "app.pipeline.overlay_composite": overlay_composite,
-        "app.pipeline.stitch": stitch,
-        "app.pipeline.upscale": upscale,
-        "app.pipeline.export": export,
     }
     previous_main = sys.modules.pop("app.main", None)
     try:

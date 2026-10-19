@@ -25,7 +25,7 @@ from app.pipeline.page_diff import (
     estimate_staff_gap,
     playhead_jumped_back,
 )
-from app.pipeline.stitch import select_review_candidates, stitch_pages
+from app.pipeline.stitch import select_review_candidates
 from app.schemas import StitchOptions
 from drum_score_fixture import (
     Degrade,
@@ -265,54 +265,6 @@ def _select(paths, layout, level="normal"):
 
 
 class TestTemporalDedupeFlow(unittest.TestCase):
-    def test_page_turn_keeps_note_change_and_flags_playhead_reset(self):
-        page = groove_notes(PageSpec(), seed=3)
-        page_b = add_note(page, 2, 1, 5, 1.5)
-        page_c = groove_notes(PageSpec(), seed=4)
-        frames = (
-            [render(page, [Overlay("line", x, system=0)]) for x in (0.05, 0.3, 0.6, 0.9)]
-            + [render(page_b, [Overlay("line", x, system=0)]) for x in (0.05, 0.5, 0.95)]
-            + [render(page_c, [Overlay("line", x, system=2)]) for x in (0.1, 0.7)]
-            # Identical next page: playhead restarts on the left.
-            + [render(page_c, [Overlay("line", x, system=0)]) for x in (0.05, 0.7)]
-        )
-        with tempfile.TemporaryDirectory() as td:
-            paths = _write_frames(Path(td), frames)
-            kept, pairs, _logs = _select(paths, "page_turn")
-            self.assertEqual(kept, ["frame_0000.png", "frame_0004.png", "frame_0007.png", "frame_0009.png"])
-            self.assertEqual([(Path(p["candidate"]).name, p["reason"]) for p in pairs], [("frame_0009.png", "playhead_reset")])
-            self.assertEqual(Path(pairs[0]["kept"]).name, "frame_0007.png")
-            self.assertIn("verdict", pairs[0]["metrics"])
-            self.assertEqual(len(pairs[0]["metrics"]["frame_size"]), 2)
-
-            # Prepared (already reviewed) pages are not merged again.
-            pages = stitch_pages(
-                frame_paths=paths,
-                options=StitchOptions(enable=True, layout_hint="page_turn"),
-                workspace=Path(td) / "stitched",
-                source_type="file",
-                prepared_frames=[Path(td) / name for name in kept],
-                logger=lambda *_: None,
-            )
-            self.assertEqual(len(pages), 4)
-
-    def test_page_turn_compression_without_prepared_frames_keeps_note_change(self):
-        page = groove_notes(PageSpec(), seed=3)
-        page_b = add_note(page, 2, 1, 5, 1.5)
-        frames = [render(page, [Overlay("line", x, system=0)]) for x in (0.1, 0.6)] + [
-            render(page_b, [Overlay("line", x, system=0)]) for x in (0.1, 0.6)
-        ]
-        with tempfile.TemporaryDirectory() as td:
-            paths = _write_frames(Path(td), frames)
-            pages = stitch_pages(
-                frame_paths=paths,
-                options=StitchOptions(enable=True, layout_hint="page_turn"),
-                workspace=Path(td) / "stitched",
-                source_type="file",
-                logger=lambda *_: None,
-            )
-            self.assertEqual(len(pages), 2)
-
     def test_bottom_bar_strip_sequence(self):
         strip = groove_notes(strip_spec(), seed=5)
         strip_b = add_note(strip, 0, 1, 3, 1.5)

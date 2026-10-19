@@ -1,13 +1,11 @@
 """Paper background flattening keeps the ink and evens out the video's gray tone."""
 
-import tempfile
 import unittest
-from pathlib import Path
 
 import cv2
 import numpy as np
 
-from app.pipeline.paper_tone import flatten_capture_backgrounds, flatten_paper_background
+from app.pipeline.paper_tone import flatten_paper_background
 from drum_score_fixture import groove_notes, render, strip_spec
 
 
@@ -75,27 +73,6 @@ class TestPaperTone(unittest.TestCase):
         self.assertIsNone(flatten_paper_background(np.full((190, 1400, 3), 60, np.uint8)))
         self.assertIsNone(flatten_paper_background(self.clean))
 
-    def test_sources_are_preserved_and_own_composites_rewritten_in_place(self):
-        with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            source = root / "rectified" / "sheet_0000.png"
-            source.parent.mkdir()
-            cv2.imwrite(str(source), _video_tone(self.clean))
-            workspace = root / "clean"
-            workspace.mkdir()
-            composite = workspace / "sheet_0001_clean.png"
-            cv2.imwrite(str(composite), _video_tone(self.clean))
-            settled = root / "rectified" / "sheet_0002.png"
-            cv2.imwrite(str(settled), self.clean)
-            source_bytes = source.read_bytes()
-
-            logs = []
-            out = flatten_capture_backgrounds(paths=[source, composite, settled], workspace=workspace, logger=logs.append)
-
-            self.assertEqual(out, [workspace / "sheet_0000_clean.png", composite, settled])
-            self.assertEqual(source.read_bytes(), source_bytes)
-            self.assertGreaterEqual(int(np.median(cv2.imread(str(composite)))), 245)
-            self.assertEqual(logs, ["paper tone: 2 flattened, 1 kept as captured"])
 
 
 if __name__ == "__main__":

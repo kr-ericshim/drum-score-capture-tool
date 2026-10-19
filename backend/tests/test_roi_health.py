@@ -10,7 +10,6 @@ from app.pipeline.roi_health import (
     analyze_roi_health_for_source,
     analyze_roi_health_frames,
     pad_roi_rect,
-    should_block_roi_capture,
 )
 
 
@@ -33,11 +32,6 @@ def _frame_with_score(top=180, bottom=620):
 
 
 class TestRoiHealthAnalysis(unittest.TestCase):
-    def test_should_block_only_critical_roi(self):
-        self.assertFalse(should_block_roi_capture({"risk_level": "info"}))
-        self.assertFalse(should_block_roi_capture({"risk_level": "warning"}))
-        self.assertTrue(should_block_roi_capture({"risk_level": "critical"}))
-
     def test_pad_roi_rect_expands_and_clamps_to_frame_bounds(self):
         padded = pad_roi_rect(
             [[4, 4], [24, 4], [24, 20], [4, 20]],
@@ -81,7 +75,7 @@ class TestRoiHealthAnalysis(unittest.TestCase):
         self.assertNotIn("roi_margin_tight", codes)
         self.assertEqual(codes.get("roi_at_frame_edge"), "info")
         self.assertNotIn("bottom_edge_busy", codes)
-        self.assertFalse(should_block_roi_capture(result))
+        self.assertNotEqual(result["risk_level"], "critical")
 
     def test_notation_cut_by_frame_edge_is_a_warning_not_critical(self):
         roi = [[0, 450], [800, 450], [800, 800], [0, 800]]
@@ -108,7 +102,7 @@ class TestRoiHealthAnalysis(unittest.TestCase):
         levels = {item["code"]: item["level"] for item in out["diagnostics"]}
         self.assertEqual(levels["top_edge_busy"], "info")
         self.assertEqual(out["risk_level"], "warning")
-        self.assertFalse(should_block_roi_capture(out))
+        self.assertNotEqual(out["risk_level"], "critical")
 
     def test_failed_whole_video_check_keeps_edge_density_level(self):
         analysis = {"risk_level": "critical", "diagnostics": [{"level": "critical", "code": "top_edge_busy", "title": "t", "detail": "d"}]}

@@ -442,7 +442,7 @@ class CleanOnlyOutputTest(unittest.TestCase):
         self.assertEqual(len(submitted), 1)
         fn, args, kwargs = submitted[0]
         self.assertIs(fn, main._run_job)
-        self.assertEqual(kwargs, {})  # legacy_pipeline is never set by the HTTP route
+        self.assertEqual(kwargs, {})
 
     def test_review_export_of_a_pre_reflow_job_is_refused_not_rebuilt_raw(self):
         with tempfile.TemporaryDirectory() as td:
@@ -454,14 +454,11 @@ class CleanOnlyOutputTest(unittest.TestCase):
             store.create(Job(id="job-l", source_type="file", file_path=str(root / "v.mp4"), youtube_url=None,
                              options={"export": {"formats": ["png"]}}, artifact_dir=str(root / "job-l"), status=JobStatus.DONE,
                              result={"review_candidates": [str(cap)], "images": [str(cap)]}))
-            with patch("app.main.job_store", store), patch("app.main.stitch_pages") as stitch, \
-                    patch("app.main.export_selected_pages") as export_pages:
+            with patch("app.main.job_store", store):
                 with self.assertRaises(HTTPException) as ctx:
                     main.review_export("job-l", JobReviewExportRequest(keep_captures=[str(cap)], formats=["png"]))
             self.assertEqual(ctx.exception.status_code, 409)
             self.assertTrue(ctx.exception.detail.startswith("LEGACY_JOB:"))
-            stitch.assert_not_called()
-            export_pages.assert_not_called()
 
 
 class ReflowJobPathTest(unittest.TestCase):
@@ -478,10 +475,8 @@ class ReflowJobPathTest(unittest.TestCase):
             (root / "job-j").mkdir(exist_ok=True)
             with patch("app.main.job_store", store), \
                     patch("app.main._analyze_roi_health", return_value={"diagnostics": []}), \
-                    patch("app.pipeline.reflow_pipeline.analyse_source", side_effect=side_effect), \
-                    patch("app.main.extract_frames") as legacy_extract:
+                    patch("app.pipeline.reflow_pipeline.analyse_source", side_effect=side_effect):
                 main._execute_job("job-j", payload)
-            self.assertFalse(legacy_extract.called, "no raw-stitch path for a default job")
             return store.get("job-j")
 
     def test_default_job_uses_reflow_and_reports_unsupported_layout(self):

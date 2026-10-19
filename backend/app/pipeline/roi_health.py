@@ -295,10 +295,6 @@ def _ink_cut_by_frame_edge(gray: np.ndarray, *, side: str, frame_height: int, re
     return hits >= 2
 
 
-def should_block_roi_capture(analysis: Dict[str, object]) -> bool:
-    return str(analysis.get("risk_level") or "info").strip().lower() == "critical"
-
-
 def pad_roi_rect(
     roi: Sequence[Sequence[float]],
     *,
