@@ -108,38 +108,6 @@
   overflow-y: auto;
   border-right: 1px solid var(--line-soft);
 }
-.screen-review .review-list-tools {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
-  padding: 12px 12px 8px;
-  border: 0;
-}
-.screen-review .review-filter {
-  grid-column: 1 / -1;
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  border-radius: 8px;
-  background: var(--surface-recessed);
-}
-.screen-review .review-filter .button {
-  flex: 1;
-  display: flex;
-  justify-content: center;
-  gap: 6px;
-  min-height: 28px;
-  padding: 4px 8px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-2);
-  font-size: 12px;
-}
-.screen-review .review-filter .button[aria-pressed="true"] { background: var(--bg-panel); color: var(--text-1); box-shadow: var(--shadow-1); }
-.screen-review .review-filter span { font-variant-numeric: tabular-nums; color: var(--text-3); font-weight: 500; }
-.screen-review .review-filter .button[aria-pressed="true"] span { color: var(--text-2); }
-.screen-review .review-list-tools > .button { min-height: 28px; padding: 4px 8px; font-size: 12px; }
 .screen-review .review-list-summary {
   display: flex;
   justify-content: space-between;
@@ -148,7 +116,6 @@
   border-bottom: 1px solid var(--line-soft);
 }
 .screen-review .review-summary-pill { padding: 0; border: 0; background: none; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 500; color: var(--text-2); }
-.screen-review .review-format-label { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; color: var(--text-3); }
 .app-shell[data-step] .screen-review .review-grid {
   display: flex;
   flex: 1;
@@ -236,10 +203,6 @@
 .screen-review .review-inline-pill-exclude { color: var(--danger-text); }
 .screen-review .review-inline-pill-exclude::before { background: var(--dot-exclude); }
 .screen-review .review-panel-foot { flex: none; border-top: 1px solid var(--line-soft); }
-.screen-review .review-output-path { display: flex; align-items: center; gap: 8px; padding: 0 14px 10px; }
-.screen-review .review-output-path span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; font-size: 11.5px; color: var(--text-2); }
-.screen-review .review-output-path .button { min-height: 26px; padding: 2px 8px; font-size: 11.5px; }
-.screen-review .review-save-hint { flex: none; margin: 0; padding: 10px 14px; color: var(--text-2); font-size: 11.5px; line-height: 1.5; }
 /* Score layout choice (rearrange by measure), applied on the next rebuild. */
 .screen-review .review-layout-option { display: flex; align-items: flex-start; gap: 8px; padding: 10px 14px 0; font-size: 12.5px; font-weight: 500; line-height: 1.45; color: var(--text-1); cursor: pointer; }
 .screen-review .review-layout-option input { flex: none; width: 15px; height: 15px; margin: 1px 0 0; accent-color: var(--accent); }
@@ -259,7 +222,6 @@
 .app-shell[data-step] .screen-review .review-grid-shell > :is(.review-grid, .review-list-scroll) { min-height: 50%; }
 /* Short windows (840 px high and the like): tighter list chrome and footer, smaller thumbnails. */
 @media (max-height: 900px) {
-  .screen-review .review-list-tools { gap: 4px; padding: 8px 12px 6px; }
   .screen-review .review-list-summary { padding: 0 14px 6px; }
   .screen-review .review-card { gap: 4px; padding: 8px 14px 6px; }
   .screen-review .review-grid[data-thumb-shape="page"] .review-card { padding: 8px 14px; }
@@ -267,8 +229,6 @@
   .screen-review .review-grid[data-thumb-shape="page"] .review-card-figure img { max-height: 96px; }
   .screen-review .review-layout-option { padding-top: 8px; }
   .screen-review .review-original-rebuild { margin-top: 8px; }
-  .screen-review .review-save-hint { padding: 6px 14px; }
-  .screen-review .review-output-path { padding-bottom: 8px; }
 }
 .screen-review .review-fragment-group { border-bottom: 1px solid var(--line-soft); background: var(--surface-recessed); }
 .screen-review .review-fragment-toggle {

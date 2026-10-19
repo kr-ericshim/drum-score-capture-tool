@@ -1,4 +1,3 @@
-import { STEP_TITLES } from "../../app/types.js";
 import { getSourcePrepareSummary } from "../../app/session/selectors.js";
 import { escapeHtml } from "../../lib/html.js";
 import { t } from "../../lib/i18n.js";
@@ -80,7 +79,7 @@ export function renderProcessRail(state, items) {
           <button class="process-step ${item.active ? "is-active" : ""} ${item.complete ? "is-complete" : ""}" data-action="open-step" data-step="${item.id}" ${item.active ? 'aria-current="step"' : ""} ${item.enabled ? "" : `disabled aria-disabled="true"`}>
             <span class="process-step-index">${STEP_ICONS[item.id]}</span>
             <span class="process-step-copy">
-              <strong>${escapeHtml(t(`step.${item.id}`, { locale }) || STEP_TITLES[item.id])}</strong>
+              <strong>${escapeHtml(t(`step.${item.id}`, { locale }))}</strong>
               <small>${escapeHtml(item.summary)}</small>
             </span>
           </button>

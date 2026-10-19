@@ -998,10 +998,6 @@ app.whenReady().then(async () => {
   await startBackendAndWait({ showDialogOnFail: false });
 });
 
-ipcMain.on("get-app-version", (event) => {
-  event.returnValue = app.getVersion();
-});
-
 ipcMain.on("get-session-token", (event) => {
   event.returnValue = BACKEND_SESSION_TOKEN;
 });

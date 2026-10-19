@@ -522,58 +522,6 @@ export function getAccessibleSteps(state) {
   return accessible;
 }
 
-export function getPrimaryAction(state) {
-  const locale = state.ui.locale || "en";
-  const activeStep = state.ui.activeStep;
-  if (activeStep === "source") {
-    return { id: "select-source-file", label: t("selector.primary.selectSource", { locale }), disabled: false };
-  }
-  if (activeStep === "roi") {
-    if (!state.source.filePath) {
-      return { id: "select-source-file", label: t("selector.primary.selectSource", { locale }), disabled: false };
-    }
-    if (!state.roi.previewImage) {
-      return { id: "load-preview-frame", label: t("selector.primary.loadFrame", { locale }), disabled: false };
-    }
-    return {
-      id: "apply-roi",
-      label: t("selector.primary.applyRoi", { locale }),
-      disabled: !isRectValid(state.roi.draftRect),
-    };
-  }
-  if (activeStep === "export") {
-    const hasFormats = Array.isArray(state.exportConfig.formats) && state.exportConfig.formats.length > 0;
-    return {
-      id: "run-export",
-      label: state.exportConfig.runStatus === "running"
-        ? t("selector.primary.runExportBusy", { locale })
-        : isPdfSelected(state.exportConfig.formats)
-          ? t("selector.primary.runExportPdf", { locale })
-          : t("selector.primary.runExportDirect", { locale }),
-      disabled: !getStepState(state, "export").enabled || state.exportConfig.runStatus === "running" || !hasFormats,
-    };
-  }
-  if (activeStep === "review") {
-    const hasFormats = Array.isArray(state.exportConfig.formats) && state.exportConfig.formats.length > 0;
-    const reviewLocked = !state.exportConfig.jobId
-      || !isReviewableRun(state)
-      || state.review.status === "running"
-      || state.review.status === "applied"
-      || !hasFormats
-      || hasPendingRoiDraft(state);
-    return {
-      id: "apply-review",
-      label: state.review.status === "running"
-        ? t("selector.primary.applyReviewBusy", { locale })
-        : state.review.status === "applied"
-          ? t("selector.primary.applyReviewDone", { locale })
-          : t("selector.primary.applyReview", { locale }),
-      disabled: state.review.selectedPageIds.length === 0 || reviewLocked,
-    };
-  }
-  return { id: "", label: "", disabled: true };
-}
-
 export function summarizeSelection(allIds = [], selectedIds = new Set()) {
   const totalCount = Array.isArray(allIds) ? allIds.length : 0;
   let keptCount = 0;
@@ -719,7 +667,6 @@ export function deriveReflowInfo(result = {}) {
     suggestionsState: String(reflow.suggestions_state || "done"),
     listedShort: Array.isArray(exclusions.short_listed_excluded) ? exclusions.short_listed_excluded.length : 0,
     // systems whose strip leaves out marks shown only for a moment (an "other moment" alternate shows them)
-    minorityLines: systems.filter(system => Array.isArray(system?.issues) && system.issues.includes("MINORITY_CONTENT_DROPPED")).length,
     hiddenShort: Number(exclusions.hidden || 0),
     conflict: conflict ? {
       systemNumbers: conflictIds.map((id, index) => systemNumber(id, index + 1)),
@@ -744,8 +691,6 @@ export function deriveReflowInfo(result = {}) {
     systemCount: systems.length,
     // which layout produced the current files (null for files made before it was recorded)
     measureReflow: deriveMeasureReflow(result.measure_reflow),
-    // a dense chart laid out by measure at a smaller staff size than chosen (null otherwise)
-    autoStaff: deriveAutoStaff(result.measure_reflow),
     // one entry per printed line: where it sits on its page, which part of the video it came
     // from and the view-jump seams inside it (reflow.line_review; empty for older jobs)
     lines: deriveLineReview(reflow.line_review),
@@ -827,24 +772,6 @@ function deriveCoverage(result = {}) {
     return { start, end, label: `${formatClockLabel(start)}–${formatClockLabel(Math.ceil(end))}` };
   }).filter(Boolean);
   return { incomplete: true, unresolvedRanges };
-}
-
-/** plan.staff_size reasons for a score wider than the page (whole systems, or measure units without a safe cut). */
-const WIDE_STAFF_REASONS = new Set(["WHOLE_SYSTEMS_DO_NOT_FIT", "UNITS_DO_NOT_FIT"]);
-
-// A smaller staff size the planner chose by itself: a dense chart laid out by measure, or a score
-// wider than the page (whole systems, or measure units without a safe cut).
-function deriveAutoStaff(record) {
-  const size = record && typeof record === "object" ? record.staff_size : null;
-  if (!size || typeof size !== "object" || size.auto_reduced !== true) return null;
-  const reason = String(size.reason || "");
-  // any other automatic reduction of a measure layout is the dense-chart search (DENSE_LINES_NOT_FULL)
-  const kind = WIDE_STAFF_REASONS.has(reason) ? "wide" : record.status === "measure_lines" ? "dense" : "";
-  if (!kind) return null;
-  const usedMm = finiteOrNull(size.staff_gap_mm);
-  const requestedMm = finiteOrNull(size.staff_gap_mm_requested);
-  if (usedMm === null || (requestedMm !== null && usedMm >= requestedMm - 1e-6)) return null;
-  return { usedMm, requestedMm, reason, kind };
 }
 
 function deriveMeasureReflow(record) {

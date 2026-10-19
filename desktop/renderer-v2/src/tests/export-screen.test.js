@@ -204,7 +204,7 @@ test("export screen stays preview-first and avoids generic dashboard copy", () =
   const markup = renderExportScreen(state);
 
   assert.match(markup, /data-stitch-region="export-preview"/);
-  assert.match(markup, /Area Preview|영역 미리보기/);
+  assert.match(markup, /Area preview|영역 미리보기/);
   assert.doesNotMatch(markup, /SYSTEM STATUS|INSPECTION VIEW|UTILITY RAIL/i);
 });
 
