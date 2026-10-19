@@ -1,7 +1,6 @@
 const { contextBridge, ipcRenderer, webUtils } = require("electron");
 const BACKEND_PORT = process.env.DRUMSHEET_PORT || 8000;
 const API_BASE = `http://127.0.0.1:${BACKEND_PORT}`;
-const desktopVersion = ipcRenderer.sendSync("get-app-version");
 const apiToken = ipcRenderer.sendSync("get-session-token") || "";
 
 function authenticatedHeaders(extraHeaders = {}) {
@@ -130,6 +129,5 @@ contextBridge.exposeInMainWorld("drumSheetAPI", {
     ipcRenderer.on("backend-state", listener);
     return () => ipcRenderer.removeListener("backend-state", listener);
   },
-  desktopVersion: String(desktopVersion || ""),
   apiBase: API_BASE,
 });

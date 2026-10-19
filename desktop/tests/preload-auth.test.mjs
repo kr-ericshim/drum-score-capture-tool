@@ -23,9 +23,6 @@ test("preload fetches the backend session token from Electron IPC", async () => 
         ipcRenderer: {
           sendSync(channel) {
             calls.push(channel);
-            if (channel === "get-app-version") {
-              return "0.1.27";
-            }
             if (channel === "get-session-token") {
               return "token-123";
             }
@@ -52,7 +49,7 @@ test("preload fetches the backend session token from Electron IPC", async () => 
   assert.equal(exposed.name, "drumSheetAPI");
   assert.equal(Object.hasOwn(exposed.value, "apiToken"), false);
   assert.equal(typeof exposed.value.requestJson, "function");
-  assert.deepEqual(calls, ["get-app-version", "get-session-token"]);
+  assert.deepEqual(calls, ["get-session-token"]);
   const saveOptions = { sourcePath: "/tmp/score.pdf", suggestedName: "score", locale: "ko" };
   exposed.value.savePdfAs(saveOptions);
   assert.deepEqual(calls.at(-1), ["save-pdf-as", saveOptions]);
@@ -72,9 +69,6 @@ test("preload exposes getPathForFile through Electron webUtils", async () => {
         },
         ipcRenderer: {
           sendSync(channel) {
-            if (channel === "get-app-version") {
-              return "0.1.27";
-            }
             if (channel === "get-session-token") {
               return "";
             }
@@ -135,9 +129,6 @@ test("preload reads protected job assets with the session token in a header", as
         },
         ipcRenderer: {
           sendSync(channel) {
-            if (channel === "get-app-version") {
-              return "0.1.27";
-            }
             if (channel === "get-session-token") {
               return "token-123";
             }
@@ -201,9 +192,6 @@ test("preload sends JSON API requests with the session token in a header", async
         },
         ipcRenderer: {
           sendSync(channel) {
-            if (channel === "get-app-version") {
-              return "0.1.27";
-            }
             if (channel === "get-session-token") {
               return "token-123";
             }
@@ -263,7 +251,7 @@ test("preload honours a caller's own timeout and turns a timeout into a readable
       return {
         contextBridge: { exposeInMainWorld(name, value) { exposed = { name, value }; } },
         ipcRenderer: {
-          sendSync(channel) { return channel === "get-app-version" ? "0.1.27" : "token-123"; },
+          sendSync() { return "token-123"; },
           invoke() {}, on() {}, removeListener() {},
         },
         webUtils: { getPathForFile: () => "" },
