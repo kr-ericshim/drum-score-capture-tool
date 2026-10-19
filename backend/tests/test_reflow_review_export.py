@@ -801,7 +801,9 @@ class UncutStripRegenerationTest(unittest.TestCase):
         self.artifact = self.root / "job-g"
         shutil.copytree(self.template, self.artifact)
         # the job's record, with paths moved into this job's folder
-        text = json.dumps(reflow_pipeline.public_record(self.record)).replace(str(self.template), str(self.artifact))
+        # JSON text holds paths with escaped separators (backslashes on Windows)
+        text = json.dumps(reflow_pipeline.public_record(self.record)).replace(
+            json.dumps(str(self.template))[1:-1], json.dumps(str(self.artifact))[1:-1])
         reflow = json.loads(text)
         self.systems = reflow["systems"]
         self.assertTrue(self.systems[0]["strip"]["preview_tail"]["cut"])

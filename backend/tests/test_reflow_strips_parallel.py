@@ -34,9 +34,12 @@ def normalized(value, root):
     if isinstance(value, np.generic):
         return value.item()
     if isinstance(value, (str, Path)):
-        # also the JSON-escaped form a nested record holds on Windows (backslashes doubled)
-        text = str(value).replace(str(root).replace("\\", "\\\\"), "<OUT>")
-        return text.replace(str(root), "<OUT>")
+        # On Windows a path may also appear resolved (long name instead of RUNNER~1) and, inside a
+        # nested JSON record, with its backslashes escaped.
+        text = str(value)
+        for prefix in {str(root), str(Path(root).resolve())}:
+            text = text.replace(json.dumps(prefix)[1:-1], "<OUT>").replace(prefix, "<OUT>")
+        return text
     return value
 
 
