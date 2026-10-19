@@ -7,4 +7,3 @@ opencv-python-headless==4.13.0.92
 Pillow>=10.0.0
 yt-dlp[default]==2026.8.19
 pydantic>=2.5.0
-PyYAML>=6.0.0

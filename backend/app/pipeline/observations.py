@@ -5,9 +5,8 @@ needs extension", "Data shapes") and 2 ("Shared acquisition/tracking
 defaults").
 
 Why a manifest: extraction writes sequential ``frame_%06d.png`` names after an
-FFmpeg ``fps`` filter (extract.py ``_extract_with_ffmpeg``) and rectification
-renumbers its outputs by detection index (rectify.py ``rectify_frames``), so a
-file name is not a timestamp contract. Here every observation carries the
+FFmpeg ``fps`` filter (extract.py ``_extract_with_ffmpeg``), so a file name is
+not a timestamp contract. Here every observation carries the
 presentation timestamp of the decoded source frame.
 
 Sampling: a coarse pass at ``coarse_hz`` (2 Hz) over the whole source; every

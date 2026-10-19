@@ -291,69 +291,6 @@ def _emit_prepare_progress(progress_callback, update: Dict[str, object], *, logg
             logger(f"youtube progress callback failed: {exc}")
 
 
-def _build_youtube_progress_hook(*, progress_callback, logger):
-    def hook(status: Dict[str, object]) -> None:
-        state = str(status.get("status") or "").strip().lower()
-        if state == "downloading":
-            progress = _download_progress_fraction(status)
-            percent = int(round(progress * 100)) if progress is not None else None
-            message = f"downloading video {percent}%" if percent is not None else "downloading video"
-            update = {
-                "stage": "download",
-                "progress_mode": "determinate" if progress is not None else "indeterminate",
-                "message": message,
-            }
-            if progress is not None:
-                update["progress"] = progress
-            _emit_prepare_progress(progress_callback, update)
-            return
-
-        if state == "finished":
-            filename = str(status.get("filename") or "").strip()
-            if filename:
-                logger(f"yt-dlp: download finished: {filename}")
-            _emit_prepare_progress(
-                progress_callback,
-                {
-                    "stage": "postprocess",
-                    "progress_mode": "indeterminate",
-                    "message": "processing downloaded media",
-                },
-            )
-
-    return hook
-
-
-def _build_youtube_postprocessor_hook(*, progress_callback, logger):
-    def hook(status: Dict[str, object]) -> None:
-        state = str(status.get("status") or "").strip().lower()
-        postprocessor = str(status.get("postprocessor") or "").strip()
-        message = _postprocessor_message(postprocessor)
-        if state in {"started", "processing"}:
-            logger(f"yt-dlp: postprocess started: {postprocessor or 'unknown'}")
-            _emit_prepare_progress(
-                progress_callback,
-                {
-                    "stage": "postprocess",
-                    "progress_mode": "indeterminate",
-                    "message": message,
-                },
-            )
-            return
-        if state == "finished":
-            logger(f"yt-dlp: postprocess finished: {postprocessor or 'unknown'}")
-            _emit_prepare_progress(
-                progress_callback,
-                {
-                    "stage": "validate",
-                    "progress_mode": "indeterminate",
-                    "message": "validating final source",
-                },
-            )
-
-    return hook
-
-
 def _resolve_node_runtime_bin() -> str:
     configured = str(os.getenv("DRUMSHEET_NODE_BIN") or "").strip()
     if configured:

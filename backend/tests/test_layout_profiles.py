@@ -64,7 +64,6 @@ class TestLayoutProfiles(unittest.TestCase):
                 patch.object(main, "jobs_root", jobs_root),
                 patch.object(main, "job_store", JobStore(jobs_root)),
                 patch.object(main, "executor", _Executor()),
-                patch.object(main, "_enforce_roi_capture_gate", return_value={"summary": "ok"}),
             ):
                 response = main.create_job(payload)
                 job = main.job_store.get(response.job_id)

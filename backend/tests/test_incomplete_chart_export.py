@@ -295,7 +295,7 @@ class EndedJobCleanupTest(unittest.TestCase):
                               options={}, artifact_dir=str(artifact), status=JobStatus.QUEUED, result={}))
         before = folder_mb(artifact)
 
-        def fake_execute(job_id, payload, legacy_pipeline=False):
+        def fake_execute(job_id, payload):
             if outcome == "cancel":
                 raise OperationCancelled()
             if outcome == "done":

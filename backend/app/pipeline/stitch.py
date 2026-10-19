@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from collections import deque
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple
@@ -12,7 +11,6 @@ import numpy as np
 
 from app.pipeline.layout_profiles import LAYOUT_BOTTOM_BAR, LAYOUT_FULL_SCROLL, LAYOUT_PAGE_TURN, resolve_layout_hint
 from app.pipeline.page_diff import FrameDiffVerdict, VERDICT_AMBIGUOUS, compare_frames, playhead_jumped_back
-from app.pipeline.sheet_finalize import _estimate_vertical_overlap, _merge_vertical_sheet
 from app.schemas import StitchOptions
 
 
@@ -47,134 +45,6 @@ def select_review_candidates(
     if filtered_frames:
         logger(f"review candidates prepared: {len(filtered_frames)}")
     return filtered_frames
-
-
-def stitch_pages(
-    *,
-    frame_paths: List[Path],
-    options: StitchOptions,
-    workspace: Path,
-    source_type: Optional[str] = None,
-    prepared_frames: Optional[List[Path]] = None,
-    logger,
-) -> List[Path]:
-    workspace.mkdir(parents=True, exist_ok=True)
-    if not frame_paths:
-        return []
-
-    layout_mode = resolve_layout_hint(options.layout_hint, source_type=source_type)
-    if prepared_frames is not None:
-        filtered_frames = list(prepared_frames)
-        logger(f"stitch input candidates: {len(filtered_frames)}")
-    else:
-        logger(f"temporal dedupe mode: {options.dedupe_level}")
-        filtered_frames = _filter_redundant_frames(
-            frame_paths=frame_paths,
-            layout_mode=layout_mode,
-            dedupe_level=options.dedupe_level,
-            logger=logger,
-        )
-    if not filtered_frames:
-        return []
-
-    if layout_mode == LAYOUT_PAGE_TURN:
-        # Frames handed in as `prepared_frames` were already deduped (and possibly
-        # hand-picked in review); merging them again could silently drop a page
-        # the user chose to keep.
-        compress = prepared_frames is None
-        logger("page-turn mode: compressing repeated pages" if compress else "page-turn mode: keeping prepared pages")
-        return _collect_page_turn_pages(
-            frame_paths=filtered_frames,
-            options=options,
-            workspace=workspace,
-            logger=logger,
-            compress=compress,
-        )
-
-    if not options.enable:
-        logger("stitch disabled, returning filtered frame pages")
-        return filtered_frames
-
-    effective_threshold = _effective_overlap_threshold(options.overlap_threshold, layout_mode=layout_mode)
-    logger(f"stitch overlap threshold: raw={options.overlap_threshold:.2f} effective={effective_threshold:.2f}")
-
-    grouped_frames: List[List[Path]] = []
-    current_group: List[Path] = [filtered_frames[0]]
-    merged_paths: List[Path] = []
-    buffer = cv2.imread(str(filtered_frames[0]))
-    if buffer is None:
-        raise RuntimeError("failed to read first rectified frame")
-
-    for path in filtered_frames[1:]:
-        checkpoint()
-        next_image = cv2.imread(str(path))
-        if next_image is None:
-            continue
-
-        score, overlap_px, shift_px = _overlap_score(buffer, next_image)
-        if score >= effective_threshold:
-            logger(f"overlap detected ({score:.2f}, overlap={overlap_px}px, shift={shift_px:+.1f}px) -> stitching candidate")
-            current_group.append(path)
-            buffer = _stitch_pair(buffer, next_image, overlap_px=overlap_px)
-        else:
-            grouped_frames.append(current_group)
-            current_group = [path]
-            buffer = next_image
-
-    grouped_frames.append(current_group)
-    for frame_group in grouped_frames:
-        checkpoint()
-        merged_image, split_boundaries = _merge_scroll_group_frames_with_boundaries(frame_group)
-        if merged_image is None:
-            continue
-        out_path = workspace / f"page_{len(merged_paths):04d}.png"
-        cv2.imwrite(str(out_path), merged_image)
-        _write_split_boundary_metadata(out_path, split_boundaries=split_boundaries, height=int(merged_image.shape[0]))
-        merged_paths.append(out_path)
-    logger(f"stitched pages generated: {len(merged_paths)}")
-    return merged_paths
-
-
-def _merge_scroll_group_frames_with_boundaries(frame_group: List[Path]) -> Tuple[Optional[np.ndarray], List[int]]:
-    if not frame_group:
-        return None, []
-
-    images: List[np.ndarray] = []
-    for path in frame_group:
-        checkpoint()
-        image = cv2.imread(str(path))
-        if image is not None and image.size > 0:
-            images.append(image)
-
-    if not images:
-        return None, []
-    if len(images) == 1:
-        return images[0], []
-
-    split_boundaries: List[int] = []
-    merged = images[0]
-    for image in images[1:]:
-        overlap = _estimate_vertical_overlap(merged, image)
-        if overlap <= 0:
-            split_boundaries.append(int(merged.shape[0]))
-        else:
-            split_boundaries.append(max(1, int(merged.shape[0]) - int(overlap)))
-        merged = _merge_vertical_sheet(merged, image)
-
-    if merged is None or merged.size == 0:
-        return images[0], []
-    return merged, split_boundaries
-
-
-def _write_split_boundary_metadata(page_path: Path, *, split_boundaries: List[int], height: int) -> None:
-    boundaries = sorted({int(boundary) for boundary in split_boundaries if 0 < int(boundary) < height})
-    if not boundaries:
-        return
-    metadata_path = page_path.with_suffix(".seams.json")
-    metadata_path.write_text(
-        json.dumps({"protected_split_boundaries": boundaries}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
 
 
 def _filter_redundant_frames(
@@ -452,17 +322,6 @@ def _looks_like_recent_hash_duplicate(
     return min_dist <= threshold
 
 
-def _effective_overlap_threshold(raw_threshold: float, *, layout_mode: str) -> float:
-    raw = float(max(0.0, min(1.0, raw_threshold)))
-    if layout_mode == LAYOUT_BOTTOM_BAR:
-        return float(max(0.56, min(0.9, 0.5 + (raw * 0.52))))
-    if layout_mode == LAYOUT_FULL_SCROLL:
-        return float(max(0.62, min(0.94, 0.55 + (raw * 0.58))))
-    if layout_mode == LAYOUT_PAGE_TURN:
-        return float(max(0.74, min(0.97, 0.68 + (raw * 0.28))))
-    return float(max(0.6, min(0.92, 0.54 + (raw * 0.56))))
-
-
 def _pad_to_width(image: np.ndarray, target_w: int) -> np.ndarray:
     h, w = image.shape[:2]
     if target_w <= w:
@@ -470,15 +329,6 @@ def _pad_to_width(image: np.ndarray, target_w: int) -> np.ndarray:
     pad_left = (target_w - w) // 2
     pad_right = target_w - w - pad_left
     return cv2.copyMakeBorder(image, 0, 0, pad_left, pad_right, cv2.BORDER_CONSTANT, value=(255, 255, 255))
-
-
-def _align_width(img_a: np.ndarray, img_b: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    w1 = int(img_a.shape[1])
-    w2 = int(img_b.shape[1])
-    if w1 == w2:
-        return img_a, img_b
-    target_w = max(w1, w2)
-    return _pad_to_width(img_a, target_w), _pad_to_width(img_b, target_w)
 
 
 def _estimate_vertical_shift(img_a: np.ndarray, img_b: np.ndarray) -> Tuple[float, float]:
@@ -574,148 +424,3 @@ def _estimate_vertical_shift_phasecorr(a_gray: np.ndarray, b_gray: np.ndarray, *
     confidence = float(np.clip((float(response) - 0.08) / 0.76, 0.0, 1.0))
     return shift, confidence
 
-
-def _collect_page_turn_pages(
-    *,
-    frame_paths: List[Path],
-    options: StitchOptions,
-    workspace: Path,
-    logger,
-    compress: bool = True,
-) -> List[Path]:
-    saved_paths: List[Path] = []
-    current = cv2.imread(str(frame_paths[0]))
-    if current is None:
-        raise RuntimeError("failed to read first rectified frame")
-
-    if not compress:
-        for path in frame_paths:
-            checkpoint()
-            image = cv2.imread(str(path))
-            if image is None:
-                continue
-            out_path = workspace / f"page_{len(saved_paths):04d}.png"
-            cv2.imwrite(str(out_path), image)
-            saved_paths.append(out_path)
-        logger(f"page-turn pages generated: {len(saved_paths)}")
-        return saved_paths
-
-    similarity_threshold = max(0.88, min(0.98, 1.0 - (options.overlap_threshold * 0.25)))
-    last_seen_playhead_x: Optional[float] = None
-    for path in frame_paths[1:]:
-        checkpoint()
-        next_image = cv2.imread(str(path))
-        if next_image is None:
-            continue
-        similarity = _frame_similarity(current, next_image)
-        if similarity >= similarity_threshold:
-            # Looks the same on average; only a blob-level "same" may merge it.
-            verdict = compare_frames(current, next_image, dedupe_level=options.dedupe_level)
-            if verdict.is_same and playhead_jumped_back(last_seen_playhead_x, verdict.playhead_cur_x):
-                verdict.verdict = VERDICT_AMBIGUOUS
-                verdict.reason = "playhead_reset"
-            last_seen_playhead_x = verdict.playhead_cur_x
-            if _is_duplicate_verdict(verdict, layout_mode=LAYOUT_PAGE_TURN, dedupe_level=options.dedupe_level):
-                continue
-            logger(
-                f"page transition detected ({similarity:.2f}, {verdict.reason}, "
-                f"blobs={verdict.significant_blobs}+{verdict.minor_blobs}) -> new page"
-            )
-        else:
-            last_seen_playhead_x = None
-            logger(f"page transition detected ({similarity:.2f}) -> new page")
-
-        out_path = workspace / f"page_{len(saved_paths):04d}.png"
-        cv2.imwrite(str(out_path), current)
-        saved_paths.append(out_path)
-        current = next_image
-
-    out_path = workspace / f"page_{len(saved_paths):04d}.png"
-    cv2.imwrite(str(out_path), current)
-    saved_paths.append(out_path)
-    logger(f"page-turn pages generated: {len(saved_paths)}")
-    return saved_paths
-
-
-def _overlap_score(img_a, img_b) -> Tuple[float, int, float]:
-    img_a, img_b = _align_width(img_a, img_b)
-    h = min(img_a.shape[0], img_b.shape[0])
-    w = min(img_a.shape[1], img_b.shape[1])
-    if h <= 2 or w <= 2:
-        return 0.0, 0, 0.0
-    a = cv2.cvtColor(cv2.resize(img_a, (w, h)), cv2.COLOR_BGR2GRAY)
-    b = cv2.cvtColor(cv2.resize(img_b, (w, h)), cv2.COLOR_BGR2GRAY)
-    a = cv2.GaussianBlur(a, (3, 3), 0)
-    b = cv2.GaussianBlur(b, (3, 3), 0)
-
-    shift_px, shift_conf = _estimate_vertical_shift(img_a, img_b)
-    min_overlap = max(24, int(h * 0.05))
-    max_overlap = min(int(h * 0.88), h - 2)
-    if max_overlap <= min_overlap:
-        return 0.0, min_overlap, shift_px
-
-    expected_overlap = int(np.clip(h - max(1.0, abs(shift_px)), min_overlap, max_overlap))
-    search_radius = max(20, int(h * 0.1))
-    lo = max(min_overlap, expected_overlap - search_radius)
-    hi = min(max_overlap, expected_overlap + search_radius)
-    if shift_conf < 0.25 or hi <= lo:
-        lo = min_overlap
-        hi = max_overlap
-
-    x_pad = max(6, int(w * 0.08))
-    if w - (x_pad * 2) > 20:
-        a_use = a[:, x_pad : w - x_pad]
-        b_use = b[:, x_pad : w - x_pad]
-    else:
-        a_use = a
-        b_use = b
-
-    best_overlap = lo
-    best_diff = float("inf")
-    step = 2 if (hi - lo) <= 160 else 3
-    for overlap in range(lo, hi + 1, step):
-        a_strip = a_use[h - overlap : h]
-        b_strip = b_use[:overlap]
-        if a_strip.size == 0 or b_strip.size == 0 or a_strip.shape != b_strip.shape:
-            continue
-        diff = float(np.mean(np.abs(a_strip.astype(np.float32) - b_strip.astype(np.float32))))
-        if diff < best_diff:
-            best_diff = diff
-            best_overlap = overlap
-
-    if not np.isfinite(best_diff):
-        return 0.0, best_overlap, shift_px
-
-    score = 1.0 - (best_diff / 255.0)
-    score = float(max(0.0, min(1.0, score)))
-    if shift_conf < 0.15 and score < 0.78:
-        score *= 0.9
-    return score, int(best_overlap), shift_px
-
-
-def _frame_similarity(img_a, img_b):
-    h = min(img_a.shape[0], img_b.shape[0])
-    w = min(img_a.shape[1], img_b.shape[1])
-    if h <= 2 or w <= 2:
-        return 0.0
-    a = cv2.cvtColor(cv2.resize(img_a, (w, h)), cv2.COLOR_BGR2GRAY)
-    b = cv2.cvtColor(cv2.resize(img_b, (w, h)), cv2.COLOR_BGR2GRAY)
-    diff = np.abs(a.astype(np.float32) - b.astype(np.float32)).mean() / 255.0
-    return float(max(0.0, min(1.0, 1.0 - diff)))
-
-
-def _stitch_pair(top, bottom, *, overlap_px: Optional[int] = None):
-    top, bottom = _align_width(top, bottom)
-    overlap = int(overlap_px) if overlap_px is not None else min(int(min(top.shape[0], bottom.shape[0]) * 0.25), 150)
-    overlap = max(0, min(overlap, min(top.shape[0], bottom.shape[0]) - 1))
-    if overlap <= 0:
-        return np.vstack((top, bottom))
-
-    keep_top = top[:-overlap] if overlap < top.shape[0] else top[:0]
-    seam = max(10, min(overlap, 42))
-    a = top[-seam:].astype(np.float32)
-    b = bottom[:seam].astype(np.float32)
-    alpha = np.linspace(1.0, 0.0, seam, dtype=np.float32).reshape(seam, 1, 1)
-    blended = np.clip((a * alpha) + (b * (1.0 - alpha)), 0, 255).astype(np.uint8)
-    rest_bottom = bottom[seam:] if seam < bottom.shape[0] else bottom[:0]
-    return np.vstack((keep_top, blended, rest_bottom))

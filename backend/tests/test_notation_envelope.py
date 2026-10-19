@@ -13,7 +13,7 @@ import numpy as np
 
 from app.pipeline import notation_envelope as ne
 from app.pipeline.auto_roi_detector import apply_notation_envelope
-from app.pipeline.roi_health import add_envelope_clipping, should_block_roi_capture
+from app.pipeline.roi_health import add_envelope_clipping
 from drum_score_fixture import groove_notes, render, strip_spec, system_top, PageSpec
 
 W, H = 1280, 800
@@ -271,7 +271,7 @@ class IntegrationTest(unittest.TestCase):
         self.assertEqual(codes, ["envelope_clipped"])
         self.assertTrue(out["envelope"]["clipped"])
         self.assertIsNotNone(out["envelope"]["suggested_roi"])
-        self.assertFalse(should_block_roi_capture(out))
+        self.assertNotEqual(out["risk_level"], "critical")
 
         clean = add_envelope_clipping(base, env, ne.bbox_to_roi(env["suggested_bbox"]))
         self.assertEqual(clean["risk_level"], "info")

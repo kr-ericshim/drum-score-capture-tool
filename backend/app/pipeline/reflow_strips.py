@@ -1762,13 +1762,6 @@ def source_clipping(raw: np.ndarray, box: Sequence[int], manifest: Dict[str, Any
     return {"sides": sides, "columns": [min(b[0] for b in columns), max(b[1] for b in columns)]}
 
 
-def _finish_strip(comp: np.ndarray, *, members: Optional[Sequence[np.ndarray]] = None,
-                  gap: Optional[float] = None) -> Tuple[np.ndarray, bool, bool]:
-    """``finish_strip`` without its info. Returns (image, inverted, paper flattened)."""
-    out, inv, flat, _info = finish_strip(comp, members=members, gap=gap)
-    return out, inv, flat
-
-
 def inventory_before_crop(system: Dict[str, Any], box: Sequence[int], obs_by: Dict[str, Dict[str, Any]],
                           load_image: ImageLoader, gap: float, *,
                           expected_size: Optional[Tuple[int, int]] = None,

@@ -8,9 +8,8 @@ import numpy as np
 
 from app import main
 from app.job_store import JobStore
-from app.pipeline.detect import detect_sheet_regions
 from app.pipeline.stitch import select_review_candidates
-from app.schemas import DetectOptions, JobCreate, StitchOptions
+from app.schemas import JobCreate, StitchOptions
 
 
 class TestCaptureQualityPipeline(unittest.TestCase):
@@ -60,28 +59,6 @@ class TestCaptureQualityPipeline(unittest.TestCase):
             self.assertTrue(response.job_id)
             executor.submit.assert_called_once()
             self.assertEqual(len(list(jobs_root.glob("*/job.json"))), 1)
-
-    def test_detect_sheet_regions_preserves_selected_roi(self):
-        with tempfile.TemporaryDirectory() as td:
-            workspace = Path(td)
-            frame_path = workspace / "frame.png"
-            image = np.full((100, 200, 3), 255, dtype=np.uint8)
-            cv2.imwrite(str(frame_path), image)
-
-            detections = detect_sheet_regions(
-                frame_paths=[frame_path],
-                options=DetectOptions(
-                    roi=[[10, 10], [70, 10], [70, 40], [10, 40]],
-                    layout_hint="auto",
-                ),
-                workspace=workspace / "detect",
-                logger=lambda *_: None,
-            )
-
-            self.assertEqual(len(detections), 1)
-            self.assertEqual(detections[0]["roi"], [[10.0, 10.0], [70.0, 10.0], [70.0, 40.0], [10.0, 40.0]])
-            self.assertIn("safe_roi", detections[0])
-            self.assertEqual(detections[0]["safe_roi"], [[10.0, 10.0], [70.0, 10.0], [70.0, 40.0], [10.0, 40.0]])
 
     def test_review_candidates_replace_fade_in_frame_with_clear_duplicate(self):
         with tempfile.TemporaryDirectory() as td:
