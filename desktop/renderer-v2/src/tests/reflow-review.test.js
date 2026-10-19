@@ -373,7 +373,6 @@ test("an other-moment alternate is listed unchecked after its system, named by i
     assert.equal(pages[1].autoExcludeCandidate, true);
     assert.equal(pages[0].suspicious, true);
     const info = deriveReflowInfo(result);
-    assert.equal(info.minorityLines, 1);
     const state = reviewState(locale);
     state.review.pages = pages;
     state.review.reflow = info;

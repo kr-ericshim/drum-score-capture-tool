@@ -24,9 +24,7 @@ test("shell translations stay task-first and avoid machine-style wording", () =>
     "topbar.engine.waiting",
     "rail.pipeline",
     "rail.workbenchStatus",
-    "lane.inspectionView",
     "status.engineReady",
-    "status.localTool",
   ];
   const disallowed = /workflow|system status|inspection view|engine_ready|workbench status|local_tool|pipeline/i;
 

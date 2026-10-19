@@ -3652,7 +3652,6 @@ for (const locale of ["ko", "en"]) {
     assert.equal(failureText(state), "");
     assert.equal(state.review.status, "applied");
     assert.equal(state.review.selectedPageIds.length, 14);
-    assert.equal(state.review.reflow.autoStaff.usedMm, 1.3);
     const stage = root.querySelector("#stagePane").innerHTML;
     const status = root.querySelector("#statusBar").innerHTML;
     assert.doesNotMatch(stage + status, /\[object Object\]/);

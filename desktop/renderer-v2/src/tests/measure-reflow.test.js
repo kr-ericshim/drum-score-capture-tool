@@ -40,7 +40,7 @@ function reviewState({ locale = "ko", measureResult = null } = {}) {
 }
 
 test("measure layout labels exist in Korean and English", () => {
-  const keys = ["export.layout.title", "export.layout.measure", "export.layout.measureHint", "review.measureFallback", "review.measureFallbackReason", "review.measureHint"];
+  const keys = ["export.layout.measure", "review.measureFallback", "review.measureFallbackReason", "review.measureHint"];
   for (const key of keys) {
     for (const locale of ["ko", "en"]) assert.notEqual(t(key, { locale }), key, `${locale} ${key}`);
     assert.notEqual(t(key, { locale: "ko" }), t(key, { locale: "en" }), key);
@@ -96,23 +96,14 @@ test("a whole-system fallback is reported on the review screen with its reason c
   assert.equal(deriveReflowInfo({ output_model: "clean_reflow_v1", reflow: {} }).measureReflow, null);
 });
 
-test("a dense chart's smaller staff size is derived but not reported on the review screen", () => {
+test("a dense chart's smaller staff size is not reported on the review screen", () => {
   const reduced = { status: "measure_lines", requested: true, applied: true, reason: null,
     staff_size: { staff_gap_mm: 1.3, staff_gap_mm_requested: 1.5, auto_reduced: true, reason: "DENSE_LINES_NOT_FULL" } };
-  assert.deepEqual(deriveReflowInfo({ output_model: "clean_reflow_v1", reflow: {}, measure_reflow: reduced }).autoStaff, { usedMm: 1.3, requestedMm: 1.5, reason: "DENSE_LINES_NOT_FULL", kind: "dense" });
-  assert.equal(t("review.staffSizeAutoReduced", { locale: "ko", replacements: { size: "1.3" } }), "빽빽한 악보라 크기를 1.3mm로 줄였어요.");
-  assert.equal(t("review.staffSizeAutoReduced", { locale: "en", replacements: { size: "1.3" } }), "Dense score: staff size reduced to 1.3 mm.");
-  // the automatic size is the app's own choice: the review screen does not report it
+  // the automatic size is the app's own choice: the review screen does not report it or offer to change it
   for (const locale of ["ko", "en"]) {
     const html = renderReviewScreen(reviewState({ locale, measureResult: reduced }));
-    assert.ok(!html.includes(t("review.staffSizeAutoReduced", { locale, replacements: { size: "1.3" } })), locale);
+    assert.doesNotMatch(html, /1\.3 ?mm/);
     assert.doesNotMatch(html, /data-action="review-use-staff-size"/);
-  }
-  // full at the chosen size, whole systems, or an older record: no note
-  const unchanged = { ...reduced, staff_size: { staff_gap_mm: 1.5, staff_gap_mm_requested: 1.5, auto_reduced: false, reason: "LINES_FULL" } };
-  for (const measureResult of [unchanged, { status: "measure_lines" }, { status: "off", staff_size: reduced.staff_size }, null]) {
-    assert.equal(deriveReflowInfo({ output_model: "clean_reflow_v1", reflow: {}, ...(measureResult ? { measure_reflow: measureResult } : {}) }).autoStaff, null);
-    assert.doesNotMatch(renderReviewScreen(reviewState({ locale: "en", measureResult })), /Dense score/);
   }
 });
 

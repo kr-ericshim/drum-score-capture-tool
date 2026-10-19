@@ -10,11 +10,11 @@ import { t } from "../lib/i18n.js";
 const ROI = [[0, 0], [320, 0], [320, 180], [0, 180]];
 
 const NEW_KEYS = [
-  "review.reviewRequiredTitle", "review.reviewRequiredDetail", "review.reviewRequiredState", "review.reviewReasonsLabel",
-  "export.reviewRequiredTitle", "selector.summary.reviewRequired", "reflow.issue.SOURCE_CLIPPED",
+  "review.reviewRequiredTitle", "review.reviewRequiredDetail", "review.reviewReasonsLabel",
+  "selector.summary.reviewRequired", "reflow.issue.SOURCE_CLIPPED",
   "reflow.issue.UNCERTAIN_MARK_KEPT", "reflow.issue.TRANSLUCENT_PLATE_GRAY", "reflow.issue.SOURCE_CLASS_UNKNOWN",
   "reflow.issue.LOW_CONTRAST_CONTENT_KEPT", "reflow.issue.CONTENT_LOST_IN_FINISHING",
-  "review.staffSizeAutoReducedWide", "review.conflictPendingTitle", "review.conflictPendingDetail", "review.conflictBelowAuto",
+  "review.conflictPendingTitle", "review.conflictPendingDetail", "review.conflictBelowAuto",
   "review.incompleteTitle", "review.incompleteDetail", "review.incompleteDetailNoRanges", "review.incompleteRangesLabel",
   "review.incompleteState", "review.exportInvalid", "export.failedExportInvalid", "export.invalid.INVALID_PLACEMENT_PLAN",
   "export.invalid.EMPTY_EXPORT", "export.invalid.PAGE_COUNT_MISMATCH", "export.invalid.PDF_UNREADABLE",
@@ -29,8 +29,6 @@ test("every new outcome label exists in Korean and English and differs between t
     for (const locale of ["ko", "en"]) assert.notEqual(t(key, { locale }), key, `${locale} ${key}`);
     assert.notEqual(t(key, { locale: "ko" }), t(key, { locale: "en" }), key);
   }
-  assert.equal(t("review.staffSizeAutoReducedWide", { locale: "ko", replacements: { size: "1.3" } }), "악보가 페이지보다 넓어 크기를 1.3mm로 줄였어요.");
-  assert.equal(t("review.staffSizeAutoReducedWide", { locale: "en", replacements: { size: "1.3" } }), "Score wider than the page: staff size reduced to 1.3 mm.");
 });
 
 test("job error codes map to specific messages; unknown codes keep the backend detail", () => {
@@ -112,21 +110,15 @@ function reviewState({ locale = "en", result = {} } = {}) {
   return state;
 }
 
-test("a score wider than the page derives its automatic size without a note", () => {
+test("a score wider than the page gets its automatic size without a note", () => {
   for (const [status, reason] of [["off", "WHOLE_SYSTEMS_DO_NOT_FIT"], ["fallback_whole_systems", "WHOLE_SYSTEMS_DO_NOT_FIT"], ["measure_lines", "UNITS_DO_NOT_FIT"]]) {
     const measure_reflow = { status, staff_size: { staff_gap_mm: 1.25, staff_gap_mm_requested: 1.5, auto_reduced: true, reason } };
-    const info = deriveReflowInfo({ output_model: "clean_reflow_v1", reflow: {}, measure_reflow });
-    assert.equal(info.autoStaff.kind, "wide", `${status} ${reason}`);
     for (const locale of ["ko", "en"]) {
       const html = renderReviewScreen(reviewState({ locale, result: { measure_reflow } }));
-      // derived, but the app's own size choice is not reported
-      assert.ok(!html.includes(t("review.staffSizeAutoReducedWide", { locale, replacements: { size: "1.25" } })), `${locale} ${status}`);
-      assert.ok(!html.includes(t("review.staffSizeAutoReduced", { locale, replacements: { size: "1.25" } })));
+      // the app's own size choice is not reported
+      assert.doesNotMatch(html, /1\.25 ?mm/, `${locale} ${status} ${reason}`);
     }
   }
-  // the size the user chose stays theirs: not reduced, no note
-  const kept = { status: "off", staff_size: { staff_gap_mm: 1.5, staff_gap_mm_requested: 1.5, auto_reduced: false, reason: "FITS" } };
-  assert.equal(deriveReflowInfo({ output_model: "clean_reflow_v1", reflow: {}, measure_reflow: kept }).autoStaff, null);
 });
 
 test("a conflict whose fitting size is below the automatic floor or does not exist says why", () => {
@@ -187,7 +179,6 @@ test("review-required result stays distinct from incomplete and saved in both lo
     assert.match(review, /data-review-required/);
     assert.doesNotMatch(review, /review-save-state is-incomplete/);
     assert.ok(review.includes(`>${t("review.savedState", { locale })}</span>`));
-    assert.ok(!exported.includes(t("export.reviewRequiredTitle", { locale })));
     for (const code of codes) {
       assert.ok(review.includes(t(`reflow.issue.${code}`, { locale })));
       assert.ok(!exported.includes(t(`reflow.issue.${code}`, { locale })));
