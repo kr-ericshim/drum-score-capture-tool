@@ -320,17 +320,22 @@ def minority_events(masks: Dict[int, np.ndarray], gap: float, *, single_observat
     for p in persistent.values():
         union |= p
     cl = _dilate(union, max(1, int(round(CLUSTER_GAPS * gap))))
-    n, clab, _s, _c = cv2.connectedComponentsWithStats(cl.astype(np.uint8), connectivity=8)
+    n, clab, cstats, _c = cv2.connectedComponentsWithStats(cl.astype(np.uint8), connectivity=8)
     events = []
     for c in range(1, n):
-        region = clab == c
+        # the cluster lies inside its box: work there, in global coordinates for the record
+        x, y = int(cstats[c, cv2.CC_STAT_LEFT]), int(cstats[c, cv2.CC_STAT_TOP])
+        window = (slice(y, y + int(cstats[c, cv2.CC_STAT_HEIGHT])), slice(x, x + int(cstats[c, cv2.CC_STAT_WIDTH])))
+        region = clab[window] == c
         members = []
-        acc = np.zeros_like(union)
+        parts = {}
+        acc = np.zeros(region.shape, bool)
         largest = 0
         for i in sorted(persistent):
-            part = persistent[i] & region
+            part = persistent[i][window] & region
             if part.any():
                 members.append(i)
+                parts[i] = part
                 acc |= part
                 largest = max(largest, int(part.sum()))
         runs, start = [], None
@@ -344,9 +349,10 @@ def minority_events(masks: Dict[int, np.ndarray], gap: float, *, single_observat
         if not runs:
             continue
         ys, xs = np.nonzero(acc)
-        events.append({"members": members, "runs": runs, "box": [int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1],
+        events.append({"members": members, "runs": runs,
+                       "box": [int(xs.min()) + x, int(ys.min()) + y, int(xs.max()) + x + 1, int(ys.max()) + y + 1],
                        "area_px": largest,
-                       "support_by_member": [{"member":i,"spans":support_runs(persistent[i] & region)} for i in members]})
+                       "support_by_member": [{"member":i,"spans":support_runs(parts[i], (x, y))} for i in members]})
     events.sort(key=lambda e: (e["runs"][0][0], e["box"][0]))
     return events
 
