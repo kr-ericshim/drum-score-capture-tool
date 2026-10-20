@@ -1014,7 +1014,7 @@ def start_review_export(job_id: str, payload: JobReviewExportRequest) -> ReviewE
     if payload.output_model == ORIGINAL_SCREENS_OUTPUT_MODEL:
         _original_screens_inputs(job, payload)  # a missing source video or bad formats answer now
     else:
-        _reflow_export_inputs(job, payload)  # selection and format errors answer now, not as a failed task
+        _reflow_export_inputs(job, payload, candidate=False)  # selection and format errors answer now, not as a failed task
     revision = int(((job.result or {}).get("reflow") or {}).get("revision", 1)) + 1
     try:
         task = export_task_store.begin(job_id, job.artifact_dir, revision)
@@ -2097,10 +2097,28 @@ def _finish_reflow_suggestions(job_id: str, record: Dict[str, Any], *, time_budg
     _append(job_id, f"similar-system suggestions: {len(suggestions)} ({state})")
 
 
-def _reflow_export_inputs(job: Job, payload: JobReviewExportRequest) -> Dict[str, Any]:
+def _candidate_result(result: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """A deep copy of a job result for an unpublished export candidate, sharing each system's
+    strip record: the strip analysis (most of the record) is only read while composing and
+    exporting, and a rebuilt run gets new records (reflow_seam_reject copies its own)."""
+    result = result or {}
+    memo: Dict[int, Any] = {}
+    for s in (result.get("reflow") or {}).get("systems") or []:
+        if isinstance(s, dict) and isinstance(s.get("strip"), dict):
+            memo[id(s["strip"])] = s["strip"]
+    return copy.deepcopy(result, memo)
+
+
+def _reflow_export_inputs(job: Job, payload: JobReviewExportRequest, *, candidate: bool = True) -> Dict[str, Any]:
     """Check the request against the job (selection, order, formats) and resolve what to compose.
-    Raises HTTPException 400 for a selection or format the job cannot export."""
-    result = copy.deepcopy(job.result or {})
+    Raises HTTPException 400 for a selection or format the job cannot export.
+    ``candidate=False`` only checks the request: the job's record is not copied for composing
+    (top-level copies keep the job's record untouched)."""
+    if candidate:
+        result = _candidate_result(job.result)
+    else:
+        result = dict(job.result or {})
+        result["reflow"] = dict(result.get("reflow") or {})
     reflow = result.get("reflow") or {}
     if payload.base_revision is not None and payload.base_revision != int(reflow.get("revision", 1)):
         raise HTTPException(status_code=409, detail=f"STALE_REVISION: expected revision {int(reflow.get('revision', 1))}, received {payload.base_revision}")
@@ -2202,7 +2220,9 @@ def _compose_review_export_reflow(job: Job, job_id: str, payload: JobReviewExpor
     result, reflow, systems = inputs["result"], inputs["reflow"], inputs["systems"]
     order, keep_ids, composed, formats = inputs["order"], inputs["keep_ids"], inputs["composed"], inputs["formats"]
     export_config = inputs["export_config"]
-    previous_result = copy.deepcopy(job.result or {})
+    # the job's record is never changed in place (the candidate is a copy; set_state replaces
+    # job.result), so the current record itself is the snapshot a failed commit returns to
+    previous_result = job.result or {}
     previous_options = copy.deepcopy(job.options)
     header = reflow.get("header") or {}
     if export_config.document_header is not None:

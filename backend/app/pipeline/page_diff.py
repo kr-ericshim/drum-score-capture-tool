@@ -154,13 +154,17 @@ def playhead_jumped_back(prev_x: Optional[float], cur_x: Optional[float]) -> boo
 
 
 def compare_frames(prev_img: np.ndarray, cur_img: np.ndarray, *, dedupe_level: str = "normal",
-                   prev_cache: Optional[Dict[str, Any]] = None) -> FrameDiffVerdict:
+                   prev_cache: Optional[Dict[str, Any]] = None,
+                   cur_cache: Optional[Dict[str, Any]] = None) -> FrameDiffVerdict:
     """Compare two BGR (or gray) frames of the same score region.
 
     ``prev_cache``: optional dict owned by ``prev_img`` (the caller does not change that image
     while it passes the same dict). It keeps the work that depends on ``prev_img`` alone (its
     gray image, ink, staff gap, staff-free ink and overlay mask), so comparing one reference
-    with many frames does it once. Results are the same with or without it."""
+    with many frames does it once. Results are the same with or without it.
+
+    ``cur_cache``: optional empty dict owned by ``cur_img``. It is filled with the same work for
+    ``cur_img``, so a run of consecutive comparisons can pass it as the next ``prev_cache``."""
     if prev_img is None or cur_img is None or prev_img.size == 0 or cur_img.size == 0:
         return FrameDiffVerdict(VERDICT_DIFFERENT, "empty_input")
 
@@ -184,6 +188,11 @@ def compare_frames(prev_img: np.ndarray, cur_img: np.ndarray, *, dedupe_level: s
             pc.update(shape=prev_bgr.shape, gray=prev_gray, ink_full=prev_ink_full)
     cur_gray = cv2.cvtColor(cur_bgr, cv2.COLOR_BGR2GRAY)
     cur_ink_full = _ink_mask(cur_gray)
+    # same rule as pc: cur prepared on its own only when the shapes match
+    cc = cur_cache if (cur_cache is not None and prev_img.shape == cur_img.shape) else None
+    if cc is not None:
+        cc.clear()
+        cc.update(shape=cur_bgr.shape, gray=cur_gray, ink_full=cur_ink_full)
 
     prev_ink_ratio = float(cv2.countNonZero(prev_ink_full)) / float(h * w)
     cur_ink_ratio = float(cv2.countNonZero(cur_ink_full)) / float(h * w)
@@ -197,8 +206,11 @@ def compare_frames(prev_img: np.ndarray, cur_img: np.ndarray, *, dedupe_level: s
     else:
         gap = estimate_staff_gap(prev_ink_full)
     prev_gap_own = gap > 0
+    cur_gap = None
     if gap <= 0:
-        gap = estimate_staff_gap(cur_ink_full)
+        gap = cur_gap = estimate_staff_gap(cur_ink_full)
+    if cc is not None:
+        cc["gap"] = estimate_staff_gap(cur_ink_full) if cur_gap is None else cur_gap
     if gap <= 0:
         gap = _fallback_staff_gap(h, w)
 
@@ -221,6 +233,9 @@ def compare_frames(prev_img: np.ndarray, cur_img: np.ndarray, *, dedupe_level: s
         if pc is not None and prev_gap_own:
             pc.update(ink=prev_ink, overlay=prev_overlay, cursor=prev_cursor)
     cur_overlay, cur_cursor = _overlay_mask(cur_bgr, cur_ink, gap=gap)
+    if cc is not None and cc["gap"] > 0 and cc["gap"] == gap:
+        # computed with cur's own gap: what the next comparison would compute for it as prev
+        cc.update(ink=cur_ink, overlay=cur_overlay, cursor=cur_cursor)
 
     shift_x, shift_y, align_conf = _estimate_translation(prev_gray, cur_gray, prev_overlay, cur_overlay)
     max_shift_x = 0.35 * w

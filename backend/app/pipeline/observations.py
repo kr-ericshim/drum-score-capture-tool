@@ -556,7 +556,8 @@ def build_manifest(
     reach: Dict[str, Any] = {"last_pts": None}
 
     def take(targets: List[float], kind: str, compare_consecutive: bool, reach_out: Optional[Dict[str, Any]] = None) -> None:
-        prev: Optional[Tuple[float, np.ndarray]] = None
+        # the previous crop polarity-normalized, with its compare_frames work (handed over as prev_cache)
+        prev: Optional[Tuple[float, np.ndarray, Dict[str, Any]]] = None
         done = 0
         for target, pts, frame in iter_frames_at(video_path, targets, reach=reach_out):
             checkpoint()
@@ -579,15 +580,20 @@ def build_manifest(
                 cv2.imwrite(str(Path(out_dir) / tmp_rel), crop)
             samples[pts] = {"t_sec": pts, "requested_t": [target], "sample_kind": kind, "tmp_rel": tmp_rel,
                             "crop_size": [int(crop.shape[1]), int(crop.shape[0])], "analysis": analyse_crop(crop)}
-            if compare_consecutive and prev is not None:
-                a, prev_crop = prev
-                v = compare_crops(prev_crop, crop)
-                if is_apparent_change(v):
-                    mid = (a + pts) / 2.0
-                    changes.append({"t_prev": a, "t_next": pts, "verdict": v.verdict, "reason": v.reason,
-                                    "shift": [round(v.shift_x, 2), round(v.shift_y, 2)]})
-                    windows.append((max(0.0, mid - fine_window), min(duration, mid + fine_window)))
-            prev = (pts, crop)
+            if compare_consecutive:
+                # compare_crops on consecutive crops, each crop normalized and prepared once
+                cur_norm, _ = system_detect.normalize_polarity(crop)
+                cur_cache: Dict[str, Any] = {}
+                if prev is not None:
+                    a, prev_norm, prev_cache = prev
+                    v = page_diff.compare_frames(prev_norm, cur_norm, dedupe_level="normal", prev_cache=prev_cache,
+                                                 cur_cache=cur_cache)
+                    if is_apparent_change(v):
+                        mid = (a + pts) / 2.0
+                        changes.append({"t_prev": a, "t_next": pts, "verdict": v.verdict, "reason": v.reason,
+                                        "shift": [round(v.shift_x, 2), round(v.shift_y, 2)]})
+                        windows.append((max(0.0, mid - fine_window), min(duration, mid + fine_window)))
+                prev = (pts, cur_norm, cur_cache)
 
     coarse = _grid(start, max(start, duration - 1e-3), coarse_hz)
     # the last frame once more (audit F06): a screen shown only after the last grid sample is
