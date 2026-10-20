@@ -825,6 +825,7 @@ def recovered_cursor_event(event: Dict[str, Any], masks: Dict[int, np.ndarray], 
         near_footprint = _dilate(footprint,1)
         supports = []
         qualifying = []
+        member_px = None  # this member's whole footprint, found once for every donor below
         for j in clear:
             raw = grays[j][c:d, a:b]
             raw_ink = raw < threshold
@@ -838,7 +839,9 @@ def recovered_cursor_event(event: Dict[str, Any], masks: Dict[int, np.ndarray], 
                 donor_mask = masks[j]
             else:
                 donor_mask = np.zeros((h,w),bool)
-                sy,sx = np.nonzero(masks[i])
+                if member_px is None:
+                    member_px = np.nonzero(masks[i])
+                sy,sx = member_px
                 qx = np.rint(sx+positions[j]-positions[i]).astype(int)
                 valid = (qx>=0)&(qx<w)
                 donor_mask[sy[valid],qx[valid]] = True
