@@ -78,6 +78,17 @@ class ReflowReviewExportTest(unittest.TestCase):
         self.assertTrue(Path(job.result["pdf"]).is_file())
         self.assertEqual(len([p for p in job.result["images"] if p.endswith(".jpg")]), 1)
 
+    def test_export_leaves_the_previous_record_unchanged(self):
+        # the candidate shares the strip records with the job's record; nothing writes into them
+        previous = self.store.get("job-r").result
+        content_before = copy.deepcopy(previous)
+        paths = [s["strip_path"] for s in self.systems]
+        with patch("app.main.job_store", self.store):
+            main.review_export("job-r", JobReviewExportRequest(keep_captures=[paths[1]], system_order=[paths[1], paths[0], paths[2]],
+                                                               document_header={"title": "Other"}))
+        self.assertEqual(previous, content_before)
+        self.assertEqual(self.store.get("job-r").result["reflow"]["revision"], 2)
+
     def test_failed_export_keeps_previous_files_and_result(self):
         export_dir = self.artifact / "export"
         before = digest(export_dir)
@@ -192,6 +203,7 @@ class ReflowReviewExportTest(unittest.TestCase):
         export_dir = self.artifact / "export"
         before = digest(export_dir)
         result_before = self.store.get("job-r").result
+        content_before = copy.deepcopy(result_before)
         options_before = copy.deepcopy(self.store.get("job-r").options)
         paths = [s["strip_path"] for s in self.systems]
         with patch("app.main.job_store", self.store), self._fail_replace(job_json=True):
@@ -200,6 +212,8 @@ class ReflowReviewExportTest(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 500)
         self.assertEqual(digest(export_dir), before)
         self.assertEqual(self.store.get("job-r").result, result_before)
+        # the restored record is the previous one, unchanged in content (it is not copied first)
+        self.assertEqual(self.store.get("job-r").result, content_before)
         self.assertEqual(self.store.get("job-r").options, options_before)
         self.assertEqual(JobStore(self.root).get("job-r").options, options_before)
         self.assertEqual(self._leftovers(), [])
