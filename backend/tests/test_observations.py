@@ -208,6 +208,26 @@ class ChangeDetectionTest(unittest.TestCase):
         v = ob.compare_crops(a, b)
         self.assertFalse(ob.is_apparent_change(v), (v.verdict, v.reason))
 
+    def test_handed_over_compare_work_gives_the_same_verdicts(self):
+        # build_manifest hands each crop's compare_frames work to the next comparison (cur_cache ->
+        # prev_cache); every verdict equals a comparison without caches, also across a different
+        # staff size, a blank crop and a dark crop
+        from app.pipeline import page_diff
+        from app.pipeline.system_detect import normalize_polarity
+
+        spec = groove_notes(strip_spec(height=170), seed=3)
+        other = groove_notes(strip_spec(height=170, gap=10), seed=5)
+        crops = [render(spec, [Overlay("line", position=p)]) for p in (0.2, 0.4, 0.6)]
+        crops += [render(other, []), render(other, [Overlay("line", position=0.5)]),
+                  np.full_like(crops[0], 255), render(spec, []), 255 - render(spec, []), render(spec, [])]
+        norms = [normalize_polarity(c)[0] for c in crops]
+        prev_cache = {}
+        for a, b in zip(norms, norms[1:]):
+            cur_cache = {}
+            chained = page_diff.compare_frames(a, b, prev_cache=prev_cache, cur_cache=cur_cache)
+            self.assertEqual(chained.to_dict(), page_diff.compare_frames(a, b).to_dict())
+            prev_cache = cur_cache
+
     def test_small_change_is_not_resampled(self):
         from app.pipeline.page_diff import FrameDiffVerdict
 
