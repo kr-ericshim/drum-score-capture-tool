@@ -118,6 +118,9 @@ test("main process startup contract loads renderer-v2 through the isolated prelo
     assert.deepEqual(ipcSyncChannels, ["get-session-token"]);
     assert.equal(spawnCalls.length, 1);
     assert.equal(spawnCalls[0].options.env.DRUMSHEET_SESSION_TOKEN.length, 48);
+    // the backend exits when this pipe closes, so a crashed or quit app never leaves it running
+    assert.equal(spawnCalls[0].options.env.DRUMSHEET_EXIT_WITH_PARENT, "1");
+    assert.equal(spawnCalls[0].options.stdio[0], "pipe");
     assert.equal(healthChecks, 1);
   } finally {
     Module._load = originalLoad;

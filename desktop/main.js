@@ -626,6 +626,8 @@ function runBackend() {
     DRUMSHEET_HWACCEL: process.env.DRUMSHEET_HWACCEL || "auto",
     DRUMSHEET_OPENCV_ACCEL: process.env.DRUMSHEET_OPENCV_ACCEL || "auto",
     DRUMSHEET_SESSION_TOKEN: BACKEND_SESSION_TOKEN,
+    // The backend exits when its stdin pipe closes, i.e. when this process is gone for any reason.
+    DRUMSHEET_EXIT_WITH_PARENT: "1",
     ...(bins.ffmpegBin ? { DRUMSHEET_FFMPEG_BIN: bins.ffmpegBin } : {}),
     ...(bins.ffprobeBin ? { DRUMSHEET_FFPROBE_BIN: bins.ffprobeBin } : {}),
   };
@@ -697,7 +699,8 @@ function runBackend() {
   backendProcess = spawn(command, args, {
     cwd: backendDir,
     env,
-    stdio: ["ignore", "pipe", "pipe"],
+    // stdin stays open and unused; see DRUMSHEET_EXIT_WITH_PARENT.
+    stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
     shell,
   });
