@@ -114,13 +114,6 @@ jobs:
       - name: Test media bundle validation
         run: python -m unittest discover -s scripts/tests -p 'test_*.py'
 
-      # Real-time scanning of the many temp files the suite writes slows the Windows runner.
-      - name: Turn off Defender real-time scanning
-        if: runner.os == 'Windows'
-        continue-on-error: true
-        shell: pwsh
-        run: Set-MpPreference -DisableRealtimeMonitoring $true
-
       # Same unittest suite, spread over the runner's cores; serially it outgrows the timeout.
       # loadfile keeps each module on one worker: worksteal repeated heavy class fixtures and
       # measured slower (Windows 1242 s vs 1029 s).
