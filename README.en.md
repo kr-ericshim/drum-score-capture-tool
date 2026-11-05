@@ -4,6 +4,11 @@ Turn a drum score that is already shown in a video into an A4 PDF. You choose th
 
 The app does not transcribe audio, recognize notes, or export MusicXML/MIDI.
 
+<p align="center">
+  <img src="./docs/images/demo-video-to-pdf.png" width="860" alt="A drum score shown one line at a time at the bottom of a video, reflowed onto one A4 PDF page">
+</p>
+<p align="center"><sub>Actual output from a synthetic demo video: the lines shown one at a time are collected, the playhead is removed, and the measures are laid out again on A4.</sub></p>
+
 [Download the latest release](https://github.com/kr-ericshim/drum-score-capture-tool/releases/latest) · [Project home (Korean)](./README.md) · [한국어 가이드](./README.ko.md)
 
 This guide follows v0.3.0. Installers up to v0.2.1 use the earlier method, which captures score screens as page images, so their screens and results differ. Check the [release notes](https://github.com/kr-ericshim/drum-score-capture-tool/releases) for your installed version.
@@ -163,6 +168,27 @@ Region shortcuts work while the editor has focus. Review shortcuts do not work i
 | Nothing in Archive | Check that the job made a PDF and that its file was not moved or deleted. |
 
 Report unresolved issues with **Report** in the app or in [Issues](https://github.com/kr-ericshim/drum-score-capture-tool/issues). Include the app version, OS and CPU, the video (link or kind), the steps, and the error message. GitHub issues are public; remove private file paths and links from logs first.
+
+## How it works
+
+Electron 44 desktop app (plain JavaScript modules, no UI framework) with a local Python 3.11 engine (FastAPI, OpenCV, NumPy). FFmpeg is bundled; YouTube videos come through yt-dlp. GitHub Actions builds the macOS (arm64 DMG) and Windows (EXE) installers and runs the test suites on both systems: 1,462 backend tests, 382 renderer tests and 97 desktop-process tests.
+
+```text
+video + the score region you chose
+  → observe: sample the video and find the staff systems in each frame
+  → track:   group the time each system stays on screen and find when it changes
+  → order:   place systems in the order the video shows them (repeats are flagged, never dropped)
+  → clean:   crop each system, remove the playhead and highlights, keep notes, lyrics and marks
+  → lay out: split at measure boundaries and reflow onto A4 → PDF / PNG / JPG
+  → verify:  a checker independent of the renderer compares the finished pages with the source strips
+```
+
+Design principles:
+
+- **Move the source image; do not recognize notes.** Re-engraving through optical music recognition turns every recognition error into a wrong score. Reflowing the cleaned source image keeps the notation exactly as shown.
+- **When unsure, report instead of fixing.** The suggested score region is an editable draft, similar lines are only flagged as "looks similar", and videos the app cannot handle (translucent plates, scrolling scores) are refused with a clear message rather than forced into a bad PDF.
+- **Never hide what is missing.** The app records which source pixels went to which page, and marks any line it could not fully place as **Incomplete** in the PDF and in review.
+- **Everything stays on your computer.** Videos are processed locally, and one installer carries Python and FFmpeg.
 
 ## Development and builds
 
