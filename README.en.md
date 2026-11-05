@@ -1,13 +1,13 @@
 # Drum Sheet Capture User Guide
 
-Turn a drum score that is already shown in a video into an A4 PDF. You choose the score region once; the app reads the score lines shown in the video, cleans the original score images, and lays them out again on A4, measure by measure. PNG and JPG are also available.
+Drum Sheet Capture makes an A4 PDF from the drum score shown in a video. You mark the score region; the app crops each score line from the video, removes the background and the playhead, and lays the measures out again on A4. PNG and JPG are also available.
 
 The app does not transcribe audio, recognize notes, or export MusicXML/MIDI.
 
 <p align="center">
   <img src="./docs/images/demo-video-to-pdf.png" width="860" alt="A drum score shown one line at a time at the bottom of a video, reflowed onto one A4 PDF page">
 </p>
-<p align="center"><sub>Actual output from a synthetic demo video: the lines shown one at a time are collected, the playhead is removed, and the measures are laid out again on A4.</sub></p>
+<p align="center"><sub>Left: a synthetic test video. Right: the PDF the app made from it. The red playhead does not appear in the PDF.</sub></p>
 
 [Download the latest release](https://github.com/kr-ericshim/drum-score-capture-tool/releases/latest) · [Project home (Korean)](./README.md) · [한국어 가이드](./README.ko.md)
 
@@ -33,8 +33,8 @@ Download the file for your computer from **Assets** on the release page. The sou
 
 | Computer | Download |
 | --- | --- |
-| Windows x64 — Intel/AMD 64-bit | `.exe` installer |
-| macOS Apple Silicon — M-series, macOS 13 (Ventura) or later | `arm64.dmg` |
+| Windows x64 (Intel/AMD 64-bit) | `.exe` installer |
+| macOS Apple Silicon (M-series, macOS 13 Ventura or later) | `arm64.dmg` |
 
 Python, Node.js, and FFmpeg do not need to be installed separately. Intel Mac, native Windows ARM64, and Linux installers are not provided.
 
@@ -183,12 +183,11 @@ video + the score region you chose
   → verify:  a checker independent of the renderer compares the finished pages with the source strips
 ```
 
-Design principles:
+Why it works this way:
 
-- **Move the source image; do not recognize notes.** Re-engraving through optical music recognition turns every recognition error into a wrong score. Reflowing the cleaned source image keeps the notation exactly as shown.
-- **When unsure, report instead of fixing.** The suggested score region is an editable draft, similar lines are only flagged as "looks similar", and videos the app cannot handle (translucent plates, scrolling scores) are refused with a clear message rather than forced into a bad PDF.
-- **Never hide what is missing.** The app records which source pixels went to which page, and marks any line it could not fully place as **Incomplete** in the PDF and in review.
-- **Everything stays on your computer.** Videos are processed locally, and one installer carries Python and FFmpeg.
+- It does not use optical music recognition. A recognition error would print a wrong note. The app copies the score image from the video instead, so a blurry video gives a blurry PDF.
+- Automatic guesses that can be wrong are left for the user to confirm. A suggested region takes effect only after **Apply region**, similar lines are flagged but not removed, and translucent plates or scrolling scores are refused with a message.
+- The app records where each part of the source went on each page. A line it could not fully place is marked **Incomplete** in the PDF and in review.
 
 ## Development and builds
 

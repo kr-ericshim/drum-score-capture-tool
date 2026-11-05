@@ -1,6 +1,6 @@
 # Drum Sheet Capture 사용 가이드
 
-영상에 이미 나오는 드럼 악보를 모아 A4 PDF로 만드는 앱입니다. 악보 영역을 정하면 영상에 나온 악보 줄을 읽어, 원본 악보 이미지를 깨끗하게 정리한 뒤 마디 단위로 A4에 다시 배치합니다. PNG·JPG로도 저장할 수 있습니다.
+영상에 나오는 드럼 악보를 모아 A4 PDF로 만드는 앱입니다. 악보 영역을 정하면 영상에 나온 악보 줄을 잘라 배경과 재생 표시를 지우고, 마디 단위로 A4에 다시 배치합니다. PNG·JPG로도 저장할 수 있습니다.
 
 소리를 듣고 악보를 만드는 채보, 음표 인식, MusicXML·MIDI 변환 기능은 없습니다.
 
@@ -28,8 +28,8 @@
 
 | 컴퓨터 | 받을 파일 |
 | --- | --- |
-| Windows — Intel/AMD 64비트 | `.exe` |
-| Mac — Apple Silicon(M 시리즈), macOS 13(Ventura) 이상 | `arm64.dmg` |
+| Windows (Intel/AMD 64비트) | `.exe` |
+| Mac (Apple Silicon M 시리즈, macOS 13 Ventura 이상) | `arm64.dmg` |
 
 설치 파일에 실행에 필요한 구성 요소가 들어 있어 Python, Node.js, FFmpeg를 따로 설치하지 않아도 됩니다. Intel Mac, Windows ARM64 전용, Linux 설치 파일은 제공하지 않습니다.
 
