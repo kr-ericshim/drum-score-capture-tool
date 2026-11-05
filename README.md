@@ -18,6 +18,7 @@
 
 <p align="center">
   <a href="https://github.com/kr-ericshim/drum-score-capture-tool/releases/latest"><img src="https://img.shields.io/github/v/release/kr-ericshim/drum-score-capture-tool?style=flat&amp;color=176b5b&amp;label=release" alt="최신 공개 버전"></a>
+  <a href="https://github.com/kr-ericshim/drum-score-capture-tool/actions/workflows/ci.yml"><img src="https://github.com/kr-ericshim/drum-score-capture-tool/actions/workflows/ci.yml/badge.svg?branch=feature%2Fclean-reflow" alt="CI 테스트 상태"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-455a64?style=flat" alt="프로젝트 라이선스: MIT"></a>
 </p>
 
@@ -26,7 +27,7 @@
 </p>
 <p align="center"><sub>왼쪽은 테스트용으로 만든 합성 영상, 오른쪽은 앱이 그 영상으로 만든 PDF입니다. 빨간 재생 표시선은 PDF에서 지워집니다.</sub></p>
 
-> **이 문서는 v0.3.0 기준입니다.** v0.2.1 이하 설치 파일은 악보 화면을 페이지 이미지로 캡처하는 이전 방식이라 아래 설명과 다릅니다.
+> **이 문서는 v0.3.1 기준입니다.** v0.2.1 이하 설치 파일은 악보 화면을 페이지 이미지로 캡처하는 이전 방식이라 아래 설명과 다릅니다.
 
 ## 무엇을 하나요
 
@@ -139,6 +140,8 @@
 - 음표 인식(OMR)은 쓰지 않았습니다. 인식이 틀리면 PDF의 음표도 틀리게 나오기 때문입니다. 대신 영상의 악보 이미지를 잘라 붙이므로, 원본 영상이 흐리면 PDF도 그만큼 흐립니다.
 - 틀릴 수 있는 자동 판단은 사용자가 확인하게 했습니다. 자동 추천 영역은 **영역 적용**을 눌러야 확정되고, 비슷한 줄은 자동으로 빼지 않고 표시만 합니다. 반투명 판이나 스크롤되는 악보는 처리하지 않고 지원하지 않는다고 알립니다.
 - 원본의 각 부분이 어느 페이지 어디에 들어갔는지 기록합니다. 다 넣지 못한 줄은 PDF와 검토 화면에 **미완성**으로 표시합니다.
+
+개발하면서 겪은 문제와 해결 과정은 [개발 기록](./docs/DEVELOPMENT_NOTES.md)에 정리했습니다. Windows 인코딩 버그, 릴리스 시간 단축, 결과를 바꾸지 않는 속도 개선 등을 다룹니다.
 
 ## 개발 안내
 

@@ -11,7 +11,7 @@ The app does not transcribe audio, recognize notes, or export MusicXML/MIDI.
 
 [Download the latest release](https://github.com/kr-ericshim/drum-score-capture-tool/releases/latest) · [Project home (Korean)](./README.md) · [한국어 가이드](./README.ko.md)
 
-This guide follows v0.3.0. Installers up to v0.2.1 use the earlier method, which captures score screens as page images, so their screens and results differ. Check the [release notes](https://github.com/kr-ericshim/drum-score-capture-tool/releases) for your installed version.
+This guide follows v0.3.1. Installers up to v0.2.1 use the earlier method, which captures score screens as page images, so their screens and results differ. Check the [release notes](https://github.com/kr-ericshim/drum-score-capture-tool/releases) for your installed version.
 
 [Supported videos](#supported-videos) · [Installation](#installation) · [Workflow](#workflow) · [Output](#output) · [Shortcuts](#shortcuts) · [Troubleshooting](#troubleshooting)
 
@@ -188,6 +188,8 @@ Why it works this way:
 - It does not use optical music recognition. A recognition error would print a wrong note. The app copies the score image from the video instead, so a blurry video gives a blurry PDF.
 - Automatic guesses that can be wrong are left for the user to confirm. A suggested region takes effect only after **Apply region**, similar lines are flagged but not removed, and translucent plates or scrolling scores are refused with a message.
 - The app records where each part of the source went on each page. A line it could not fully place is marked **Incomplete** in the PDF and in review.
+
+Problems met during development and how they were solved are in the [development notes](./docs/DEVELOPMENT_NOTES.md) (Korean).
 
 ## Development and builds
 
